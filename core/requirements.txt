@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pydantic
+python-frontmatter
+pytest
+anthropic
+python-dotenv
+python-docx
+python-multipart
+Pillow
+openpyxl
+opencv-python-headless
+openai

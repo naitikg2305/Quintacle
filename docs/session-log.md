@@ -1,0 +1,242 @@
+# Quintacle — Session Log
+
+Running log of what's actually built vs. what's still just planning docs.
+Newest session at the top. Read this before picking the project back up.
+
+## 2026-09-07 — Goals extended, Journal rebuilt with AI, Knowledge Base built from scratch, full nutrition
+
+Big session. Went from "Daily Tracker v0" to most of Pillars 1–3 actually
+working end to end, driven by real Claude API calls. `docs/quintacle-ideas.md`
+was also heavily expanded *before* this session's code (new KB domains,
+Photo Drop, Digital Tech Vault, cross-cutting principles) — see its own
+"Decisions" log for that half. This entry is the code side.
+
+### Goals Dashboard (Pillar 2) — now supports both goal shapes
+
+- `habits` table gained `metric`/`direction` columns (idempotent `ALTER TABLE`
+  migration — ran clean against the real db, Golf/Guitar preserved).
+- `quotas.py`'s `habit_progress` dispatches on `metric` (`activity_hours` vs
+  `food_kcal`) and compares by `direction` (`at_least` vs `at_most`) — the
+  extension point for a future `spend`-based metric once a finance log exists.
+- `/habits` page: radio toggle between "Time-based (hours)" and "Amount cap
+  (kcal)" goals.
+
+### Journal (Pillar 1's Bridge) — rebuilt around a real LLM, taxonomy tightened
+
+- **Category taxonomy changed**: the old `emotional/productive/social/fitness/work`
+  became **productivity / social / leisure / yourself / emotional** (5,
+  emotional kept as its own category on request). Existing Golf/Guitar habits
+  were remapped (`physical`→`yourself`, `social`→`leisure`).
+- `nodes/journal/llm.py`: `parse_journal_dump()` calls Claude via
+  `client.messages.parse()` with a **discriminated union** schema — one dump
+  can produce `activity` / `food` / `exercise` / `substance` entries all at
+  once (not just activity-log categories). `POST /journal/{date}/parse`
+  proposes, never writes (Approval before write).
+- **Meal-preset aware**: the parser is handed the real `meals` library and
+  matches "had lamb meal and smoothie" to existing presets by `meal_id`
+  instead of re-guessing calories every time — only estimates fresh when
+  nothing matches.
+- `/journal` page rewritten: one freeform dump box + "Parse with AI" +
+  manual "+ Activity / + Food / + Exercise / + Substance" buttons, all
+  feeding **one shared entry list** (AI-sourced and hand-typed rows are
+  identical once in the list) with a single "Save day" commit.
+
+### Knowledge Base (Pillar 3) — did not exist as code before this session
+
+- New `nodes/kb/` package. `KBStore`: one markdown file per entry, grouped
+  into folders on disk (`slugify()` doubles as the path-traversal guard).
+- `POST /kb/sort` proposes `{folder, title, content}` from freeform text
+  (seeded with the domain list from the planning doc so early pushes land
+  somewhere sensible); `POST /kb/entries` is the separate, explicit commit.
+- **KB-grounded chat** (`POST /kb/chat`): a "Use Knowledge Base" checkbox
+  injects the *entire* KB as context (no embeddings/retrieval yet — fine at
+  current KB size, revisit if it ever gets large). A "More power" checkbox
+  switches to the research model.
+- **Chat has real persistence now** (`chat_store.py`): every session is its
+  own markdown file (`# title` / `### You` / `### Assistant`) under
+  `~/.quintacle/kb_chats/`, survives reloads, and has an explicit delete —
+  matching the "chat is ephemeral, KB is permanent" principle with an actual
+  file lifecycle (push the good parts into the KB, then delete the chat).
+- `/kb` page: folder/entry browser + viewer, scratchpad→sort→push flow, and
+  the chat panel (session picker, new/delete, "→ add to scratchpad" on every
+  assistant reply to bridge chat output into the push flow).
+
+### Model tiering — cheap by default, switchable for power
+
+- New `llm_config.py`: `QUINTACLE_LLM_MODEL` (default `claude-haiku-4-5`) for
+  routine structured parsing (journal, KB sort); `QUINTACLE_LLM_RESEARCH_MODEL`
+  (default `claude-sonnet-5`) reserved for heavier tasks (the KB chat's
+  "more power" mode). Both are env-var overridable, no code changes needed.
+- `core/.env` holds the real `ANTHROPIC_API_KEY` (gitignored; `.env.example`
+  is the committed template). `QUINTACLE_DATA_DIR` also documented there —
+  data intentionally stays outside the repo (see Cross-Cutting Principles'
+  reasoning: portability + never risking personal data in a `git add .`).
+
+### Full nutrition tracking — macros+fiber+20 micronutrients vs. male RDA
+
+- New `meal_micros` table + `fiber_g` column on `meals`. `nutrition_targets.py`
+  has real male RDA values for 20 nutrients (Sodium flagged as a limit, not
+  a target).
+- `nutrition_llm.py`: `estimate_nutrition()` fills in macros/fiber/all 20
+  micros from a description. `POST /logs/meals/estimate` proposes (never
+  writes); `POST /logs/meals` accepts the full panel to actually create a
+  preset.
+- **Bug caught and fixed**: the model returned Copper in mg while the RDA
+  reference expects mcg — `pct_of_rda` silently read 0.2% instead of ~80%.
+  Fixed at the root (explicit unit per nutrient in the prompt) plus a real
+  conversion function as a backend safety net (`to_canonical_unit` — converts
+  g/mg/mcg properly, never just relabels). Regression-tested.
+- `GET /logs/nutrition/{date}` combines macro totals with all 20 micros'
+  %RDA. Surfaced in the `/day` page's expanded Food section (progress bars,
+  Sodium's bar goes red past 100% since it's a limit).
+- Real data: two actual meal presets exist — **Lamb Meal** and **Smoothie**
+  (your real breakfast) — backfilled with AI-estimated fiber/micros through
+  the same production path, not hand-typed.
+
+### Calendar (`/day`) fixed to show everything
+
+- New `GET /day/counts` — month-view badges now count activities + food +
+  exercise + substances, not just activities.
+- Expanded day view now shows journal, activities, food (+ full nutrition),
+  exercise, substances, and body stats — previously only showed activities.
+
+### Not started yet
+
+- Raw-ingredient/label-photo capture (photo a nutrition label → precise
+  per-100g data → feeds meal calculations) — user is still designing this,
+  explicitly parked, not built.
+- Unifying Journal Dump and Photo Drop into one text-or-image "Drop" surface
+  that routes to *any* pillar (not just the 4 log types) — named as the
+  clear next architectural step, not built.
+- Desktop/Android shells — still plain dev processes (`uvicorn` + `npm run
+  dev`), unchanged from session 1.
+- `docs/quintacle-ideas.md` has drifted from the code in a few spots worth
+  reconciling next: the taxonomy change (productivity/social/leisure/
+  yourself/emotional) isn't reflected there yet, and micronutrient tracking
+  + chat persistence aren't mentioned in the doc at all.
+- Vault, Wardrobe, Travel, Home Catalog, Marketplace, Career/Style/Media KB
+  domains: still just planning, no code.
+
+### How to run it
+
+```bash
+# backend
+cd core && .venv/bin/uvicorn quintacle_core.api:app --port 8000
+
+# frontend (separate terminal)
+cd frontend && npm run dev
+```
+Data persists at `~/.quintacle/` (markdown + `quintacle.db`, both directly
+inspectable — `sqlite3 ~/.quintacle/quintacle.db` works). Needs a real
+`ANTHROPIC_API_KEY` in `core/.env` for anything AI-powered (journal parsing,
+KB sort/chat, nutrition estimation) — everything else still works without it.
+
+---
+
+## 2026-09-03 — first build session: scheduler + logs + journal + running UI
+
+### What got built (real code, not just docs)
+
+**`core/`** — Python/FastAPI backend, one process, runs identically on
+Windows/Linux (normal process) and eventually Android (via Chaquopy — not
+built yet, see Not Started below). Local-first: all data lives under
+`~/.quintacle/` (override with `QUINTACLE_DATA_DIR`).
+
+- `nodes/schedule/` — Calendar A (forward todo/calendar). One markdown
+  frontmatter file per todo under `~/.quintacle/schedule/todos/`. Deterministic
+  ranking by due date then priority, calendar view derived from todos, no AI.
+- `nodes/logs/` — SQLite (`~/.quintacle/quintacle.db`), for dense tabular
+  day-indexed data (this was a real course-correction mid-session — markdown
+  was wrong for this, see `stack.md`/decisions below). Tables: `meals`
+  (premade meal macro library), `food_log` (references a meal, macros
+  auto-computed via join instead of retyped — this was the direct fix for the
+  manual `=SUM(...)` pain in the old `InOutTake.xlsx`), `substance_log`,
+  `activity_log` (now has an `hours` column — added mid-session for quota
+  math), `exercise_sets`, `body_stats`, `habits` (target_amount/target_period/
+  match_category — the weekly-goal definitions).
+- `nodes/journal/` — one markdown file per day under `~/.quintacle/journal/`,
+  the narrative record. No LLM parsing yet (deliberately cut — see decisions).
+- `GET /day/{date}` in `api.py` — cross-node endpoint: pulls journal + todos
+  due + activities + exercise + food + body stats + substances for one date
+  in a single deterministic call. This is `architecture.md`'s March-13 example
+  made real.
+- Tests: `core/tests/` — ranking, store round-trip, logs (incl. the meal
+  macro-autofill behavior), quota window math. All passing as of this session.
+
+**`frontend/`** — Next.js 16 / React / Tailwind, talks to the core API at
+`http://localhost:8000`. Pages: `/journal` (nightly dump by subtopic —
+Productive/Emotional/Physical/Work/Social — each a text box + hours field,
+logs directly to `activity_log` + saves the raw dump to that day's journal
+markdown, no LLM), `/habits` (set weekly/monthly hour goals per subtopic,
+live progress bars against actual logged hours), `/day` (month calendar,
+**Regular**/**Action** tabs — Regular shows todo-due-counts per day, Action
+shows logged-activity counts per day; click a day to expand — Action mode
+groups the day's entries by category, e.g. Physical/Work/Social, meant to
+generalize to Finance/Gym/etc. as more nodes land), `/todos` (Calendar A —
+ranked list + add/complete).
+
+Both processes were running live and smoke-tested end to end during this
+session (backend on :8000, frontend on :3000, real data in `~/.quintacle`,
+not test dirs).
+
+### Real decisions made this session (not obvious from the code alone)
+
+- **Stack**: Python/FastAPI core shared by all platforms; Next.js UI (ported
+  from the existing `PersonalWebsite` project's STL/markdown-viewer
+  conventions) shown via pywebview on desktop, via Chaquopy+WebView on
+  Android. Full reasoning in `stack.md`.
+- **Storage split**: markdown-per-item for narrative/reference nodes (todos,
+  journal), SQLite for dense tabular day-indexed logs (productivity, exercise,
+  diet, substances, body stats). Got this wrong once mid-session (tried
+  markdown for the logs too) — user corrected it, SQLite is right for that
+  data shape and is *more* Android-safe than markdown anyway (`sqlite3` is
+  Python stdlib, no Chaquopy wheel-compatibility risk).
+- **AI/vision/SLM**: four-tier routing now written into
+  `deployment-and-privacy.md` — phone-local NPU stack (TFLite/NNAPI +
+  MediaPipe LLM Inference or ONNX+QNN) is the default and needs no computer
+  or network at all; computer's local stack is an optional richer fallback;
+  an explicit user-picked switch (OpenAI or Anthropic) covers cloud vision,
+  collapsing detect+caption+narrate into one vision-LLM call instead of
+  re-hosting YOLO server-side; code-only is the fail-closed floor. Identity
+  matching against enrolled face profiles always stays local regardless of
+  the switch — carried over unchanged from the existing `FaceDetect`
+  prototype's own design.
+- **Nightly journal capture doesn't need an LLM.** Original
+  `habits-and-checkin.md` plan had an LLM parsing a free-text voice dump into
+  structured fields. Replaced with something simpler and already built: a UI
+  with one box per subtopic + an hours field, logged directly. The LLM
+  narration step (ask "what was I doing that day" and get an answer) is still
+  a valid future feature but is fully decoupled from logging — it would read
+  the already-structured data, not produce it.
+- Use a **personal** Anthropic account for Quintacle, not a work-provisioned
+  one — flagged as a real policy/privacy line, not just a technical one,
+  especially since Quintacle will hold journal/dating/financial data.
+
+### Not started yet
+
+- Desktop shell (pywebview) and Android shell (Chaquopy + WebView) — right
+  now both `core/` and `frontend/` just run as plain local dev processes.
+- The dashboard rollup (time-per-category across arbitrary date ranges).
+- LLM narration ("what was I doing on date X") — deferred, not blocking.
+- On-device YOLO/face-detection/SLM (media-analysis node) — architecture
+  decided (`deployment-and-privacy.md`), nothing built.
+- Every other planned node beyond schedule/logs/journal: ledger, outfits,
+  diet's meal-planning/grocery-list side, apartment, car, routines, vault,
+  schemes.
+- Phone/computer LAN sync (`deployment-and-privacy.md`'s open questions on
+  this are all still open).
+- Known small bug: logging a subtopic in the Journal UI with text but no
+  hours value can silently save `0.0` hours (seen live: a `work` entry saved
+  with `hours: 0.0`) — not yet root-caused as a UI bug vs. empty input.
+
+### How to run it again
+
+```bash
+# backend
+cd core && .venv/bin/uvicorn quintacle_core.api:app --port 8000
+
+# frontend (separate terminal)
+cd frontend && npm run dev
+```
+Data persists at `~/.quintacle/` (markdown files + `quintacle.db`, both
+directly inspectable/editable — `sqlite3 ~/.quintacle/quintacle.db` works).
