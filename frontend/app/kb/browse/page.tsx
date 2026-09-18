@@ -19,6 +19,30 @@ import {
   searchKBEntries,
 } from "@/lib/api";
 import ImageLightbox from "@/components/ImageLightbox";
+import {
+  ArrowLeft,
+  Box,
+  ChevronRight,
+  File as FileGeneric,
+  FileSpreadsheet,
+  FileText,
+  Film,
+  Folder,
+  FolderTree,
+  Image as ImageIcon,
+  MessageSquare,
+  Paperclip,
+  Pencil,
+  Plus,
+  Save,
+  Search,
+  X,
+  type LucideIcon,
+} from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { Input, Textarea } from "@/components/ui/Field";
+import { EmptyState, PageHeader } from "@/components/ui/Panel";
+import { cn } from "@/lib/cn";
 import DocxViewer from "@/components/DocxViewer";
 import SpreadsheetEditor from "@/components/SpreadsheetEditor";
 
@@ -63,14 +87,13 @@ function splitTitle(content: string): { title: string; body: string } {
   return { title, body };
 }
 
-function fileIcon(ext: string): string {
-  if (IMAGE_EXT.includes(ext)) return "🖼️";
-  if (VIDEO_EXT.includes(ext)) return "🎬";
-  if (ext === "pdf") return "📕";
-  if (ext === "stl") return "📦";
-  if (ext === "docx") return "📃";
-  if (SPREADSHEET_EXT.includes(ext)) return "📊";
-  return "📎";
+function fileIcon(ext: string): LucideIcon {
+  if (IMAGE_EXT.includes(ext)) return ImageIcon;
+  if (VIDEO_EXT.includes(ext)) return Film;
+  if (ext === "pdf" || ext === "docx") return FileText;
+  if (ext === "stl") return Box;
+  if (SPREADSHEET_EXT.includes(ext)) return FileSpreadsheet;
+  return FileGeneric;
 }
 
 // Shared by both "an asset attached to an entry" (assetPaths, path relative
@@ -243,132 +266,150 @@ export default function KBBrowsePage() {
   const folders = childFolderNames(allFolders, currentPath);
   const { body: renderedBody, assetPaths } = viewing ? extractAssets(viewing.content) : { body: "", assetPaths: [] };
 
+  const hasSelection = viewing !== null || viewingRawFile !== null;
+  const mono = "font-mono text-[10px] uppercase tracking-[0.14em] text-muted";
+  const tile = (active: boolean) =>
+    cn(
+      "flex flex-col items-center gap-1.5 rounded-lg border p-2.5 text-center transition-colors",
+      active ? "border-accent/60 bg-accent/10" : "border-transparent hover:border-line hover:bg-white/5"
+    );
+
+  function closePreview() {
+    setViewing(null);
+    setViewingRawFile(null);
+    setEditing(false);
+  }
+
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Browse Files</h1>
+    <div className="space-y-3">
+      <PageHeader title="Browse" icon={FolderTree} subtitle="Everything you've stored, folder by folder." />
 
       <div className="relative">
-        <input
+        <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+        <Input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search the whole knowledge base — filename or content..."
-          className="w-full border rounded px-3 py-2 text-sm"
+          className="pl-9"
         />
         {query.trim() && (
-          <div className="absolute z-10 mt-1 w-full max-h-80 overflow-y-auto border rounded bg-white dark:bg-black shadow-lg">
-            {searching && <p className="text-xs opacity-60 p-2">searching...</p>}
-            {!searching && results.length === 0 && <p className="text-xs opacity-60 p-2">No matches.</p>}
+          <div className="absolute z-20 mt-1 max-h-80 w-full overflow-y-auto rounded-xl border border-line-strong bg-surface shadow-glow">
+            {searching && <p className="p-3 text-xs text-muted">searching...</p>}
+            {!searching && results.length === 0 && <p className="p-3 text-xs text-muted">No matches.</p>}
             {!searching &&
               results.map((r) => (
                 <button
                   key={`${r.folder}/${r.slug}`}
                   onClick={() => openResult(r.folder, r.slug)}
-                  className="block w-full text-left px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/5 border-b last:border-b-0"
+                  className="block w-full border-b border-line px-3 py-2 text-left text-sm last:border-b-0 hover:bg-accent/10"
                 >
                   <span className="font-medium">{r.slug}</span>
-                  <span className="opacity-50"> — {r.folder}</span>
-                  {r.snippet && <p className="text-xs opacity-60 truncate">{r.snippet}</p>}
+                  <span className="text-muted"> — {r.folder}</span>
+                  {r.snippet && <p className="truncate text-xs text-muted">{r.snippet}</p>}
                 </button>
               ))}
           </div>
         )}
       </div>
 
-      <div className="flex items-center gap-1 text-sm border-b pb-2">
-        <button onClick={() => setCurrentPath("")} className="hover:underline opacity-80">
-          Knowledge Base
-        </button>
-        {crumbs.map((crumb, i) => {
-          const pathToHere = crumbs.slice(0, i + 1).join("/");
-          return (
-            <span key={pathToHere} className="flex items-center gap-1">
-              <span className="opacity-40">/</span>
-              <button onClick={() => setCurrentPath(pathToHere)} className="hover:underline opacity-80">
-                {crumb}
-              </button>
-            </span>
-          );
-        })}
+      <div className="flex items-center justify-between gap-3 border-b border-line pb-2">
+        <div className="flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap text-sm">
+          <button onClick={() => setCurrentPath("")} className="text-muted hover:text-accent">
+            Knowledge base
+          </button>
+          {crumbs.map((crumb, i) => {
+            const pathToHere = crumbs.slice(0, i + 1).join("/");
+            return (
+              <span key={pathToHere} className="flex items-center gap-1">
+                <ChevronRight size={14} className="text-muted/60" />
+                <button onClick={() => setCurrentPath(pathToHere)} className="text-muted hover:text-accent">
+                  {crumb}
+                </button>
+              </span>
+            );
+          })}
+        </div>
         {currentPath && (
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              onClick={createEntry}
-              className="text-xs border rounded px-2 py-1 hover:bg-black/5 dark:hover:bg-white/5 whitespace-nowrap"
-            >
-              + New entry
-            </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button size="sm" onClick={createEntry}>
+              <Plus size={14} /> New
+            </Button>
             <a
               href={`/kb/folder?path=${encodeURIComponent(currentPath)}`}
-              className="text-xs border rounded px-2 py-1 hover:bg-black/5 dark:hover:bg-white/5 whitespace-nowrap"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-1 text-xs hover:border-accent/60 hover:bg-accent/10"
             >
-              💬 Chat this folder →
+              <MessageSquare size={14} /> Chat
             </a>
           </div>
         )}
       </div>
 
-      <div className="grid grid-cols-12 gap-4" style={{ height: "calc(100vh - 220px)", minHeight: 450 }}>
-        <div className="col-span-5 border rounded p-3 overflow-y-auto">
-          <div className="grid grid-cols-3 gap-3">
+      <div className="grid gap-4 lg:grid-cols-12 h-[calc(100dvh-19rem)] min-h-[360px] lg:h-[calc(100dvh-14rem)]">
+        {/* File list — hidden on phones while something is open */}
+        <div
+          className={cn(
+            "overflow-y-auto rounded-xl border border-line bg-surface/80 p-3 shadow-panel lg:col-span-5 lg:block",
+            hasSelection ? "hidden" : "block"
+          )}
+        >
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-3">
             {folders.map((name) => {
               const path = currentPath ? `${currentPath}/${name}` : name;
               return (
-                <button
-                  key={path}
-                  onClick={() => setCurrentPath(path)}
-                  className="flex flex-col items-center gap-1 p-2 rounded hover:bg-black/5 dark:hover:bg-white/5 text-center"
-                >
-                  <span className="text-3xl">📁</span>
-                  <span className="text-xs break-words">{name}</span>
+                <button key={path} onClick={() => setCurrentPath(path)} className={tile(false)}>
+                  <Folder size={28} className="text-accent" />
+                  <span className="break-words text-xs">{name}</span>
                 </button>
               );
             })}
             {files.map((slug) => (
-              <button
-                key={slug}
-                onClick={() => openFile(slug)}
-                className={`flex flex-col items-center gap-1 p-2 rounded text-center ${
-                  viewing?.slug === slug ? "bg-black/10 dark:bg-white/10" : "hover:bg-black/5 dark:hover:bg-white/5"
-                }`}
-              >
-                <span className="text-3xl">📄</span>
-                <span className="text-xs break-words">{slug}.md</span>
+              <button key={slug} onClick={() => openFile(slug)} className={tile(viewing?.slug === slug)}>
+                <FileText size={28} className="text-foreground/70" />
+                <span className="break-words text-xs">{slug}.md</span>
               </button>
             ))}
-            {rawFiles.map((name) => (
-              <button
-                key={name}
-                onClick={() => openRawFile(name)}
-                className={`flex flex-col items-center gap-1 p-2 rounded text-center ${
-                  viewingRawFile === name ? "bg-black/10 dark:bg-white/10" : "hover:bg-black/5 dark:hover:bg-white/5"
-                }`}
-              >
-                <span className="text-3xl">{fileIcon(name.split(".").pop()?.toLowerCase() ?? "")}</span>
-                <span className="text-xs break-words">{name}</span>
-              </button>
-            ))}
+            {rawFiles.map((name) => {
+              const Icon = fileIcon(name.split(".").pop()?.toLowerCase() ?? "");
+              return (
+                <button key={name} onClick={() => openRawFile(name)} className={tile(viewingRawFile === name)}>
+                  <Icon size={28} className="text-accent/80" />
+                  <span className="break-all text-xs">{name}</span>
+                </button>
+              );
+            })}
           </div>
           {folders.length === 0 && files.length === 0 && rawFiles.length === 0 && (
-            <p className="text-sm opacity-60 p-2">
-              {currentPath ? "Empty folder." : "Nothing in the Knowledge Base yet."}
-            </p>
+            <EmptyState icon={Folder}>{currentPath ? "Empty folder." : "Nothing in the Knowledge Base yet."}</EmptyState>
           )}
         </div>
 
-        <div className="col-span-7 border rounded p-4 overflow-y-auto">
-          {!viewing && !viewingRawFile && <p className="text-sm opacity-60">Select a file to view it.</p>}
+        {/* Preview — full screen on phones, side panel on desktop */}
+        <div
+          className={cn(
+            "overflow-y-auto rounded-xl border border-line bg-surface/80 p-4 shadow-panel lg:col-span-7 lg:block",
+            hasSelection ? "block" : "hidden"
+          )}
+        >
+          {!hasSelection && <EmptyState icon={FileText}>Select a file to view it.</EmptyState>}
+
+          {hasSelection && (
+            <button onClick={closePreview} className="mb-3 flex items-center gap-1.5 text-sm text-accent lg:hidden">
+              <ArrowLeft size={16} /> Back
+            </button>
+          )}
+
           {viewingRawFile && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs opacity-60">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="break-all font-mono text-xs text-muted">
                   {currentPath}/{viewingRawFile}
                 </p>
                 <a
                   href={kbAssetUrl(currentPath, viewingRawFile)}
                   target="_blank"
                   rel="noreferrer"
-                  className="border rounded px-3 py-1 text-xs"
+                  className="rounded-lg border border-line-strong px-3 py-1 text-xs hover:border-accent/60 hover:bg-accent/10"
                 >
                   Open in new tab
                 </a>
@@ -382,33 +423,34 @@ export default function KBBrowsePage() {
                   setStatus("replaced — refresh to see the new version");
                 }}
               />
-              {status && <p className="text-xs opacity-60">{status}</p>}
+              {status && <p className="text-xs text-muted">{status}</p>}
             </div>
           )}
+
           {viewing && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs opacity-60">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="break-all font-mono text-xs text-muted">
                   {viewing.folder}/{viewing.slug}.md
                 </p>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {!editing && (
-                    <button onClick={startEditing} className="border rounded px-3 py-1 text-xs">
-                      Edit
-                    </button>
+                    <Button size="sm" onClick={startEditing}>
+                      <Pencil size={13} /> Edit
+                    </Button>
                   )}
                   {editing && (
                     <>
-                      <button onClick={saveEdit} className="border rounded px-3 py-1 text-xs bg-black text-white dark:bg-white dark:text-black">
-                        Save
-                      </button>
-                      <button onClick={() => setEditing(false)} className="border rounded px-3 py-1 text-xs">
+                      <Button size="sm" variant="primary" onClick={saveEdit}>
+                        <Save size={13} /> Save
+                      </Button>
+                      <Button size="sm" onClick={() => setEditing(false)}>
                         Cancel
-                      </button>
+                      </Button>
                     </>
                   )}
-                  <label className="border rounded px-3 py-1 text-xs cursor-pointer">
-                    📎 Attach file
+                  <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-1 text-xs hover:border-accent/60 hover:bg-accent/10">
+                    <Paperclip size={13} /> Attach
                     <input
                       type="file"
                       className="hidden"
@@ -418,69 +460,68 @@ export default function KBBrowsePage() {
                       }}
                     />
                   </label>
-                  <button onClick={continueInChat} className="border rounded px-3 py-1 text-xs">
-                    Continue in chat →
-                  </button>
+                  <Button size="sm" onClick={continueInChat}>
+                    <MessageSquare size={13} /> Chat about this
+                  </Button>
                 </div>
               </div>
 
               {editing ? (
                 <div className="space-y-3">
-                  <div className="space-y-1">
-                    <p className="text-xs opacity-60">Fields</p>
+                  <div className="space-y-1.5">
+                    <p className={mono}>Fields</p>
                     {fieldRows.map((row, i) => (
                       <div key={i} className="flex items-center gap-2">
-                        <input
-                          className="border rounded px-2 py-1 text-xs w-1/3"
+                        <Input
+                          className="w-1/3 py-1 text-xs"
                           placeholder="key"
                           value={row.key}
-                          onChange={(e) =>
-                            setFieldRows(fieldRows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))
-                          }
+                          onChange={(e) => setFieldRows(fieldRows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))}
                         />
-                        <input
-                          className="border rounded px-2 py-1 text-xs flex-1"
+                        <Input
+                          className="flex-1 py-1 text-xs"
                           placeholder="value"
                           value={row.value}
-                          onChange={(e) =>
-                            setFieldRows(fieldRows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))
-                          }
+                          onChange={(e) => setFieldRows(fieldRows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))}
                         />
                         <button
                           onClick={() => setFieldRows(fieldRows.filter((_, j) => j !== i))}
-                          className="text-xs opacity-60 hover:opacity-100"
+                          aria-label="Remove field"
+                          className="p-1 text-muted hover:text-danger"
                         >
-                          ✕
+                          <X size={14} />
                         </button>
                       </div>
                     ))}
                     <button
                       onClick={() => setFieldRows([...fieldRows, { key: "", value: "" }])}
-                      className="text-xs underline opacity-60 hover:opacity-100"
+                      className="flex items-center gap-1 text-xs text-accent hover:underline"
                     >
-                      + add field
+                      <Plus size={12} /> add field
                     </button>
                   </div>
-                  <textarea
-                    className="w-full border rounded p-2 text-sm font-mono"
-                    rows={20}
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                  />
+                  <Textarea className="font-mono" rows={20} value={draft} onChange={(e) => setDraft(e.target.value)} />
                 </div>
               ) : (
                 <>
                   {Object.keys(viewing.fields).length > 0 && (
-                    <div className="border rounded p-2 text-sm space-y-1">
+                    <dl className="grid grid-cols-1 gap-x-4 gap-y-1 rounded-lg border border-line bg-surface-2/60 p-3 text-sm sm:grid-cols-2">
                       {Object.entries(viewing.fields).map(([k, v]) => (
-                        <p key={k}>
-                          <span className="opacity-60">{k}:</span> {v}
-                        </p>
+                        <div key={k} className="flex gap-2">
+                          <dt className={cn(mono, "shrink-0 pt-0.5")}>{k}</dt>
+                          <dd className="min-w-0 break-words">{v}</dd>
+                        </div>
                       ))}
-                    </div>
+                    </dl>
                   )}
                   {assetPaths.length > 0 && (
-                    <div className={assetPaths.length > 1 && assetPaths.every((p) => IMAGE_EXT.includes(p.split(".").pop()?.toLowerCase() ?? "")) ? "grid grid-cols-2 gap-2" : "space-y-3"}>
+                    <div
+                      className={
+                        assetPaths.length > 1 && assetPaths.every((p) => IMAGE_EXT.includes(p.split(".").pop()?.toLowerCase() ?? ""))
+                          ? "grid grid-cols-2 gap-2"
+                          : "space-y-3"
+                      }
+                    >
                       {assetPaths.map((assetPath) => (
                         <AssetPreview
                           key={assetPath}
@@ -495,14 +536,14 @@ export default function KBBrowsePage() {
                       ))}
                     </div>
                   )}
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <div className="prose prose-sm dark:prose-invert max-w-none prose-a:text-accent prose-img:rounded-lg">
                     <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
                       {renderedBody}
                     </ReactMarkdown>
                   </div>
                 </>
               )}
-              {status && <p className="text-xs opacity-60">{status}</p>}
+              {status && <p className="text-xs text-muted">{status}</p>}
             </div>
           )}
         </div>
