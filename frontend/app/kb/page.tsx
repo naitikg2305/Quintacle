@@ -40,6 +40,26 @@ import MealCompositionEditor from "@/components/MealCompositionEditor";
 import OutfitEditor from "@/components/OutfitEditor";
 import GroomingRoutineEditor from "@/components/GroomingRoutineEditor";
 import ChatLog from "@/components/ChatLog";
+import {
+  Database,
+  Droplets,
+  Dumbbell,
+  ImagePlus,
+  NotebookPen,
+  Paperclip,
+  Plus,
+  SendHorizontal,
+  Shirt,
+  Sparkles,
+  Trash2,
+  TriangleAlert,
+  Utensils,
+  X,
+} from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { Input, Select, Textarea } from "@/components/ui/Field";
+import { Segmented } from "@/components/ui/Segmented";
+import { cn } from "@/lib/cn";
 
 type TargetFile = { folder: string; slug: string; title: string };
 
@@ -66,6 +86,8 @@ export default function KBPage() {
   const [models, setModels] = useState<ChatModel[]>([]);
   const [model, setModel] = useState<string | undefined>(undefined);
   const [chatBusy, setChatBusy] = useState(false);
+  // Phone only: one pane at a time (chat | scratchpad). lg+ shows both.
+  const [pane, setPane] = useState<"chat" | "scratch">("chat");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState("");
@@ -395,40 +417,61 @@ export default function KBPage() {
     setScratchpad((prev) => (prev ? `${prev}\n\n${text}` : text));
   }
 
-  return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Knowledge Base</h1>
+  const label = "font-mono text-[10px] uppercase tracking-[0.14em] text-muted";
+  const suggestionButtons = [
+    { onClick: suggestMeal, icon: Utensils, text: "Meal" },
+    { onClick: suggestOutfit, icon: Shirt, text: "Outfit" },
+    { onClick: suggestGrooming, icon: Droplets, text: "Grooming" },
+    { onClick: suggestWorkout, icon: Dumbbell, text: "Workout" },
+  ];
 
-      <div className="grid grid-cols-12 gap-4" style={{ height: "calc(100vh - 180px)", minHeight: 500 }}>
+  return (
+    <div className="space-y-3">
+      {/* Phone: one pane at a time */}
+      <Segmented
+        className="lg:hidden"
+        value={pane}
+        onChange={setPane}
+        options={[
+          { value: "chat", label: "Chat" },
+          { value: "scratch", label: "Scratchpad" },
+        ]}
+      />
+
+      <div className="grid gap-4 lg:grid-cols-12 h-[calc(100dvh-14rem)] min-h-[380px] lg:h-[calc(100dvh-5rem)]">
         {/* Chat — the main, GPT/Claude-style panel */}
-        <div className="col-span-8 border rounded flex flex-col overflow-hidden">
-          <div className="p-3 border-b space-y-2 shrink-0">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <h2 className="font-medium text-sm">Chat</h2>
-              <div className="flex gap-3 text-xs items-center">
-                <label className="flex items-center gap-1">
-                  <input type="checkbox" checked={useKB} onChange={(e) => setUseKB(e.target.checked)} />
-                  Use Knowledge Base
-                </label>
-                <label className="flex items-center gap-1" title="Which model answers — price is $ per 1M tokens in / out. Web search is always on.">
-                  Model
-                  <select
-                    className="border rounded px-1 py-0.5 bg-transparent"
-                    value={model ?? ""}
-                    onChange={(e) => pickModel(e.target.value)}
-                  >
-                    {models.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label} ({m.price})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+        <div
+          className={cn(
+            "flex-col overflow-hidden rounded-xl border border-line bg-surface/80 shadow-panel lg:col-span-8 lg:flex",
+            pane === "chat" ? "flex" : "hidden"
+          )}
+        >
+          <div className="shrink-0 space-y-2 border-b border-line p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                onClick={() => setUseKB(!useKB)}
+                title="Ground answers in your knowledge base"
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors",
+                  useKB ? "border-accent/50 bg-accent/10 text-accent" : "border-line text-muted"
+                )}
+              >
+                <Database size={14} /> Knowledge base {useKB ? "on" : "off"}
+              </button>
+              <label className="flex items-center gap-2" title="Which model answers — price is $ per 1M tokens in / out. Web search is always on.">
+                <span className={label}>Model</span>
+                <Select className="w-auto py-1 text-xs" value={model ?? ""} onChange={(e) => pickModel(e.target.value)}>
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label} ({m.price})
+                    </option>
+                  ))}
+                </Select>
+              </label>
             </div>
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <select
-                className="border rounded px-2 py-1"
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                className="min-w-0 flex-1 py-1 text-xs"
                 value={sessionId ?? ""}
                 onChange={(e) =>
                   e.target.value ? openSession(e.target.value, sessions.find((s) => s.id === e.target.value)?.title ?? "") : newChat()
@@ -440,47 +483,55 @@ export default function KBPage() {
                     {s.title}
                   </option>
                 ))}
-              </select>
-              <button onClick={newChat} className="border rounded px-2 py-1">
-                + New chat
-              </button>
+              </Select>
+              <Button size="sm" onClick={newChat}>
+                <Plus size={14} /> New
+              </Button>
               {sessionId && (
-                <button onClick={deleteSession} className="border rounded px-2 py-1 text-red-600 dark:text-red-400">
-                  Delete this chat
-                </button>
+                <Button size="sm" variant="danger" onClick={deleteSession} title="Delete this chat">
+                  <Trash2 size={14} />
+                </Button>
               )}
             </div>
             {target && (
-              <p className="text-xs opacity-70">
-                Continuing on <strong>{target.title}</strong> ({target.folder})
+              <p className="text-xs text-muted">
+                Continuing on <strong className="text-foreground">{target.title}</strong> ({target.folder})
               </p>
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          <div className="flex-1 space-y-2 overflow-y-auto p-3">
             {chatLog.length === 0 && (
-              <p className="text-sm opacity-60">
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-muted">
+                <Sparkles size={26} className="text-accent/60" />
                 {useKB ? "Ask about anything already in your knowledge base." : "Just banter — nothing here is saved."}
-              </p>
+              </div>
             )}
             <ChatLog messages={chatLog} busy={chatBusy} onAddToScratchpad={addToScratchpad} />
           </div>
 
           {chatFile && (
-            <div className="px-3 pb-2 shrink-0 flex items-center gap-2 text-xs">
-              <span className="opacity-70">📎 {chatFile.name}</span>
-              <button onClick={() => setChatFile(null)} className="underline opacity-70 hover:opacity-100">
-                remove
-              </button>
+            <div className="flex shrink-0 items-center gap-2 px-3 pb-2 text-xs">
+              <span className="flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2 py-1 text-muted">
+                <Paperclip size={12} /> {chatFile.name}
+                <button onClick={() => setChatFile(null)} aria-label="Remove attachment" className="hover:text-foreground">
+                  <X size={12} />
+                </button>
+              </span>
             </div>
           )}
 
           {chatError && (
-            <div className="px-3 pb-2 shrink-0 text-xs text-red-600 dark:text-red-400">⚠ {chatError}</div>
+            <div className="flex shrink-0 items-center gap-1.5 px-3 pb-2 text-xs text-danger">
+              <TriangleAlert size={13} /> {chatError}
+            </div>
           )}
-          <div className="p-3 border-t flex gap-2 shrink-0">
-            <label className="border rounded px-2 py-1 text-sm cursor-pointer shrink-0" title="Attach a photo or PDF">
-              📎
+          <div className="flex shrink-0 gap-2 border-t border-line p-3">
+            <label
+              className="flex cursor-pointer items-center rounded-lg border border-line px-2.5 text-muted transition-colors hover:border-accent/50 hover:text-accent"
+              title="Attach a photo or PDF"
+            >
+              <Paperclip size={18} />
               <input
                 type="file"
                 accept="image/*,.pdf"
@@ -491,38 +542,46 @@ export default function KBPage() {
                 }}
               />
             </label>
-            <input
-              className="flex-1 border rounded px-2 py-1 text-sm"
+            <Input
+              className="flex-1"
               placeholder="Say something..."
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && sendChat()}
             />
-            <button
+            <Button
+              variant="primary"
               onClick={sendChat}
               disabled={chatBusy || (!chatInput.trim() && !chatFile)}
-              className="bg-black text-white dark:bg-white dark:text-black rounded px-4 py-2 text-sm disabled:opacity-40"
+              aria-label="Send"
             >
-              Send
-            </button>
+              <SendHorizontal size={18} />
+            </Button>
           </div>
         </div>
 
-        {/* Scratchpad — visible alongside the chat the whole time */}
-        <div className="col-span-4 border rounded p-3 flex flex-col overflow-y-auto">
-          <h2 className="font-medium text-sm mb-2">Scratchpad</h2>
+        {/* Scratchpad — beside the chat on desktop, its own pane on phone */}
+        <div
+          className={cn(
+            "flex-col overflow-y-auto rounded-xl border border-line bg-surface/80 p-3 shadow-panel lg:col-span-4 lg:flex",
+            pane === "scratch" ? "flex" : "hidden"
+          )}
+        >
+          <h2 className={cn(label, "mb-2 flex items-center gap-2 text-accent")}>
+            <NotebookPen size={14} /> Scratchpad
+          </h2>
           {target && (
-            <div className="text-xs bg-black/5 dark:bg-white/10 rounded px-2 py-1 mb-2 flex items-center justify-between gap-2">
+            <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-line bg-surface-2 px-2 py-1 text-xs">
               <span>
                 Updating <strong>{target.title}</strong>
               </span>
-              <button onClick={stopTargeting} className="underline opacity-70 hover:opacity-100 shrink-0">
+              <button onClick={stopTargeting} className="shrink-0 text-accent underline-offset-2 hover:underline">
                 new entry instead
               </button>
             </div>
           )}
-          <textarea
-            className="w-full border rounded p-2 text-sm flex-1"
+          <Textarea
+            className="min-h-40 flex-1"
             rows={10}
             placeholder="Write out whatever you're thinking as you go..."
             value={scratchpad}
@@ -531,109 +590,72 @@ export default function KBPage() {
           {generatedImagePreviewUrl && (
             <div className="mt-2 space-y-1">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={generatedImagePreviewUrl} alt="" className="max-w-full rounded border" />
-              <button onClick={clearGeneratedImage} className="text-xs underline opacity-70 hover:opacity-100">
-                ✕ remove generated image
+              <img src={generatedImagePreviewUrl} alt="" className="max-w-full rounded-lg border border-line" />
+              <button onClick={clearGeneratedImage} className="flex items-center gap-1 text-xs text-muted hover:text-foreground">
+                <X size={12} /> remove generated image
               </button>
             </div>
           )}
-          <div className="flex gap-2 mt-2 flex-wrap">
-            <button
-              onClick={sortWithAI}
-              disabled={busy || !scratchpad.trim()}
-              className="flex-1 bg-black text-white dark:bg-white dark:text-black rounded px-4 py-2 text-sm disabled:opacity-40"
-            >
-              {target ? "Update with AI" : "Sort with AI"}
-            </button>
-            <button
-              onClick={suggestMeal}
-              disabled={busy || !scratchpad.trim()}
-              className="flex-1 border rounded px-4 py-2 text-sm disabled:opacity-40"
-            >
-              Suggest meal
-            </button>
-            <button
-              onClick={suggestOutfit}
-              disabled={busy || !scratchpad.trim()}
-              className="flex-1 border rounded px-4 py-2 text-sm disabled:opacity-40"
-            >
-              Suggest outfit
-            </button>
-            <button
-              onClick={suggestGrooming}
-              disabled={busy || !scratchpad.trim()}
-              className="flex-1 border rounded px-4 py-2 text-sm disabled:opacity-40"
-            >
-              Suggest grooming routine
-            </button>
-            <button
-              onClick={suggestWorkout}
-              disabled={busy || !scratchpad.trim()}
-              className="flex-1 border rounded px-4 py-2 text-sm disabled:opacity-40"
-            >
-              Suggest workout routine
-            </button>
-            <button
-              onClick={generateImageFromPrompt}
-              disabled={busy || !scratchpad.trim()}
-              className="flex-1 border rounded px-4 py-2 text-sm disabled:opacity-40"
-              title="Uses the scratchpad text as the image prompt"
-            >
-              🎨 Generate image
-            </button>
+          <div className="mt-2 space-y-2">
+            <Button variant="primary" className="w-full" onClick={sortWithAI} disabled={busy || !scratchpad.trim()}>
+              <Sparkles size={16} /> {target ? "Update with AI" : "Sort with AI"}
+            </Button>
+            <div className="grid grid-cols-3 gap-2">
+              {suggestionButtons.map((b) => (
+                <Button key={b.text} size="sm" onClick={b.onClick} disabled={busy || !scratchpad.trim()} title={`Suggest ${b.text.toLowerCase()} from the scratchpad`}>
+                  <b.icon size={14} /> {b.text}
+                </Button>
+              ))}
+              <Button
+                size="sm"
+                className="col-span-2"
+                onClick={generateImageFromPrompt}
+                disabled={busy || !scratchpad.trim()}
+                title="Uses the scratchpad text as the image prompt"
+              >
+                <ImagePlus size={14} /> Generate image
+              </Button>
+            </div>
           </div>
 
           {mealSuggestion && (
-            <div className="space-y-2 border-t pt-3 mt-3">
+            <div className="mt-3 space-y-2 border-t border-line pt-3">
               <MealCompositionEditor value={mealSuggestion} onChange={setMealSuggestion} />
-              <button
-                onClick={pushMeal}
-                disabled={busy}
-                className="w-full bg-black text-white dark:bg-white dark:text-black rounded px-4 py-2 text-sm disabled:opacity-40"
-              >
+              <Button variant="primary" className="w-full" onClick={pushMeal} disabled={busy}>
                 Save as meal preset
-              </button>
+              </Button>
             </div>
           )}
 
           {outfitSuggestion && (
-            <div className="space-y-2 border-t pt-3 mt-3">
+            <div className="mt-3 space-y-2 border-t border-line pt-3">
               <OutfitEditor value={outfitSuggestion} onChange={setOutfitSuggestion} />
-              <button
-                onClick={pushOutfit}
-                disabled={busy}
-                className="w-full bg-black text-white dark:bg-white dark:text-black rounded px-4 py-2 text-sm disabled:opacity-40"
-              >
+              <Button variant="primary" className="w-full" onClick={pushOutfit} disabled={busy}>
                 Save as outfit
-              </button>
+              </Button>
             </div>
           )}
 
           {groomingSuggestion && (
-            <div className="space-y-2 border-t pt-3 mt-3">
+            <div className="mt-3 space-y-2 border-t border-line pt-3">
               <GroomingRoutineEditor value={groomingSuggestion} onChange={setGroomingSuggestion} />
-              <button
-                onClick={pushGrooming}
-                disabled={busy}
-                className="w-full bg-black text-white dark:bg-white dark:text-black rounded px-4 py-2 text-sm disabled:opacity-40"
-              >
+              <Button variant="primary" className="w-full" onClick={pushGrooming} disabled={busy}>
                 Save as grooming routine
-              </button>
+              </Button>
             </div>
           )}
 
           {workoutSuggestion && (
-            <div className="space-y-2 border-t pt-3 mt-3">
-              <input
-                className="w-full border rounded px-2 py-1 text-sm"
+            <div className="mt-3 space-y-2 border-t border-line pt-3">
+              <Input
                 placeholder="routine name"
                 value={workoutSuggestion.name}
                 onChange={(e) => setWorkoutSuggestion({ ...workoutSuggestion, name: e.target.value })}
               />
               {workoutSuggestion.exercises.map((ex, ei) => (
-                <div key={ei} className="flex gap-1 items-center text-xs">
-                  <input
-                    className="border rounded px-1 py-0.5 flex-1"
+                <div key={ei} className="flex items-center gap-1.5">
+                  <Input
+                    className="flex-1 py-1 text-xs"
                     value={ex}
                     onChange={(e) =>
                       setWorkoutSuggestion({
@@ -649,66 +671,51 @@ export default function KBPage() {
                         exercises: workoutSuggestion.exercises.filter((_, xi) => xi !== ei),
                       })
                     }
-                    className="opacity-50 hover:opacity-100 px-1"
+                    aria-label="Remove exercise"
+                    className="p-1 text-muted hover:text-danger"
                   >
-                    ✕
+                    <X size={14} />
                   </button>
                 </div>
               ))}
               <button
                 onClick={() => setWorkoutSuggestion({ ...workoutSuggestion, exercises: [...workoutSuggestion.exercises, ""] })}
-                className="text-xs underline opacity-70 hover:opacity-100"
+                className="flex items-center gap-1 text-xs text-accent hover:underline"
               >
-                + add exercise
+                <Plus size={12} /> add exercise
               </button>
-              <button
-                onClick={pushWorkout}
-                disabled={busy}
-                className="w-full bg-black text-white dark:bg-white dark:text-black rounded px-4 py-2 text-sm disabled:opacity-40"
-              >
+              <Button variant="primary" className="w-full" onClick={pushWorkout} disabled={busy}>
                 Save as workout routine
-              </button>
+              </Button>
             </div>
           )}
 
           {suggestion && (
-            <div className="space-y-2 border-t pt-3 mt-3">
-              <label className="block text-sm">
-                Folder
-                <input
-                  className="block w-full border rounded px-2 py-1 mt-1 text-sm"
-                  value={suggestion.folder}
-                  onChange={(e) => setSuggestion({ ...suggestion, folder: e.target.value })}
-                />
+            <div className="mt-3 space-y-2 border-t border-line pt-3">
+              <label className="block">
+                <span className={label}>Folder</span>
+                <Input className="mt-1" value={suggestion.folder} onChange={(e) => setSuggestion({ ...suggestion, folder: e.target.value })} />
               </label>
-              <label className="block text-sm">
-                Title
-                <input
-                  className="block w-full border rounded px-2 py-1 mt-1 text-sm"
-                  value={suggestion.title}
-                  onChange={(e) => setSuggestion({ ...suggestion, title: e.target.value })}
-                />
+              <label className="block">
+                <span className={label}>Title</span>
+                <Input className="mt-1" value={suggestion.title} onChange={(e) => setSuggestion({ ...suggestion, title: e.target.value })} />
               </label>
-              <label className="block text-sm">
-                Content
-                <textarea
-                  className="block w-full border rounded p-2 mt-1 text-sm"
+              <label className="block">
+                <span className={label}>Content</span>
+                <Textarea
+                  className="mt-1"
                   rows={8}
                   value={suggestion.content}
                   onChange={(e) => setSuggestion({ ...suggestion, content: e.target.value })}
                 />
               </label>
-              <button
-                onClick={push}
-                disabled={busy}
-                className="w-full bg-black text-white dark:bg-white dark:text-black rounded px-4 py-2 text-sm disabled:opacity-40"
-              >
+              <Button variant="primary" className="w-full" onClick={push} disabled={busy}>
                 {target ? "Push update" : "Push to Knowledge Base"}
-              </button>
+              </Button>
             </div>
           )}
 
-          {status && <p className="text-sm opacity-70 mt-2">{status}</p>}
+          {status && <p className="mt-2 text-sm text-muted">{status}</p>}
         </div>
       </div>
     </div>
