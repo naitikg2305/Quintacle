@@ -756,13 +756,15 @@ export async function proposeDrop(
   text: string,
   file: File | null,
   keepAsIs = false,
-  file2: File | null = null
+  file2: File | null = null,
+  referenceDate = ""
 ): Promise<{ entries: ParsedEntry[] }> {
   const form = new FormData();
   form.append("text", text);
   if (file) form.append("file", file);
   if (file2) form.append("file2", file2);
   form.append("keep_as_is", String(keepAsIs));
+  if (referenceDate) form.append("reference_date", referenceDate);
   const res = await fetch(`${API_BASE}/drop`, { method: "POST", body: form });
   if (!res.ok) throw new Error(`drop failed: ${res.status} ${await res.text()}`);
   return res.json();

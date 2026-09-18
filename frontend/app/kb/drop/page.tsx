@@ -3,7 +3,45 @@
 import { useEffect, useState } from "react";
 import EntryCard from "@/components/EntryCard";
 import ScribblePad from "@/components/ScribblePad";
-import { ExerciseSet, listExerciseNames, listMeals, Meal, ParsedEntry, proposeDrop } from "@/lib/api";
+import { ExerciseSet, listExerciseNames, listMeals, Meal, ParsedEntry, proposeDrop, saveJournal } from "@/lib/api";
+import Link from "next/link";
+import {
+  Activity,
+  Apple,
+  Armchair,
+  BookOpen,
+  Building2,
+  Camera,
+  ChefHat,
+  ChevronDown,
+  ChevronUp,
+  ClipboardList,
+  CreditCard,
+  Droplets,
+  Dumbbell,
+  FileText,
+  ImagePlus,
+  Inbox,
+  ListChecks,
+  ListOrdered,
+  MapPin,
+  Pill,
+  PenLine,
+  Scale,
+  Shirt,
+  Sparkles,
+  Tag,
+  TrendingUp,
+  Upload,
+  User,
+  Utensils,
+  X,
+  type LucideIcon,
+} from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { Input, Textarea } from "@/components/ui/Field";
+import { EmptyState, PageHeader, Panel } from "@/components/ui/Panel";
+import { cn } from "@/lib/cn";
 import { BLANK, commitEntry } from "@/lib/entries";
 
 const IMAGE_EXT = ["jpg", "jpeg", "png", "gif", "webp"];
@@ -12,6 +50,33 @@ const VIDEO_EXT = ["mp4", "webm", "mov", "m4v"];
 function extFor(file: File): string {
   return file.name.split(".").pop()?.toLowerCase() ?? "";
 }
+
+const MANUAL: { type: ParsedEntry["type"]; label: string; icon: LucideIcon }[] = [
+  { type: "activity", label: "Activity", icon: Activity },
+  { type: "food", label: "Food", icon: Utensils },
+  { type: "exercise", label: "Exercise", icon: Dumbbell },
+  { type: "substance", label: "Substance", icon: Pill },
+  { type: "todo", label: "Todo", icon: ListChecks },
+  { type: "body_stat", label: "Weight", icon: Scale },
+  { type: "ingredient_preset", label: "Ingredient", icon: Apple },
+  { type: "meal_composition", label: "Composed meal", icon: ChefHat },
+  { type: "workout_routine", label: "Routine", icon: ClipboardList },
+  { type: "wardrobe_item", label: "Wardrobe item", icon: Shirt },
+  { type: "outfit_composition", label: "Outfit", icon: Tag },
+  { type: "outfit_photo", label: "Outfit photo", icon: Camera },
+  { type: "grooming_item", label: "Product", icon: Droplets },
+  { type: "grooming_routine_composition", label: "Grooming routine", icon: ListOrdered },
+  { type: "document_entry", label: "Document", icon: FileText },
+  { type: "home_item", label: "Home item", icon: Armchair },
+  { type: "residence_entry", label: "Residence", icon: Building2 },
+  { type: "experience_entry", label: "Experience", icon: MapPin },
+  { type: "person_entry", label: "Person", icon: User },
+  { type: "credit_card_entry", label: "Credit card", icon: CreditCard },
+  { type: "investment_entry", label: "Investment", icon: TrendingUp },
+];
+
+// Long text is almost always a day's narrative worth keeping verbatim.
+const JOURNAL_AUTO_CHARS = 200;
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -23,8 +88,10 @@ function today(): string {
 // weight/finance/note/label/...) routes deterministically with no AI call;
 // an unprefixed photo gets one cheap vision classification; anything else
 // falls through to full AI text classification. Nothing is written until
-// you review and Save below. Distinct from Journal (the nightly narrative
-// dump) — Drop never touches the journal.
+// you review and Save below. Drop also covers everything the Journal page
+// does: a day's narrative is parsed with the same parse_journal_dump, "yesterday"
+// resolves against the date picked here, and "save to journal" keeps the raw
+// text verbatim as that day's journal (appended, never overwritten).
 export default function DropPage() {
   const [date, setDate] = useState(today());
   const [text, setText] = useState("");
@@ -32,10 +99,8 @@ export default function DropPage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
   // Beyond the primary `file` — as many additional photos as you want (a
-  // multi-page note, several angles of the same thing). Only kb_entry
-  // actually keeps all of them; document/wardrobe/grooming/home items still
-  // cap at 2 total (see commitEntry's comment) — extras beyond that are
-  // silently unused for those types.
+  // multi-page note, several angles of the same thing); every asset-carrying
+  // entry type keeps all of them (see commitEntry).
   const [extraPhotos, setExtraPhotos] = useState<File[]>([]);
   const [extraPreviewUrls, setExtraPreviewUrls] = useState<string[]>([]);
   const [entries, setEntries] = useState<ParsedEntry[]>([]);
@@ -45,11 +110,20 @@ export default function DropPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [keepAsIs, setKeepAsIs] = useState(false);
   const [showScribble, setShowScribble] = useState(false);
+  const [showManual, setShowManual] = useState(false);
+  // Journal: also keep the raw text verbatim as this day's journal entry.
+  // Auto-ticks for long text until the user decides either way.
+  const [saveToJournal, setSaveToJournal] = useState(false);
+  const [journalTouched, setJournalTouched] = useState(false);
 
   useEffect(() => {
     listMeals().then(setMeals);
     listExerciseNames().then(setExerciseNames);
   }, []);
+
+  useEffect(() => {
+    if (!journalTouched) setSaveToJournal(text.trim().length >= JOURNAL_AUTO_CHARS);
+  }, [text, journalTouched]);
 
   useEffect(() => {
     const urls = extraPhotos.map((f) => URL.createObjectURL(f));
@@ -89,9 +163,31 @@ export default function DropPage() {
       // vision call needs just enough to recognize what this is, not every
       // page) — extraPhotos beyond the first are still attached in full at
       // save time below, they just aren't part of what AI looks at here.
-      const { entries: proposed } = await proposeDrop(text, file, keepAsIs, extraPhotos[0] ?? null);
+      const { entries: proposed } = await proposeDrop(text, file, keepAsIs, extraPhotos[0] ?? null, date);
       setEntries((prev) => [...prev, ...proposed]);
       setStatus(`${proposed.length} entr${proposed.length === 1 ? "y" : "ies"} proposed — review below`);
+    } catch (e) {
+      setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setBusy(false);
+  }
+
+  // The journal store appends a timestamped block on every save (it never
+  // overwrites), so just send the new text — re-sending existing content
+  // would duplicate it.
+  async function appendToJournal() {
+    await saveJournal(date, text.trim());
+  }
+
+  async function saveJournalOnly() {
+    if (!text.trim()) return;
+    setBusy(true);
+    setStatus("saving to journal...");
+    try {
+      await appendToJournal();
+      setStatus(`saved to your ${date} journal`);
+      setText("");
+      setJournalTouched(false);
     } catch (e) {
       setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -146,6 +242,7 @@ export default function DropPage() {
     // extract structured data and don't need the file itself. A drop only
     // ever produces one entry when a file was involved, so this attaches to
     // the right one unambiguously.
+    if (saveToJournal && text.trim()) await appendToJournal();
     const ASSET_TYPES = new Set(["kb_entry", "document_entry", "wardrobe_item", "grooming_item", "home_item", "outfit_photo"]);
     for (const entry of entries) {
       const assets = ASSET_TYPES.has(entry.type) && file ? [file, ...extraPhotos] : [];
@@ -154,67 +251,111 @@ export default function DropPage() {
     setStatus(`saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
     setEntries([]);
     setText("");
+    setJournalTouched(false);
     onFileChosen(null);
     setBusy(false);
   }
 
+  const mono = "font-mono text-[10px] uppercase tracking-[0.14em] text-muted";
+
   return (
-    <div className="space-y-4 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-semibold">Drop</h1>
-      <p className="text-sm opacity-60 -mt-2">
-        Everything goes in here — todos, food, workouts, expenses, notes, a full dump of your day, photos, PDFs, DOCX. A
-        recognized prefix ("food:", "todo:", "expense:", "note:"...) routes instantly with no AI; an unprefixed photo gets
-        classified; anything else falls back to full AI classification.
-      </p>
-
-      <label className="block text-sm">
-        Date (for logged entries — todos use their own due date)
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="block border rounded px-2 py-1 mt-1" />
-      </label>
-
-      <textarea
-        className="w-full border rounded p-2 text-sm"
-        rows={4}
-        placeholder={'Type anything — "food: had a burrito", "expense: $12 at chipotle", "note: my monitor arm height is 47cm", or just describe what\'s being dropped... (for the day\'s full narrative, use Journal instead)'}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
+    <div className="mx-auto max-w-3xl space-y-4">
+      <PageHeader
+        title="Drop"
+        icon={Inbox}
+        subtitle='Everything goes in here — todos, food, workouts, expenses, notes, a full day, photos, PDFs. A prefix like "food:" or "todo:" routes instantly with no AI.'
       />
 
-      <div onDragOver={(e) => e.preventDefault()} onDrop={onDrop} className="border-2 border-dashed rounded p-6 text-center space-y-3">
+      <Panel title="What happened">
+        <div className="space-y-3">
+          <Textarea
+            rows={5}
+            placeholder={'Type anything — "food: had a burrito", "expense: $12 at chipotle", "note: monitor arm height is 47cm", or write out your whole day...'}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <label className="flex items-center gap-2">
+              <span className={mono}>Date</span>
+              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-auto py-1 text-xs" />
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={saveToJournal}
+                onChange={(e) => {
+                  setJournalTouched(true);
+                  setSaveToJournal(e.target.checked);
+                }}
+                className="accent-[var(--color-accent)]"
+              />
+              Also save this text to my journal for {date}
+            </label>
+            <Link href="/journal" className="text-xs text-accent hover:underline">
+              open journal →
+            </Link>
+          </div>
+          <p className="text-xs text-muted">
+            Dates like &quot;yesterday&quot; resolve against the date above. Todos use their own due date.
+          </p>
+        </div>
+      </Panel>
+
+      <div
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={onDrop}
+        className="space-y-3 rounded-xl border-2 border-dashed border-line-strong bg-accent/[0.03] p-5 text-center"
+      >
         {previewUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={previewUrl} alt="" className="max-h-64 mx-auto rounded" />
+          <img src={previewUrl} alt="" className="mx-auto max-h-64 rounded-lg" />
         ) : videoPreviewUrl ? (
           // eslint-disable-next-line jsx-a11y/media-has-caption
-          <video src={videoPreviewUrl} controls className="max-h-64 mx-auto rounded" />
+          <video src={videoPreviewUrl} controls className="mx-auto max-h-64 rounded-lg" />
         ) : file ? (
-          <p className="text-sm">📄 {file.name}</p>
+          <p className="flex items-center justify-center gap-2 text-sm">
+            <FileText size={16} className="text-accent" /> {file.name}
+          </p>
         ) : (
-          <p className="text-sm opacity-60">Drag a photo/video/PDF/DOCX here, or choose one below (optional)</p>
+          <div className="flex flex-col items-center gap-2 text-sm text-muted">
+            <Upload size={26} className="text-accent/70" />
+            Drag a photo, video, PDF or DOCX here — or choose one (optional)
+          </div>
         )}
-        <input
-          type="file"
-          accept="image/*,video/*,.pdf,.docx,.stl"
-          capture="environment"
-          onChange={(e) => onFileChosen(e.target.files?.[0] ?? null)}
-          className="text-sm mx-auto"
-        />
-        <button onClick={() => setShowScribble((s) => !s)} className="text-xs underline opacity-70 hover:opacity-100">
-          {showScribble ? "hide scribble pad" : "or scribble something instead ✏️"}
-        </button>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line-strong px-4 py-2 text-sm transition-colors hover:border-accent/60 hover:bg-accent/10">
+            <Upload size={15} /> Choose file
+            <input
+              type="file"
+              accept="image/*,video/*,.pdf,.docx,.stl"
+              capture="environment"
+              onChange={(e) => onFileChosen(e.target.files?.[0] ?? null)}
+              className="hidden"
+            />
+          </label>
+          <Button onClick={() => setShowScribble((v) => !v)}>
+            <PenLine size={15} /> {showScribble ? "Hide scribble pad" : "Scribble"}
+          </Button>
+          {file && (
+            <Button variant="ghost" onClick={() => onFileChosen(null)}>
+              <X size={15} /> Clear
+            </Button>
+          )}
+        </div>
       </div>
 
       {previewUrl && extraPhotos.length > 0 && (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
           {extraPreviewUrls.map((url, i) => (
             <div key={i} className="relative">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt="" className="w-full h-32 object-cover rounded border" />
+              <img src={url} alt="" className="h-28 w-full rounded-lg border border-line object-cover" />
               <button
                 onClick={() => removeExtraPhoto(i)}
-                className="absolute top-1 right-1 bg-black/70 text-white rounded-full w-5 h-5 text-xs leading-5"
+                aria-label="Remove photo"
+                className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white hover:bg-danger"
               >
-                ✕
+                <X size={12} />
               </button>
             </div>
           ))}
@@ -222,8 +363,8 @@ export default function DropPage() {
       )}
 
       {previewUrl && (
-        <label className="text-xs underline opacity-70 hover:opacity-100 cursor-pointer inline-block">
-          + add another photo (back / label / another angle / another page) — as many as you want
+        <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-accent hover:underline">
+          <ImagePlus size={14} /> add another photo (back / label / another angle / another page) — as many as you want
           <input
             type="file"
             accept="image/*"
@@ -246,115 +387,75 @@ export default function DropPage() {
         />
       )}
 
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={keepAsIs} onChange={(e) => setKeepAsIs(e.target.checked)} />
-        This is an already-finished document — don&apos;t let AI rewrite it, just suggest where it goes
+      <label className="flex cursor-pointer items-center gap-2 text-sm text-muted">
+        <input type="checkbox" checked={keepAsIs} onChange={(e) => setKeepAsIs(e.target.checked)} className="accent-[var(--color-accent)]" />
+        Already-finished document — don&apos;t let AI rewrite it, just suggest where it goes
       </label>
 
-      <div className="flex flex-wrap gap-2 items-center">
-        <button
-          onClick={sortWithAI}
-          disabled={busy || (!text.trim() && !file)}
-          className="bg-black text-white dark:bg-white dark:text-black rounded px-4 py-2 text-sm disabled:opacity-40"
-        >
-          Sort
-        </button>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" className="flex-1 sm:flex-none" onClick={sortWithAI} disabled={busy || (!text.trim() && !file)}>
+          <Sparkles size={16} /> Sort
+        </Button>
+        {saveToJournal && text.trim() && (
+          <Button className="flex-1 sm:flex-none" onClick={saveJournalOnly} disabled={busy} title="Keep the text as this day's journal without parsing it into entries">
+            <BookOpen size={16} /> Save to journal only
+          </Button>
+        )}
       </div>
-      <div className="flex flex-wrap gap-2 items-center">
-        <span className="text-sm opacity-50">or add manually:</span>
-        <button onClick={() => addManual("activity")} className="border rounded px-3 py-1 text-sm">
-          + Activity
+
+      <div>
+        <button
+          onClick={() => setShowManual((v) => !v)}
+          className="flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-accent"
+        >
+          {showManual ? <ChevronUp size={16} /> : <ChevronDown size={16} />} or add manually
         </button>
-        <button onClick={() => addManual("food")} className="border rounded px-3 py-1 text-sm">
-          + Food
-        </button>
-        <button onClick={() => addManual("exercise")} className="border rounded px-3 py-1 text-sm">
-          + Exercise
-        </button>
-        <button onClick={() => addManual("substance")} className="border rounded px-3 py-1 text-sm">
-          + Substance
-        </button>
-        <button onClick={() => addManual("todo")} className="border rounded px-3 py-1 text-sm">
-          + Todo
-        </button>
-        <button onClick={() => addManual("body_stat")} className="border rounded px-3 py-1 text-sm">
-          + Weight
-        </button>
-        <button onClick={() => addManual("ingredient_preset")} className="border rounded px-3 py-1 text-sm">
-          + Ingredient
-        </button>
-        <button onClick={() => addManual("meal_composition")} className="border rounded px-3 py-1 text-sm">
-          + Composed meal
-        </button>
-        <button onClick={() => addManual("workout_routine")} className="border rounded px-3 py-1 text-sm">
-          + Routine
-        </button>
-        <button onClick={() => addManual("wardrobe_item")} className="border rounded px-3 py-1 text-sm">
-          + Item
-        </button>
-        <button onClick={() => addManual("outfit_composition")} className="border rounded px-3 py-1 text-sm">
-          + Outfit
-        </button>
-        <button onClick={() => addManual("outfit_photo")} className="border rounded px-3 py-1 text-sm">
-          + Outfit Photo
-        </button>
-        <button onClick={() => addManual("grooming_item")} className="border rounded px-3 py-1 text-sm">
-          + Product
-        </button>
-        <button onClick={() => addManual("grooming_routine_composition")} className="border rounded px-3 py-1 text-sm">
-          + Grooming Routine
-        </button>
-        <button onClick={() => addManual("document_entry")} className="border rounded px-3 py-1 text-sm">
-          + Document
-        </button>
-        <button onClick={() => addManual("home_item")} className="border rounded px-3 py-1 text-sm">
-          + Home Item
-        </button>
-        <button onClick={() => addManual("residence_entry")} className="border rounded px-3 py-1 text-sm">
-          + Residence
-        </button>
-        <button onClick={() => addManual("experience_entry")} className="border rounded px-3 py-1 text-sm">
-          + Experience
-        </button>
-        <button onClick={() => addManual("person_entry")} className="border rounded px-3 py-1 text-sm">
-          + Person
-        </button>
-        <button onClick={() => addManual("credit_card_entry")} className="border rounded px-3 py-1 text-sm">
-          + Credit Card
-        </button>
-        <button onClick={() => addManual("investment_entry")} className="border rounded px-3 py-1 text-sm">
-          + Investment
-        </button>
+        {showManual && (
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+            {MANUAL.map((m) => (
+              <button
+                key={m.type}
+                onClick={() => addManual(m.type)}
+                className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-2 text-left text-xs text-muted transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-foreground"
+              >
+                <m.icon size={15} className="shrink-0 text-accent" />
+                {m.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {entries.length > 0 && (
-        <div className="border rounded p-4 space-y-3">
-          <h2 className="font-medium">Review before saving</h2>
-          {entries.map((entry, i) => (
-            <EntryCard
-              key={i}
-              entry={entry}
-              index={i}
-              meals={meals}
-              exerciseNames={exerciseNames}
-              onUpdate={updateEntry}
-              onRemove={removeEntry}
-              onUpdateSet={updateSet}
-              onAddSet={addSet}
-              onRemoveSet={removeSet}
-            />
-          ))}
-          <button
-            onClick={saveAll}
-            disabled={busy}
-            className="w-full bg-black text-white dark:bg-white dark:text-black rounded px-4 py-2 text-sm disabled:opacity-40"
-          >
-            Save {entries.length} entr{entries.length === 1 ? "y" : "ies"}
-          </button>
-        </div>
+        <Panel title="Review before saving" className={cn("border-line-strong")}>
+          <div className="space-y-3">
+            {entries.map((entry, i) => (
+              <EntryCard
+                key={i}
+                entry={entry}
+                index={i}
+                meals={meals}
+                exerciseNames={exerciseNames}
+                onUpdate={updateEntry}
+                onRemove={removeEntry}
+                onUpdateSet={updateSet}
+                onAddSet={addSet}
+                onRemoveSet={removeSet}
+              />
+            ))}
+            <Button variant="primary" className="w-full" onClick={saveAll} disabled={busy}>
+              Save {entries.length} entr{entries.length === 1 ? "y" : "ies"}
+              {saveToJournal && text.trim() ? " + journal" : ""}
+            </Button>
+          </div>
+        </Panel>
       )}
 
-      {status && <p className="text-sm opacity-70">{status}</p>}
+      {entries.length === 0 && !status && !text.trim() && !file && (
+        <EmptyState icon={Inbox}>Nothing queued. Type, drop a file, or add an entry by hand — nothing is saved until you review it.</EmptyState>
+      )}
+
+      {status && <p className="text-sm text-muted">{status}</p>}
     </div>
   );
 }

@@ -182,6 +182,7 @@ def create_app() -> FastAPI:
         file: UploadFile | None = File(None),
         file2: UploadFile | None = File(None),
         keep_as_is: bool = Form(False),
+        reference_date: str = Form(""),
     ) -> dict:
         """The one general drop, covering schedule/journal/finance/KB entries.
         Deterministic keyword-prefix routing first (parse_prefix — no AI call);
@@ -235,7 +236,13 @@ def create_app() -> FastAPI:
                 # fields, auto-renewal-todo); anything else stays a KB note.
                 entry_type = classify_text_file_type(get_description())
 
-        reference_date = date.today()
+        # The date "yesterday"/"last Tuesday" resolve against — the day the
+        # user picked in the UI (backfilling an older day), else today. Same
+        # behavior Journal's /parse has always had via its for_date.
+        try:
+            reference_date = date.fromisoformat(reference_date) if reference_date else date.today()
+        except ValueError:
+            raise HTTPException(400, "reference_date must be YYYY-MM-DD")
         known_meals = [dict(row) for row in get_logs_repo().list_meals()]
         known_routines = get_logs_repo().list_routines()
 
