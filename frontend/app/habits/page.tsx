@@ -2,6 +2,13 @@
 
 import { useEffect, useState } from "react";
 import ReadOnlyChat from "@/components/ReadOnlyChat";
+import Link from "next/link";
+import { ChevronDown, ChevronUp, CircleCheck, LayoutDashboard, MessageSquare, Plus, TriangleAlert } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { Input, Select } from "@/components/ui/Field";
+import { Badge, PageHeader, Panel, Stat } from "@/components/ui/Panel";
+import { Segmented } from "@/components/ui/Segmented";
+import { cn } from "@/lib/cn";
 import {
   createHabit,
   getNutritionHistory,
@@ -22,64 +29,92 @@ const PERIODS = ["day", "week", "2weeks", "month"];
 type GoalType = "time" | "amount_cap";
 type Row = { habit: Habit; progress: HabitProgress; history: HabitHistoryPoint[] };
 
-function Sparkline({ history, direction }: { history: HabitHistoryPoint[]; direction: string }) {
-  const w = 24;
+// One accent for "target met", a quiet neutral for "not yet" — the mark carries
+// the state, and every bar has a native hover tooltip with the real numbers.
+function Bars({ bars, height = 30 }: { bars: { value: number; met: boolean; label: string }[]; height?: number }) {
+  const w = 22;
   const gap = 3;
-  const h = 28;
+  const max = Math.max(...bars.map((b) => b.value), 1);
   return (
-    <svg width={history.length * (w + gap)} height={h} className="shrink-0">
-      {history.map((p, i) => {
-        const pct = p.target > 0 ? Math.min(1, p.current / p.target) : 0;
-        const barH = Math.max(2, pct * h);
-        const good = direction === "at_most" ? p.met : p.met;
+    <svg width={bars.length * (w + gap)} height={height} className="shrink-0" role="img">
+      {bars.map((b, i) => {
+        const barH = Math.max(3, (b.value / max) * height);
         return (
           <rect
             key={i}
             x={i * (w + gap)}
-            y={h - barH}
+            y={height - barH}
             width={w}
             height={barH}
-            rx={2}
-            className={good ? "fill-black dark:fill-white" : "fill-black/25 dark:fill-white/25"}
-          />
+            rx={3}
+            className={b.met ? "fill-accent" : "fill-muted/40"}
+          >
+            <title>{b.label}</title>
+          </rect>
         );
       })}
     </svg>
   );
 }
 
+function Sparkline({ history }: { history: HabitHistoryPoint[] }) {
+  return (
+    <Bars
+      bars={history.map((p) => ({
+        // Height = progress toward that period's own target (capped at full).
+        value: p.target > 0 ? Math.min(1, p.current / p.target) : 0,
+        met: p.met,
+        label: `${p.window.start} → ${p.window.end}: ${p.current} / ${p.target}${p.met ? " ✓" : ""}`,
+      }))}
+    />
+  );
+}
+
 function TrendBars({
   values,
+  dates,
   target,
   direction,
+  unit,
 }: {
   values: number[];
+  dates: string[];
   target: number;
   direction: "at_least" | "at_most";
+  unit: string;
 }) {
-  const w = 24;
-  const gap = 3;
-  const h = 28;
-  const max = Math.max(target, ...values, 1);
   return (
-    <svg width={values.length * (w + gap)} height={h} className="shrink-0">
-      {values.map((v, i) => {
-        const barH = Math.max(2, (v / max) * h);
-        const met = direction === "at_most" ? v <= target : v >= target;
-        return (
-          <rect
-            key={i}
-            x={i * (w + gap)}
-            y={h - barH}
-            width={w}
-            height={barH}
-            rx={2}
-            className={met ? "fill-black dark:fill-white" : "fill-black/25 dark:fill-white/25"}
-          />
-        );
-      })}
-    </svg>
+    <Bars
+      bars={values.map((v, i) => ({
+        value: v,
+        met: direction === "at_most" ? v <= target : v >= target,
+        label: `${dates[i]}: ${Math.round(v)} ${unit} (target ${direction === "at_most" ? "≤" : "≥"} ${Math.round(target)})`,
+      }))}
+    />
   );
+}
+
+// Status is never color alone: an icon and a word ride with it.
+function GoalStatus({ p }: { p: HabitProgress }) {
+  const over = p.direction === "at_most" && p.current > p.target;
+  if (over)
+    return (
+      <Badge tone="danger">
+        <TriangleAlert size={11} className="mr-1" /> over cap
+      </Badge>
+    );
+  if (p.met)
+    return (
+      <Badge tone="ok">
+        <CircleCheck size={11} className="mr-1" /> {p.direction === "at_most" ? "under cap" : "met"}
+      </Badge>
+    );
+  return <Badge tone="muted">in progress</Badge>;
+}
+
+function meterColor(p: HabitProgress, pct: number): string {
+  if (p.direction === "at_most") return pct > 100 ? "bg-danger" : pct > 85 ? "bg-warn" : "bg-accent";
+  return p.met ? "bg-ok" : "bg-accent";
 }
 
 export default function HabitsPage() {
@@ -92,6 +127,7 @@ export default function HabitsPage() {
   const [period, setPeriod] = useState("week");
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [status, setStatus] = useState<string | null>(null);
+  const [askOpen, setAskOpen] = useState(false);
 
   async function refresh() {
     const habits = await listHabits();
@@ -141,141 +177,160 @@ export default function HabitsPage() {
     await refresh();
   }
 
-  return (
-    <div className="space-y-6 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-semibold">Dashboard</h1>
-      <p className="text-sm opacity-60 -mt-4">Goals vs. actuals, with trend — finance rows slot in here once phase 3 lands.</p>
+  const onTrack = rows.filter((r) => r.progress.met).length;
+  const mono = "font-mono text-[10px] uppercase tracking-[0.14em] text-muted";
 
-      <ReadOnlyChat />
+  return (
+    <div className="mx-auto max-w-4xl space-y-4">
+      <PageHeader title="Dashboard" icon={LayoutDashboard} subtitle="Goals vs. actuals, with trend." />
+
+      <div className="grid grid-cols-3 gap-3">
+        <Stat label="Goals" value={rows.length} />
+        <Stat label="On track" value={onTrack} tone="ok" />
+        <Stat label="Still going" value={rows.length - onTrack} tone={rows.length - onTrack > 0 ? "warn" : "ok"} />
+      </div>
+
+      <div>
+        <button
+          onClick={() => setAskOpen((v) => !v)}
+          className="flex w-full items-center justify-between rounded-xl border border-line bg-surface/80 px-4 py-2.5 text-left transition-colors hover:border-accent/50"
+        >
+          <span className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] text-accent">
+            <MessageSquare size={14} /> Ask about your data
+          </span>
+          {askOpen ? <ChevronUp size={16} className="text-muted" /> : <ChevronDown size={16} className="text-muted" />}
+        </button>
+        {askOpen && (
+          <div className="mt-2">
+            <ReadOnlyChat />
+          </div>
+        )}
+      </div>
 
       {targets && "error" in targets && (
-        <p className="text-sm opacity-60 border rounded p-3">
-          {targets.error} — set up your <a href="/profile" className="underline">Profile</a> to see personalized kcal/protein targets here.
-        </p>
+        <Panel>
+          <p className="text-sm text-muted">
+            {targets.error} — set up your{" "}
+            <Link href="/profile" className="text-accent underline-offset-2 hover:underline">
+              Profile
+            </Link>{" "}
+            to see personalized kcal/protein targets here.
+          </p>
+        </Panel>
       )}
 
       {targets && !("error" in targets) && nutritionHistory.length > 0 && (
-        <div className="space-y-3">
-          <div className="border rounded p-4 space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="font-medium">Calories</span>
-              <span>target ~{targets.tdee_kcal} kcal/day (TDEE)</span>
+        <div className="grid gap-3 md:grid-cols-2">
+          <Panel title="Calories">
+            <p className="text-sm text-muted">
+              target <span className="font-mono text-foreground">~{targets.tdee_kcal}</span> kcal/day (TDEE)
+            </p>
+            <div className="mt-3 flex items-center gap-3">
+              <TrendBars
+                values={nutritionHistory.map((h) => h.kcal)}
+                dates={nutritionHistory.map((h) => h.date)}
+                target={targets.tdee_kcal}
+                direction="at_most"
+                unit="kcal"
+              />
+              <span className={mono}>last {nutritionHistory.length} days</span>
             </div>
-            <div className="flex items-center gap-2">
-              <TrendBars values={nutritionHistory.map((h) => h.kcal)} target={targets.tdee_kcal} direction="at_most" />
-              <span className="text-xs opacity-50">last {nutritionHistory.length} days</span>
-            </div>
-          </div>
-          <div className="border rounded p-4 space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="font-medium">Protein</span>
-              <span>target {targets.protein_target_g}g/day</span>
-            </div>
-            <div className="flex items-center gap-2">
+          </Panel>
+          <Panel title="Protein">
+            <p className="text-sm text-muted">
+              target <span className="font-mono text-foreground">{targets.protein_target_g}</span> g/day
+            </p>
+            <div className="mt-3 flex items-center gap-3">
               <TrendBars
                 values={nutritionHistory.map((h) => h.protein_g)}
+                dates={nutritionHistory.map((h) => h.date)}
                 target={targets.protein_target_g}
                 direction="at_least"
+                unit="g"
               />
-              <span className="text-xs opacity-50">last {nutritionHistory.length} days</span>
+              <span className={mono}>last {nutritionHistory.length} days</span>
             </div>
-          </div>
+          </Panel>
         </div>
       )}
 
-      <div className="space-y-3">
-        {rows.length === 0 && <p className="opacity-60 text-sm">No goals set yet.</p>}
+      {rows.length === 0 && <p className="text-sm text-muted">No goals set yet.</p>}
+      <div className="grid gap-3 md:grid-cols-2">
         {rows.map(({ habit, progress: p, history }) => {
-          const pct = Math.min(100, (p.current / p.target) * 100);
+          const pct = p.target > 0 ? (p.current / p.target) * 100 : 0;
           return (
-            <div key={habit.id} className="border rounded p-4 space-y-3">
-              <div>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="font-medium">{p.habit}</span>
-                  <span>
-                    {p.current} {p.direction === "at_most" ? "of" : "/"} {p.target} {p.unit}{" "}
-                    {p.direction === "at_most" ? "cap" : ""} per {p.target_period}
-                    {p.met ? " ✓" : ""}
-                  </span>
+            <Panel key={habit.id} bodyClassName="space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{p.habit}</p>
+                  <p className="text-xs text-muted">
+                    <span className="font-mono text-foreground">{p.current}</span> {p.direction === "at_most" ? "of" : "/"}{" "}
+                    <span className="font-mono text-foreground">{p.target}</span> {p.unit}
+                    {p.direction === "at_most" ? " cap" : ""} per {p.target_period}
+                  </p>
                 </div>
-                <div className="h-2 bg-black/10 dark:bg-white/10 rounded overflow-hidden">
-                  <div className="h-full bg-black dark:bg-white" style={{ width: `${pct}%` }} />
-                </div>
+                <GoalStatus p={p} />
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+                <div className={cn("h-full rounded-full", meterColor(p, pct))} style={{ width: `${Math.min(100, pct)}%` }} />
               </div>
               {history.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <Sparkline history={history} direction={p.direction} />
-                  <span className="text-xs opacity-50">last {history.length} {p.target_period}s</span>
+                <div className="flex items-center gap-3">
+                  <Sparkline history={history} />
+                  <span className={mono}>
+                    last {history.length} {p.target_period}s
+                  </span>
                 </div>
               )}
-            </div>
+            </Panel>
           );
         })}
       </div>
 
-      <div className="border rounded p-4 space-y-3">
-        <h2 className="font-medium">Add a goal</h2>
-        <div className="flex gap-3 text-sm">
-          <label className="flex items-center gap-1">
-            <input
-              type="radio"
-              checked={goalType === "time"}
-              onChange={() => setGoalType("time")}
-            />
-            Time-based (hours)
-          </label>
-          <label className="flex items-center gap-1">
-            <input
-              type="radio"
-              checked={goalType === "amount_cap"}
-              onChange={() => setGoalType("amount_cap")}
-            />
-            Amount cap (kcal)
-          </label>
-        </div>
-        <input
-          className="border rounded px-2 py-1 w-full text-sm"
+      <Panel title="Add a goal" bodyClassName="space-y-3">
+        <Segmented
+          value={goalType}
+          onChange={setGoalType}
+          options={[
+            { value: "time", label: "Time-based (hours)" },
+            { value: "amount_cap", label: "Amount cap (kcal)" },
+          ]}
+        />
+        <Input
           placeholder={goalType === "time" ? "e.g. Golf" : "e.g. Daily calorie cap"}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
-        <div className="flex gap-3">
-          <input
+        <div className="flex flex-wrap gap-2">
+          <Input
             type="number"
-            className="border rounded px-2 py-1 w-28 text-sm"
+            className="w-28"
             placeholder={goalType === "time" ? "hours" : "kcal"}
             value={target}
             onChange={(e) => setTarget(e.target.value)}
           />
-          <select className="border rounded px-2 py-1 text-sm" value={period} onChange={(e) => setPeriod(e.target.value)}>
-            {PERIODS.map((p) => (
-              <option key={p} value={p}>
-                per {p}
+          <Select className="w-auto" value={period} onChange={(e) => setPeriod(e.target.value)}>
+            {PERIODS.map((pp) => (
+              <option key={pp} value={pp}>
+                per {pp}
               </option>
             ))}
-          </select>
+          </Select>
           {goalType === "time" && (
-            <select
-              className="border rounded px-2 py-1 text-sm"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-            >
+            <Select className="w-auto" value={category} onChange={(e) => setCategory(e.target.value)}>
               {CATEGORIES.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
         </div>
-        <button
-          onClick={submit}
-          className="bg-black text-white dark:bg-white dark:text-black rounded px-4 py-2 text-sm"
-        >
-          Add goal
-        </button>
-        {status && <p className="text-sm opacity-70">{status}</p>}
-      </div>
+        <Button variant="primary" onClick={submit} disabled={!name || !target}>
+          <Plus size={16} /> Add goal
+        </Button>
+        {status && <p className="text-sm text-muted">{status}</p>}
+      </Panel>
     </div>
   );
 }
