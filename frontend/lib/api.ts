@@ -817,10 +817,48 @@ export const getNutritionForDate = (date: string) => request<NutritionForDate>(`
 export const listKBFolders = () => request<string[]>("/kb/folders");
 export const listKBEntries = (folder: string) => request<string[]>(`/kb/entries?folder=${encodeURIComponent(folder)}`);
 export const listKBFiles = (folder: string) => request<string[]>(`/kb/files?folder=${encodeURIComponent(folder)}`);
+// `meta` is every frontmatter key that isn't plumbing (structured entries —
+// wardrobe, documents, home items... — keep their fields there); `assets` is
+// the frontmatter photo list. `fields` is the freeform key/value the Browse
+// editor writes.
+export type KBEntryFull = {
+  folder: string;
+  slug: string;
+  title: string;
+  content: string;
+  fields: Record<string, string>;
+  meta: Record<string, unknown>;
+  assets: string[];
+};
+
 export const readKBEntry = (folder: string, slug: string) =>
-  request<{ folder: string; slug: string; content: string; fields: Record<string, string> }>(
-    `/kb/entry?folder=${encodeURIComponent(folder)}&slug=${encodeURIComponent(slug)}`
-  );
+  request<KBEntryFull>(`/kb/entry?folder=${encodeURIComponent(folder)}&slug=${encodeURIComponent(slug)}`);
+
+export type KBEntryRow = { slug: string; title: string; meta: Record<string, unknown>; assets: string[]; snippet: string };
+export type KBLayout = "list" | "gallery" | "cards" | "table";
+export type KBView = {
+  layout: KBLayout;
+  columns: string[];
+  badges: string[];
+  sort_by: string | null;
+  sort_dir: "asc" | "desc";
+  source?: "saved" | "inferred";
+};
+
+export const listKBEntriesMeta = (folder: string) =>
+  request<KBEntryRow[]>(`/kb/entries-meta?folder=${encodeURIComponent(folder)}`);
+export const getKBView = (folder: string) => request<KBView>(`/kb/view?folder=${encodeURIComponent(folder)}`);
+export const saveKBView = (folder: string, view: KBView) =>
+  request<KBView>(`/kb/view?folder=${encodeURIComponent(folder)}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      layout: view.layout,
+      columns: view.columns,
+      badges: view.badges,
+      sort_by: view.sort_by,
+      sort_dir: view.sort_dir,
+    }),
+  });
 export const searchKBEntries = (q: string) =>
   request<{ folder: string; slug: string; snippet: string }[]>(`/kb/search?q=${encodeURIComponent(q)}`);
 

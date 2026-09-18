@@ -21,6 +21,7 @@ from .llm import suggest_kb_batch, suggest_kb_entry, suggest_kb_entry_for_folder
 from .photo_organizer import compute_photo_folder
 from .spreadsheet import read_spreadsheet, write_spreadsheet
 from .store import KBStore, _ASSET_LINES_RE
+from .view import ViewConfig, infer_view
 
 _MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((https?://[^)\s]+)\)")
 
@@ -98,10 +99,40 @@ def list_files(folder: str) -> list[str]:
 
 @router.get("/entry")
 def read_entry(folder: str, slug: str) -> dict:
-    content = get_store().read(folder, slug)
-    if content is None:
+    """Body + the freeform `fields` (unchanged), plus everything else in the
+    entry's frontmatter (`meta`) and its frontmatter photo list (`assets`) so
+    structured entries — wardrobe, documents, home items... — render fully."""
+    entry = get_store().read_full(folder, slug)
+    if entry is None:
         raise HTTPException(404, "entry not found")
-    return {"folder": folder, "slug": slug, "content": content, "fields": get_store().read_fields(folder, slug)}
+    return entry
+
+
+@router.get("/entries-meta")
+def list_entries_meta(folder: str) -> list[dict]:
+    """Every entry in a folder with its metadata + thumbnails' asset paths in
+    one call — feeds the gallery / cards / table layouts."""
+    return get_store().list_entries_meta(folder)
+
+
+@router.get("/view")
+def get_view(folder: str) -> dict:
+    """A folder's layout: the saved _view.json if there is one, otherwise a
+    sensible default inferred from what's in the folder."""
+    saved = get_store().read_view(folder)
+    if saved is not None:
+        try:
+            return {**ViewConfig(**saved).model_dump(), "source": "saved"}
+        except ValueError:
+            pass  # invalid saved config -> fall through to inference
+    inferred = infer_view(get_store().list_entries_meta(folder))
+    return {**inferred.model_dump(), "source": "inferred"}
+
+
+@router.put("/view")
+def put_view(folder: str, body: ViewConfig) -> dict:
+    get_store().write_view(folder, body.model_dump())
+    return {**body.model_dump(), "source": "saved"}
 
 
 @router.get("/search")

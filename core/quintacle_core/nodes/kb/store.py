@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -12,6 +13,30 @@ _ASSET_RE = re.compile(r"\[asset\]\(([^)]+)\)\s*$")
 # drop appends one per photo), not just the last — used wherever ALL of an
 # entry's assets are needed, not just one representative one for the graph.
 _ASSET_LINES_RE = re.compile(r"^\[asset\]\(([^)]+)\)$", re.MULTILINE)
+
+
+# Frontmatter keys Browse treats as plumbing rather than user-visible fields.
+_INTERNAL_META = {"links", "location", "fields", "assets", "asset", "asset2"}
+_VIEW_FILE = "_view.json"
+
+
+def _title_of(post: frontmatter.Post, slug: str) -> str:
+    first = post.content.lstrip().split("\n", 1)[0]
+    if first.startswith("#"):
+        return first.lstrip("# ").strip() or slug
+    # Log-style entries (activities, exercise, meals...) have no name of their
+    # own — borrow the most descriptive field before falling back to the slug.
+    for key in ("name", "title", "exercise_name", "meal_name", "substance", "description"):
+        value = post.metadata.get(key)
+        if value:
+            return str(value)[:80]
+    return slug.replace("-", " ").title()
+
+
+def _frontmatter_assets(meta: dict) -> list[str]:
+    """`assets` is the current list field; older structured entries only have
+    the fixed `asset`/`asset2` pair — same fallback the stores themselves use."""
+    return list(meta.get("assets") or []) or [a for a in (meta.get("asset"), meta.get("asset2")) if a]
 
 
 class KBStore:
@@ -51,11 +76,72 @@ class KBStore:
         folder_path = resolve_nested(self.root, folder)
         if not folder_path.exists():
             return []
-        return sorted(p.name for p in folder_path.iterdir() if p.is_file() and p.suffix != ".md")
+        return sorted(p.name for p in folder_path.iterdir() if p.is_file() and p.suffix != ".md" and not p.name.startswith("_"))
 
     def read(self, folder: str, slug: str) -> str | None:
         post = self._load(folder, slug)
         return post.content if post is not None else None
+
+    def read_full(self, folder: str, slug: str) -> dict | None:
+        """Everything Browse needs to render ANY entry generically — the
+        structured stores (wardrobe, documents, home, cards...) keep their
+        fields as top-level frontmatter and their photos in an `assets` list,
+        not in the body, so read() alone shows them as blank notes.
+        `assets` here is frontmatter-only (body [asset] lines are already
+        rendered from the body itself)."""
+        post = self._load(folder, slug)
+        if post is None:
+            return None
+        meta = dict(post.metadata)
+        return {
+            "folder": folder,
+            "slug": slug,
+            "title": _title_of(post, slug),
+            "content": post.content,
+            "fields": meta.get("fields") or {},
+            "meta": {k: v for k, v in meta.items() if k not in _INTERNAL_META},
+            "assets": _frontmatter_assets(meta),
+        }
+
+    def list_entries_meta(self, folder: str) -> list[dict]:
+        """One row per entry in `folder` for the gallery/cards/table layouts —
+        a single call instead of N per-entry reads. `assets` here is EVERY
+        photo/file (frontmatter + body lines) so a thumbnail can be picked."""
+        rows = []
+        for slug in self.list_entries(folder):
+            post = self._load(folder, slug)
+            if post is None:
+                continue
+            meta = dict(post.metadata)
+            fm_assets = _frontmatter_assets(meta)
+            body_assets = [a for a in _ASSET_LINES_RE.findall(post.content) if a not in fm_assets]
+            lines = [l for l in post.content.split("\n") if l.strip() and not _ASSET_LINES_RE.match(l)]
+            if lines and lines[0].lstrip().startswith("#"):
+                lines = lines[1:]  # the title, already shown separately
+            rows.append(
+                {
+                    "slug": slug,
+                    "title": _title_of(post, slug),
+                    "meta": {k: v for k, v in meta.items() if k not in _INTERNAL_META},
+                    "assets": [*fm_assets, *body_assets],
+                    "snippet": " ".join(l.strip() for l in lines)[:140],
+                }
+            )
+        return rows
+
+    def read_view(self, folder: str) -> dict | None:
+        path = resolve_nested(self.root, folder) / _VIEW_FILE
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            return None  # a hand-mangled file degrades to the inferred view
+
+    def write_view(self, folder: str, config: dict) -> None:
+        folder_path = resolve_nested(self.root, folder)
+        folder_path.mkdir(parents=True, exist_ok=True)
+        (folder_path / _VIEW_FILE).write_text(json.dumps(config, indent=2), encoding="utf-8")
 
     def read_links(self, folder: str, slug: str) -> list[str]:
         post = self._load(folder, slug)

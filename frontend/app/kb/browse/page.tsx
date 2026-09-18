@@ -9,13 +9,20 @@ import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
 import {
   addKBEntryAsset,
+  getKBView,
   kbAssetUrl,
+  KBEntryFull,
+  KBEntryRow,
+  KBLayout,
+  KBView,
   listKBEntries,
+  listKBEntriesMeta,
   listKBFiles,
   listKBFolders,
   pushKBEntry,
   readKBEntry,
   replaceKBAsset,
+  saveKBView,
   searchKBEntries,
 } from "@/lib/api";
 import ImageLightbox from "@/components/ImageLightbox";
@@ -33,6 +40,7 @@ import {
   MessageSquare,
   Paperclip,
   Pencil,
+  Pin,
   Plus,
   Save,
   Search,
@@ -41,7 +49,9 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
-import { EmptyState, PageHeader } from "@/components/ui/Panel";
+import { Badge, EmptyState, PageHeader } from "@/components/ui/Panel";
+import { Segmented } from "@/components/ui/Segmented";
+import FolderView, { expiryStatus, fmt, scalarKeys } from "@/components/FolderView";
 import { cn } from "@/lib/cn";
 import DocxViewer from "@/components/DocxViewer";
 import SpreadsheetEditor from "@/components/SpreadsheetEditor";
@@ -148,9 +158,11 @@ export default function KBBrowsePage() {
   const [files, setFiles] = useState<string[]>([]);
   const [rawFiles, setRawFiles] = useState<string[]>([]);
   const [viewingRawFile, setViewingRawFile] = useState<string | null>(null);
-  const [viewing, setViewing] = useState<{ folder: string; slug: string; content: string; fields: Record<string, string> } | null>(
-    null
-  );
+  const [viewing, setViewing] = useState<KBEntryFull | null>(null);
+  // Generic folder page: every entry's metadata + the layout to draw it with
+  // (saved _view.json, or inferred from what's in the folder).
+  const [rows, setRows] = useState<KBEntryRow[]>([]);
+  const [view, setView] = useState<KBView | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [fieldRows, setFieldRows] = useState<{ key: string; value: string }[]>([]);
@@ -161,6 +173,14 @@ export default function KBBrowsePage() {
 
   useEffect(() => {
     listKBFolders().then(setAllFolders);
+    // Deep link: /kb/browse?path=<folder>&open=<slug>
+    const q = new URLSearchParams(window.location.search);
+    const path = q.get("path");
+    if (path) {
+      setCurrentPath(path);
+      const open = q.get("open");
+      if (open) readKBEntry(path, open).then(setViewing);
+    }
   }, []);
 
   useEffect(() => {
@@ -186,9 +206,13 @@ export default function KBBrowsePage() {
     if (currentPath) {
       listKBEntries(currentPath).then(setFiles);
       listKBFiles(currentPath).then(setRawFiles);
+      listKBEntriesMeta(currentPath).then(setRows);
+      getKBView(currentPath).then(setView);
     } else {
       setFiles([]);
       setRawFiles([]);
+      setRows([]);
+      setView(null);
     }
   }, [currentPath]);
 
@@ -237,6 +261,25 @@ export default function KBBrowsePage() {
     setViewing({ ...viewing, content: draft, fields });
     setEditing(false);
     setStatus("saved");
+    listKBEntriesMeta(viewing.folder).then(setRows);
+  }
+
+  function setLayout(layout: KBLayout) {
+    if (view) setView({ ...view, layout, source: undefined });
+  }
+
+  // Which frontmatter keys show as table columns (table) or badges
+  // (gallery/cards) — toggled from the chips above the list.
+  function toggleShown(key: string) {
+    if (!view) return;
+    const field = view.layout === "table" ? "columns" : "badges";
+    const current = view[field];
+    setView({ ...view, [field]: current.includes(key) ? current.filter((k) => k !== key) : [...current, key], source: undefined });
+  }
+
+  async function saveView() {
+    if (!view || !currentPath) return;
+    setView(await saveKBView(currentPath, view));
   }
 
   async function createEntry() {
@@ -245,6 +288,7 @@ export default function KBBrowsePage() {
     setStatus("creating...");
     const { slug } = await pushKBEntry({ folder: currentPath, title: title.trim(), content: "" });
     setFiles(await listKBEntries(currentPath));
+    listKBEntriesMeta(currentPath).then(setRows);
     const entry = await readKBEntry(currentPath, slug);
     setViewingRawFile(null);
     setViewing(entry);
@@ -266,6 +310,17 @@ export default function KBBrowsePage() {
   const folders = childFolderNames(allFolders, currentPath);
   const { body: renderedBody, assetPaths } = viewing ? extractAssets(viewing.content) : { body: "", assetPaths: [] };
 
+  // Structured entries (wardrobe, documents...) keep photos in frontmatter, note-style
+  // entries as trailing [asset] body lines — show both, once each.
+  const allAssets = viewing ? Array.from(new Set([...viewing.assets, ...assetPaths])) : [];
+  const metaEntries = viewing
+    ? Object.entries(viewing.meta).filter(([k, v]) => fmt(v) !== "" && !(k === "name" && String(v) === viewing.title))
+    : [];
+  const expiry = viewing ? expiryStatus(viewing.meta) : null;
+  // Browse's editor round-trips the body through its "# Title" line; an entry
+  // without one (a structured store's file) would come back as a NEW file, so
+  // those are edited on their own page instead.
+  const canEdit = viewing ? /^\s*#\s/.test(viewing.content) : false;
   const hasSelection = viewing !== null || viewingRawFile !== null;
   const mono = "font-mono text-[10px] uppercase tracking-[0.14em] text-muted";
   const tile = (active: boolean) =>
@@ -353,32 +408,91 @@ export default function KBBrowsePage() {
             hasSelection ? "hidden" : "block"
           )}
         >
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-3">
-            {folders.map((name) => {
-              const path = currentPath ? `${currentPath}/${name}` : name;
-              return (
-                <button key={path} onClick={() => setCurrentPath(path)} className={tile(false)}>
-                  <Folder size={28} className="text-accent" />
-                  <span className="break-words text-xs">{name}</span>
+          {folders.length > 0 && (
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-3">
+              {folders.map((name) => {
+                const path = currentPath ? `${currentPath}/${name}` : name;
+                return (
+                  <button key={path} onClick={() => setCurrentPath(path)} className={tile(false)}>
+                    <Folder size={28} className="text-accent" />
+                    <span className="break-words text-xs">{name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {view && files.length > 0 && (
+            <div className={cn("space-y-2", folders.length > 0 && "mt-3")}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Segmented<KBLayout>
+                  value={view.layout}
+                  onChange={setLayout}
+                  options={[
+                    { value: "list", label: "List" },
+                    { value: "gallery", label: "Gallery" },
+                    { value: "cards", label: "Cards" },
+                    { value: "table", label: "Table" },
+                  ]}
+                />
+                <button
+                  onClick={saveView}
+                  title="Remember this layout for this folder"
+                  className="flex items-center gap-1 text-xs text-muted transition-colors hover:text-accent"
+                >
+                  <Pin size={12} /> {view.source === "saved" ? "saved ✓" : "set as default"}
                 </button>
-              );
-            })}
-            {files.map((slug) => (
-              <button key={slug} onClick={() => openFile(slug)} className={tile(viewing?.slug === slug)}>
-                <FileText size={28} className="text-foreground/70" />
-                <span className="break-words text-xs">{slug}.md</span>
-              </button>
-            ))}
-            {rawFiles.map((name) => {
-              const Icon = fileIcon(name.split(".").pop()?.toLowerCase() ?? "");
-              return (
-                <button key={name} onClick={() => openRawFile(name)} className={tile(viewingRawFile === name)}>
-                  <Icon size={28} className="text-accent/80" />
-                  <span className="break-all text-xs">{name}</span>
-                </button>
-              );
-            })}
-          </div>
+              </div>
+
+              {view.layout !== "list" && rows.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className={mono}>{view.layout === "table" ? "columns" : "badges"}</span>
+                  {scalarKeys(rows).map((k) => {
+                    const on = (view.layout === "table" ? view.columns : view.badges).includes(k);
+                    return (
+                      <button
+                        key={k}
+                        onClick={() => toggleShown(k)}
+                        className={cn(
+                          "rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
+                          on ? "border-accent/50 bg-accent/10 text-accent" : "border-line text-muted hover:text-foreground"
+                        )}
+                      >
+                        {k.replace(/_/g, " ")}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {view.layout === "list" || rows.length === 0 ? (
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-3">
+                  {files.map((slug) => (
+                    <button key={slug} onClick={() => openFile(slug)} className={tile(viewing?.slug === slug)}>
+                      <FileText size={28} className="text-foreground/70" />
+                      <span className="break-words text-xs">{slug}.md</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <FolderView folder={currentPath} rows={rows} view={view} activeSlug={viewing?.slug ?? null} onOpen={openFile} />
+              )}
+            </div>
+          )}
+
+          {rawFiles.length > 0 && (
+            <div className={cn("grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-3", (folders.length > 0 || files.length > 0) && "mt-3")}>
+              {rawFiles.map((name) => {
+                const Icon = fileIcon(name.split(".").pop()?.toLowerCase() ?? "");
+                return (
+                  <button key={name} onClick={() => openRawFile(name)} className={tile(viewingRawFile === name)}>
+                    <Icon size={28} className="text-accent/80" />
+                    <span className="break-all text-xs">{name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {folders.length === 0 && files.length === 0 && rawFiles.length === 0 && (
             <EmptyState icon={Folder}>{currentPath ? "Empty folder." : "Nothing in the Knowledge Base yet."}</EmptyState>
           )}
@@ -434,7 +548,7 @@ export default function KBBrowsePage() {
                   {viewing.folder}/{viewing.slug}.md
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
-                  {!editing && (
+                  {!editing && canEdit && (
                     <Button size="sm" onClick={startEditing}>
                       <Pencil size={13} /> Edit
                     </Button>
@@ -504,6 +618,24 @@ export default function KBBrowsePage() {
                 </div>
               ) : (
                 <>
+                  {!canEdit && <h2 className="text-lg font-semibold tracking-tight">{viewing.title}</h2>}
+                  {expiry && (
+                    <div>
+                      <Badge tone={expiry.tone}>{expiry.text}</Badge>
+                    </div>
+                  )}
+                  {metaEntries.length > 0 && (
+                    <dl className="grid grid-cols-1 gap-x-4 gap-y-1 rounded-lg border border-line bg-surface-2/60 p-3 text-sm sm:grid-cols-2">
+                      {metaEntries.map(([k, v]) => (
+                        <div key={k} className="flex gap-2">
+                          <dt className={cn(mono, "shrink-0 pt-0.5")}>{k.replace(/_/g, " ")}</dt>
+                          <dd className="min-w-0 break-words" title={typeof v === "object" ? JSON.stringify(v) : undefined}>
+                            {fmt(v)}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
                   {Object.keys(viewing.fields).length > 0 && (
                     <dl className="grid grid-cols-1 gap-x-4 gap-y-1 rounded-lg border border-line bg-surface-2/60 p-3 text-sm sm:grid-cols-2">
                       {Object.entries(viewing.fields).map(([k, v]) => (
@@ -514,15 +646,15 @@ export default function KBBrowsePage() {
                       ))}
                     </dl>
                   )}
-                  {assetPaths.length > 0 && (
+                  {allAssets.length > 0 && (
                     <div
                       className={
-                        assetPaths.length > 1 && assetPaths.every((p) => IMAGE_EXT.includes(p.split(".").pop()?.toLowerCase() ?? ""))
+                        allAssets.length > 1 && allAssets.every((p) => IMAGE_EXT.includes(p.split(".").pop()?.toLowerCase() ?? ""))
                           ? "grid grid-cols-2 gap-2"
                           : "space-y-3"
                       }
                     >
-                      {assetPaths.map((assetPath) => (
+                      {allAssets.map((assetPath) => (
                         <AssetPreview
                           key={assetPath}
                           folder={viewing!.folder}
