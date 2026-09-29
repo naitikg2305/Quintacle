@@ -108,3 +108,138 @@ opt-in privacy checkbox there, not re-litigated.
 
 None scheduled. Pick this up by choosing between direction 1 and 2, then
 scoping the tool list.
+
+---
+
+## Update 2026-09-29 — reframed, and now wanted
+
+Status: **still idea, not started, but the verdict changed.** Conversation on
+2026-09-29 moved this from "parked, math doesn't favor us" to "this is the
+direction." Nothing built yet, per explicit instruction: note only.
+
+### The reframe: Quintacle is a data harness, not a model harness
+
+Looking at the code as it stands (not the plans): ~15 entry types across a
+dozen node packages, 101 REST routes, a deterministic drop router that picks
+entry type from a keyword prefix before any model is consulted, and thin
+`llm.py` adapters that are just a Pydantic schema plus one structured call.
+No agent loop anywhere. The model is a pluggable component invoked at exactly
+two seams:
+
+1. **Ingest edge** — messy text/image in, validated schema out.
+2. **Narration edge** — fetched facts in, prose out.
+
+So the honest definition: *a structured personal operating system with a
+deterministic core and LLM sockets at the boundaries.* A data harness that
+models plug into, rather than a model harness that tools plug into. The word
+"harness" is fine as long as it doesn't tempt an agent loop *into* the core —
+Quintacle is the thing orchestrated over, not the orchestrator.
+
+### What MCP changes, and what it doesn't
+
+**It flips who calls whom.** Today Quintacle's Python initiates every LLM
+call and the model never knows Quintacle exists. As an MCP server, the model
+(inside Claude Code / Codex / any client) reads the tool list and decides on
+its own to call `expenses_in_range`, chains two or three calls, and phrases the
+answer. The agent loop lives in the *client*, not in our code — which is
+exactly where `architecture.md` wants it.
+
+**It doesn't change what Quintacle is.** Same stores, same SQLite, same
+markdown, same REST for the frontend. MCP is a second door onto the same
+rooms. If the MCP process is never launched, nothing behaves differently.
+
+**Concrete shape in the repo:** one new small Python process using the MCP
+SDK, importing the same store classes the routes already use, exposing ~a
+dozen tools. Tool descriptions are the new kind of writing — they're the only
+thing the model reads to decide when to reach for a tool.
+
+### The use case that made it click
+
+Sit in Claude Code or Codex, have a normal working/learning conversation about
+anything, and at the end say "put that in Quintacle." The model writes the
+distilled note straight into the store via a tool call. That closes the loop
+`intro.md` was written for — "learn something → summarize → push → lands in
+the organized database" — without switching apps or breaking flow. The
+learning-in-motion that currently "goes into the abyss" gets captured *from
+inside the tool where the learning happened.*
+
+This is the strongest argument against the earlier "N=1, M=2, math doesn't
+favor us" reasoning: the value isn't integration breadth, it's that the
+capture point moves to wherever the user already is.
+
+### Offline / privacy — settled in principle
+
+- The MCP server runs **locally over stdio**: the client spawns it as a
+  subprocess and they exchange JSON over pipes. No port, no network, no
+  hosted server, no domain, no account. Data stays in `~/.quintacle/`.
+- The only cloud hop is the **model**, not Quintacle. With Claude Code as the
+  client, whatever a tool returns is sent to Anthropic as context so the model
+  can phrase it. That's the same exposure the drop router already accepts
+  when it sends a journal dump to Haiku — just in the other direction, and
+  chosen by the model rather than by our code.
+- **Fully offline is the same server, different client.** MCP is
+  client-agnostic; Ollama-backed clients (Continue, various open chat
+  frontends, and `~/code/Local-chat` which is already most of a client) can
+  drive the identical tool list with a local model. Same tools, pick the
+  brain. This maps directly onto the four-tier routing in
+  `deployment-and-privacy.md`.
+
+### Revised open questions
+
+- **Write tools are now the point, not a v1 exclusion.** The earlier note
+  said keep `POST /drop` etc. out of v1 so a bad tool call can't mutate
+  records. The "write directly from Claude Code" use case needs at least one
+  write tool. Resolution to consider: expose *exactly one* write tool that
+  feeds the existing deterministic drop router (so the router still decides
+  type/placement, the model only supplies text), rather than per-type write
+  tools. Keeps the model from deciding structure. Still needs deciding.
+- Read tools: start with schedule/logs (most structured) or KB/journal (what
+  a working conversation would actually want to write into)? The use case
+  above points at KB first.
+- Standalone process importing stores directly vs. talking to FastAPI over
+  HTTP. Direct import is simpler and avoids needing the API up; HTTP keeps
+  one code path. Lean: direct import.
+- Standing instruction still holds: don't mess with `nodes/kb/chat.py`.
+
+### Next step
+
+Scope the tool list (reads + the single drop-style write) and pick KB vs.
+logs for the first slice. Then build. Not before the UI redo lands.
+
+### Does MCP break when Quintacle changes? (2026-09-29)
+
+Mostly no, because of where the coupling sits. Built as leaned above, the
+MCP process imports the same store classes the REST routes use and each tool
+is a thin wrapper: take arguments → call a store method → return the result.
+That's the exact relationship `nodes/kb/api.py` already has to
+`nodes/kb/store.py`. So the MCP layer is coupled to the same surface the
+frontend's API layer is coupled to — anything that doesn't break REST doesn't
+break MCP.
+
+**Keeps working with zero MCP changes:**
+- Any frontend change (the whole UI redo). MCP never sees the frontend.
+- New entry types / nodes / routes. MCP just doesn't know about them until a
+  tool is added. Nothing breaks.
+- Storage changes under a store (new SQLite column, different markdown
+  layout). The store hides that.
+- Prompt/model changes in the `llm.py` files.
+- New drop prefixes — if the write tool feeds the drop router, new prefixes
+  work through MCP immediately. Nice property; another reason to route writes
+  through the router rather than per-type tools.
+
+**Requires touching MCP:**
+- Renaming / re-signaturing a store method a tool calls (same as for a route).
+- Changing the shape a store returns, if the tool passes it straight through.
+  Degrades rather than breaks — the model sees different JSON — but the tool
+  description goes stale.
+- Wanting a new capability exposed: additive, one new tool function.
+
+**Practical wrinkle:** the client spawns the MCP server as a subprocess at
+session start, so a live session holds old code in memory. Edit Quintacle →
+restart the server/session to pick it up. Same as restarting uvicorn today.
+
+**Where risk actually concentrates:** the tool *description text*, not the
+code. Change what a store does without updating the description and the
+model calls it with wrong expectations — and nothing throws. Mitigation: a
+small test per tool against the real store (like the existing `test_store.py`
+pattern) for the code side; discipline for the description side.
