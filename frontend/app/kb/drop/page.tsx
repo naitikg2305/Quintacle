@@ -43,6 +43,7 @@ import { Input, Textarea } from "@/components/ui/Field";
 import { EmptyState, PageHeader, Panel } from "@/components/ui/Panel";
 import { cn } from "@/lib/cn";
 import { BLANK, commitEntry } from "@/lib/entries";
+import { todayIso } from "@/lib/date";
 
 const IMAGE_EXT = ["jpg", "jpeg", "png", "gif", "webp"];
 const VIDEO_EXT = ["mp4", "webm", "mov", "m4v"];
@@ -78,10 +79,6 @@ const MANUAL: { type: ParsedEntry["type"]; label: string; icon: LucideIcon }[] =
 // Long text is almost always a day's narrative worth keeping verbatim.
 const JOURNAL_AUTO_CHARS = 200;
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 // The one general drop: quick structured things — a single todo, meal,
 // expense, item, document, experience — plus optional photo/PDF/DOCX. A
 // recognized "keyword: ..." prefix (todo/food/exercise/substance/activity/
@@ -93,7 +90,7 @@ function today(): string {
 // resolves against the date picked here, and "save to journal" keeps the raw
 // text verbatim as that day's journal (appended, never overwritten).
 export default function DropPage() {
-  const [date, setDate] = useState(today());
+  const [date, setDate] = useState(todayIso());
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);

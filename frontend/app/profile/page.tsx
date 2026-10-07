@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ActivityLevel, getProfile, getTargets, logBodyStat, Profile, Targets, updateProfile } from "@/lib/api";
+import { todayIso } from "@/lib/date";
 
 const ACTIVITY_LEVELS: { value: ActivityLevel; label: string }[] = [
   { value: "sedentary", label: "Sedentary (little/no exercise)" },
@@ -10,10 +11,6 @@ const ACTIVITY_LEVELS: { value: ActivityLevel; label: string }[] = [
   { value: "active", label: "Active (6-7 days/week)" },
   { value: "very_active", label: "Very active (physical job + training)" },
 ];
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState<Profile>({
@@ -47,7 +44,7 @@ export default function ProfilePage() {
   async function logWeight() {
     if (!weight) return;
     setStatus("logging weight...");
-    await logBodyStat({ date: today(), metric: "weight", value: Number(weight), unit: weightUnit });
+    await logBodyStat({ date: todayIso(), metric: "weight", value: Number(weight), unit: weightUnit });
     setWeight("");
     setStatus("weight logged");
     await refresh();

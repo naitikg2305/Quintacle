@@ -6,6 +6,7 @@ from datetime import date
 import anthropic
 from pydantic import BaseModel
 
+from ... import clock
 from ...llm_config import DEFAULT_MODEL
 
 PERSON_CATEGORIES = ("friend", "dating", "family", "coworker", "acquaintance", "other")
@@ -31,7 +32,7 @@ _STRUCTURE_SYSTEM_PROMPT = (
 def structure_person(description: str, reference_date: date | None = None) -> PersonEstimate:
     """For the explicit "person:"/"friend:" prefix — intent already stated,
     so no relevance gate, always extracts fields."""
-    ref = reference_date or date.today()
+    ref = reference_date or clock.today()
     client = anthropic.Anthropic()
     response = client.messages.parse(
         model=DEFAULT_MODEL,
@@ -104,7 +105,7 @@ def maybe_structure_person_mention(
     known_re = _known_name_re(known_names)
     if not (_NEW_PERSON_SIGNAL_RE.search(description) or (known_re and known_re.search(description))):
         return None
-    ref = reference_date or date.today()
+    ref = reference_date or clock.today()
     client = anthropic.Anthropic()
     library = "Known people: " + ", ".join(known_names) if known_names else "Known people: (none tracked yet)"
     response = client.messages.parse(

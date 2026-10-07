@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from ... import clock
+
 # Deterministic — no AI needed, same principle as schedule.md's ranking.
 _PERIOD_LENGTHS = {"day": 1, "week": 7, "2weeks": 14, "month": 30}
 
@@ -54,7 +56,7 @@ def _progress_for_window(repo, habit, start: date, end: date) -> dict:
 
 
 def habit_progress(repo, habit_id: int, today: date | None = None) -> dict:
-    today = today or date.today()
+    today = today or clock.today()
     habit = repo.get_habit(habit_id)
     if habit is None:
         raise ValueError(f"no habit with id {habit_id}")
@@ -74,7 +76,7 @@ def habit_progress(repo, habit_id: int, today: date | None = None) -> dict:
 def habit_history(repo, habit_id: int, periods: int = 8, today: date | None = None) -> list[dict]:
     """The last N periods' progress, oldest first — the actual-vs-target
     trend a dashboard needs, not just the current period's snapshot."""
-    today = today or date.today()
+    today = today or clock.today()
     habit = repo.get_habit(habit_id)
     if habit is None:
         raise ValueError(f"no habit with id {habit_id}")

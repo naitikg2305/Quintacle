@@ -8,12 +8,9 @@ import { Segmented } from "@/components/ui/Segmented";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { cn } from "@/lib/cn";
 import { DayDetail, formatSets, getDayCounts, getDayDetail, getNutritionForDate, listTodos, NutritionForDate, Todo } from "@/lib/api";
+import { calendarIso, currentMonthStart, todayIso } from "@/lib/date";
 
 type Tab = "regular" | "action";
-
-function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
 
 function monthLabel(d: Date): string {
   return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
@@ -22,10 +19,7 @@ function monthLabel(d: Date): string {
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function DayViewPage() {
-  const [monthCursor, setMonthCursor] = useState(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
-  });
+  const [monthCursor, setMonthCursor] = useState(currentMonthStart);
   const [tab, setTab] = useState<Tab>("regular");
   const [todos, setTodos] = useState<Todo[]>([]);
   const [actionCounts, setActionCounts] = useState<Record<string, number>>({});
@@ -44,7 +38,7 @@ export default function DayViewPage() {
 
   useEffect(() => {
     listTodos().then(setTodos);
-    getDayCounts(toISODate(monthStart), toISODate(monthEnd)).then(setActionCounts);
+    getDayCounts(calendarIso(monthStart), calendarIso(monthEnd)).then(setActionCounts);
     setExpandedDate(null);
     setExpandedDetail(null);
   }, [monthStart, monthEnd]);
@@ -61,7 +55,7 @@ export default function DayViewPage() {
   const cells: (string | null)[] = [];
   for (let i = 0; i < monthStart.getDay(); i++) cells.push(null);
   for (let day = 1; day <= monthEnd.getDate(); day++) {
-    cells.push(toISODate(new Date(monthCursor.getFullYear(), monthCursor.getMonth(), day)));
+    cells.push(calendarIso(new Date(monthCursor.getFullYear(), monthCursor.getMonth(), day)));
   }
 
   function countFor(dateStr: string): number {
@@ -95,7 +89,7 @@ export default function DayViewPage() {
     return grouped;
   }, [expandedDetail]);
 
-  const todayIso = toISODate(new Date());
+  const today = todayIso();
   const heat = (n: number) => (n <= 0 ? "" : n === 1 ? "bg-accent/[0.07]" : n <= 3 ? "bg-accent/15" : "bg-accent/25");
 
   const detail = expandedDate ? (
@@ -314,10 +308,7 @@ export default function DayViewPage() {
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => {
-              const now = new Date();
-              setMonthCursor(new Date(now.getFullYear(), now.getMonth(), 1));
-            }}
+            onClick={() => setMonthCursor(currentMonthStart())}
           >
             Today
           </Button>
@@ -340,7 +331,7 @@ export default function DayViewPage() {
             const count = countFor(dateStr);
             const dayNum = Number(dateStr.slice(-2));
             const isExpanded = expandedDate === dateStr;
-            const isToday = dateStr === todayIso;
+            const isToday = dateStr === today;
             return (
               <button
                 key={dateStr}

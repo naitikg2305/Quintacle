@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Body
 from pydantic import BaseModel
 
+from ... import clock
 from ..profile.store import ProfileStore
 from ..profile.targets import age_years
 from .log_store import LogFileStore, rebuild_sqlite_index
@@ -49,7 +50,7 @@ def _current_rda() -> dict[str, tuple[float, str]]:
     if _profile_store is None:
         return rda_for(None, None)
     profile = _profile_store.load()
-    age = age_years(profile.birthdate, date.today()) if profile.birthdate else None
+    age = age_years(profile.birthdate, clock.today()) if profile.birthdate else None
     return rda_for(profile.sex, age)
 
 
@@ -438,7 +439,7 @@ def nutrition_history(days: int = 8) -> list[dict]:
     """Last N days of kcal/protein actuals, oldest first — the dashboard's
     trend line against your personalized target from /profile/targets."""
     repo = get_repo()
-    today = date.today()
+    today = clock.today()
     history = []
     for i in range(days - 1, -1, -1):
         d = today - timedelta(days=i)

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
+
+from ... import clock
 
 
 def _as_text(content) -> str:
@@ -46,7 +47,7 @@ class ChatStore:
     def create(self, title: str = "") -> str:
         # Microsecond resolution — two sessions created back-to-back (as in a
         # fast test, or a quick double-click) must not collide on the same id.
-        session_id = datetime.now().strftime("%Y-%m-%d-%H%M%S-%f")
+        session_id = clock.now().strftime("%Y-%m-%d-%H%M%S-%f")
         self.save(session_id, title, [])
         return session_id
 

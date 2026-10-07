@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
+
+from ... import clock
 
 
 class JournalStore:
@@ -22,7 +24,7 @@ class JournalStore:
         same day used to silently destroy the first one's raw text."""
         path = self._path(entry_date)
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
-        stamp = datetime.now().strftime("%H:%M")
+        stamp = clock.now().strftime("%H:%M")
         entry = f"### {stamp}\n{content}"
         combined = f"{existing}\n\n---\n\n{entry}" if existing.strip() else entry
         path.write_text(combined, encoding="utf-8")

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { CalendarDays, FolderTree, Inbox, LayoutDashboard, MessageSquare } from "lucide-react";
 import { listTodos, Todo } from "@/lib/api";
 import { Panel, Stat } from "@/components/ui/Panel";
+import { todayIso } from "@/lib/date";
 
 const SURFACES = [
   { href: "/kb/drop", label: "Drop", icon: Inbox, blurb: "Dump anything — text, photos, PDFs. It gets sorted for you." },
@@ -30,10 +31,10 @@ export default function Home() {
     listTodos().then(setTodos).catch(() => setTodos([]));
   }, []);
 
-  const todayIso = now ? now.toISOString().slice(0, 10) : "";
+  const today = now ? todayIso() : "";
   const open = (todos ?? []).filter((t) => !t.done);
-  const dueToday = open.filter((t) => t.due_date === todayIso).length;
-  const overdue = open.filter((t) => t.due_date && t.due_date < todayIso).length;
+  const dueToday = open.filter((t) => t.due_date === today).length;
+  const overdue = open.filter((t) => t.due_date && t.due_date < today).length;
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">

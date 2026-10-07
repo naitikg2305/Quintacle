@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from ... import clock
 from .models import Profile
 
 # Standard activity multipliers for BMR -> TDEE (Mifflin-St Jeor is the BMR
@@ -34,7 +35,7 @@ def compute_targets(profile: Profile, weight_kg: float, today: date | None = Non
     if profile.height_cm is None or profile.sex is None or profile.birthdate is None:
         return None
 
-    today = today or date.today()
+    today = today or clock.today()
     age = age_years(profile.birthdate, today)
     sex_offset = 5 if profile.sex == "male" else -161
     bmr = 10 * weight_kg + 6.25 * profile.height_cm - 5 * age + sex_offset

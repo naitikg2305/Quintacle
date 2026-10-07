@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # Loads core/.env (ANTHROPIC_API_KEY, etc.) before anything reads os.environ.
 load_dotenv()
 
+from . import clock
 from . import db
 from .nodes.drop_router import (
     IMAGE_MIME_TYPES,
@@ -240,7 +241,7 @@ def create_app() -> FastAPI:
         # user picked in the UI (backfilling an older day), else today. Same
         # behavior Journal's /parse has always had via its for_date.
         try:
-            reference_date = date.fromisoformat(reference_date) if reference_date else date.today()
+            reference_date = date.fromisoformat(reference_date) if reference_date else clock.today()
         except ValueError:
             raise HTTPException(400, "reference_date must be YYYY-MM-DD")
         known_meals = [dict(row) for row in get_logs_repo().list_meals()]

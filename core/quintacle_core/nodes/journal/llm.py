@@ -8,6 +8,7 @@ import anthropic
 from pydantic import BaseModel, Field
 from pydantic.json_schema import SkipJsonSchema
 
+from ... import clock
 from ...llm_config import DEFAULT_MODEL
 
 ACTIVITY_CATEGORIES = ("productivity", "social", "leisure", "yourself", "emotional")
@@ -326,7 +327,7 @@ def parse_journal_dump(
     | KBEntryProposal
 ]:
     client = anthropic.Anthropic()
-    ref = reference_date or date.today()
+    ref = reference_date or clock.today()
     system = (
         _SYSTEM_PROMPT
         + f"\n\nReference date (resolve relative/shorthand dates against this): {ref.isoformat()} ({ref.strftime('%A')})"

@@ -26,17 +26,14 @@ import {
   pushKBEntry,
   pushKBEntryWithAsset,
 } from "./api";
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+import { todayIso } from "./date";
 
 export const BLANK: Record<ParsedEntry["type"], ParsedEntry> = {
   activity: { type: "activity", category: "productivity", description: "", hours: 0, entry_date: null },
   food: { type: "food", meal_type: "lunch", description: "", meal_id: null, estimated_kcal: 0, entry_date: null },
   exercise: { type: "exercise", exercise_name: "", sets: [{ ...BLANK_SET }], notes: "", entry_date: null },
   substance: { type: "substance", substance: "", amount: 0, notes: "", entry_date: null },
-  todo: { type: "todo", title: "", due_date: today(), start_time: null, end_time: null, priority: 2 },
+  todo: { type: "todo", title: "", due_date: todayIso(), start_time: null, end_time: null, priority: 2 },
   body_stat: { type: "body_stat", metric: "weight", value: 0, unit: "lb", entry_date: null },
   finance: { type: "finance", amount: 0, merchant: "", category: "", notes: "", entry_date: null, kind: "regular" },
   kb_entry: { type: "kb_entry", folder: "", title: "", content: "" },

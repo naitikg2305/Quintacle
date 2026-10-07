@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Expense, FINANCE_KINDS, FinanceKind, listExpenses, logExpense } from "@/lib/api";
+import { todayIso, yearsAgoIso } from "@/lib/date";
 
 const TABS: { kind: FinanceKind; label: string }[] = [
   { kind: "subscription", label: "Subscriptions" },
@@ -12,16 +13,6 @@ const TABS: { kind: FinanceKind; label: string }[] = [
   { kind: "big_purchase", label: "Big Purchases" },
   { kind: "regular", label: "Regular" },
 ];
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function twoYearsAgo(): string {
-  const d = new Date();
-  d.setFullYear(d.getFullYear() - 2);
-  return d.toISOString().slice(0, 10);
-}
 
 function fmt(n: number): string {
   return n.toLocaleString(undefined, { style: "currency", currency: "USD" });
@@ -36,12 +27,12 @@ export default function FinancePage() {
   const [merchant, setMerchant] = useState("");
   const [category, setCategory] = useState("");
   const [kind, setKind] = useState<FinanceKind>("regular");
-  const [entryDate, setEntryDate] = useState(today());
+  const [entryDate, setEntryDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function refresh() {
-    setExpenses(await listExpenses(twoYearsAgo(), today()));
+    setExpenses(await listExpenses(yearsAgoIso(2), todayIso()));
   }
 
   useEffect(() => {
@@ -57,7 +48,7 @@ export default function FinancePage() {
     setCategory("");
     setNotes("");
     setKind("regular");
-    setEntryDate(today());
+    setEntryDate(todayIso());
     setShowForm(false);
     await refresh();
     setBusy(false);
