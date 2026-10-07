@@ -76,6 +76,97 @@ Works when the home box is off, moved, or dead.
 contradicts the project's stated reason for existing. Only makes sense if
 "my data is safe" gets consciously demoted.
 
+### Option A taken seriously: the all-AWS stack (2026-10-06)
+
+The above treats AWS as "a VM you rent." This is the fuller version: what
+Quintacle looks like if it lives *entirely* on AWS — app, data, media,
+models, access — as a deliberate architecture rather than a fallback. It is
+a real option and deserves a fair hearing, because it's the one that fully
+delivers the original "no PC needed" goal from `android-apk-migration.md`:
+phone works from anywhere, nothing at home has to be on, ever.
+
+**What each piece maps to**
+
+| Layer | Choice | Why / why not the alternatives |
+|---|---|---|
+| Backend | **EC2** (`t4g.small`, 2GB) running uvicorn as a systemd service | SQLite + markdown need a real filesystem and a single long-lived process. Lambda doesn't fit without replacing SQLite with DynamoDB/RDS — that's a rewrite, not a deploy. ECS Fargate works but adds a container pipeline for zero benefit at one user. |
+| App data | **EBS gp3** volume, `~/.quintacle/` lives there | SQLite on EFS/NFS is a known footgun (locking). EBS is a local disk; snapshots are the backup. |
+| Media | **S3** for photos/video/the Notebook; `kb/` assets could stay on EBS | $0.023/GB/mo. The code's asset paths would need an S3 backend or a mounted bucket (`mountpoint-s3`). |
+| Frontend | **Static export → S3 + CloudFront**, *or* just serve it from the same EC2 | `android-apk-migration.md` already established the Next.js app is fully static-exportable. CloudFront is ~$0–1/mo at this traffic. Serving from EC2 is simpler and fine. |
+| LLM | Direct Anthropic/OpenAI API **or** Bedrock (see the token-cost section below) | Cost-neutral either way. Bedrock keeps everything inside the AWS account but drops web search and batch. |
+| Embeddings (future) | Local model on the instance (bge-small runs on 2GB CPU fine) or Bedrock Titan/Cohere embeddings | Local keeps note text off the model provider; Bedrock embeddings are cheap but every note goes through them. |
+| Access | **Tailscale on the EC2 instance**, no public exposure | Same move as the home-server option — the instance is on your tailnet, the API stays unauthenticated-but-unreachable. No ALB, no Cognito, no TLS certs, no domain. Drop the public IPv4 entirely if you're tailnet-only (saves ~$3.60/mo). |
+| Backups | EBS snapshots (daily, lifecycle-managed) + optional `restic` to S3 | Snapshots are a click to set up; restic adds encryption you hold the key to. |
+| Secrets | SSM Parameter Store / Secrets Manager for API keys | Free tier covers it. Beats a `.env` on disk. |
+
+**Rough monthly, all-in**
+
+| Item | Monthly |
+|---|---|
+| EC2 `t4g.small` (2GB — enough headroom for an embedding model) | ~$12 |
+| EBS 30GB gp3 + daily snapshots | ~$3–4 |
+| S3, ~60GB media | ~$1.40 |
+| CloudFront / static frontend | ~$0–1 |
+| Public IPv4 (skip if tailnet-only) | $0–3.60 |
+| Tailscale | $0 |
+| LLM tokens (with retrieval, per section below) | ~$5–10 |
+| **Total** | **~$20–30/mo, ~$250–350/yr** |
+
+A `t4g.nano` instead of `small` drops ~$9/mo but can't run a local
+embedding model; then embeddings go through Bedrock/Voyage/OpenAI.
+
+**What this is genuinely best at**
+
+- **"No PC needed," fully.** The strongest pro. Phone-only life with zero
+  home infrastructure, no box to maintain, no home ISP dependency, survives
+  moving apartments.
+- **Zero sysadmin on hardware.** No disk to fail, no PSU, no power outage.
+  Snapshots are automatic.
+- **Scales without thought.** Thousands of KB entries, the 60GB Notebook,
+  nightly re-embeds — none of it matters at this size.
+- **One place.** App, data, models, backups, secrets under one account and
+  one bill.
+
+**What it's genuinely worst at**
+
+- **The privacy thesis is gone, not demoted.** Journal, dating, finance,
+  health, EXIF location — all on Amazon's disk, decrypted at rest by a key
+  Amazon holds (KMS) unless client-side encryption is added, which SQLite
+  doesn't do without SQLCipher and a key-management story. Tailscale hides
+  the *network* surface; it does nothing about the disk.
+- **No offline tier, ever.** No local LLM, no local vision. Every model call
+  is cloud. The four-tier routing in `deployment-and-privacy.md` collapses
+  to one tier.
+- **Phone offline = app dead.** Unlike the home-server + local-copy plan,
+  there's no on-device fallback unless the LAN-sync work gets built anyway,
+  which erases most of the "simpler" argument.
+- **Ongoing cost forever**, and it's 10× the Mac-mini's recurring cost.
+
+**The honest comparison**
+
+| | All-AWS | Home box + Tailscale |
+|---|---|---|
+| Works from anywhere | yes | yes (via tailnet) |
+| Nothing at home must be on | **yes** | no |
+| Data on your own disk | no | **yes** |
+| Offline LLM / vision tier | no | **yes** (Mac mini) / vision only (Pi+Coral) |
+| Recurring cost | ~$20–30/mo | ~$2–3/mo |
+| Up-front cost | $0 | $0–800 |
+| Sysadmin burden | low (AWS does hardware) | low-medium (you do hardware) |
+| Fits `deployment-and-privacy.md` | **no** | yes |
+
+It's a values choice, not a technical one. All-AWS wins on convenience and
+"no PC needed"; home box wins on everything the project's docs say it's
+*for*. Neither is wrong. Decide which sentence you'd rather be true:
+"Quintacle runs no matter what's happening at home" or "Quintacle's data
+has never been on a disk I don't own."
+
+**If AWS is chosen anyway, the one non-negotiable:** tailnet-only, never a
+public endpoint, and SQLCipher (or at minimum EBS encryption with a
+customer-managed KMS key) before any journal data goes up. The code changes
+for S3-backed assets and a client factory for Bedrock are both real work
+and should be scoped before, not after, the migration.
+
 ## Option B: a home server (Mac mini or similar)
 
 | Item | Rough cost |
@@ -256,6 +347,91 @@ Home server as the source of truth + **encrypted** nightly backup of
 costs cents, and covers the "house burns down" case that home hosting
 otherwise doesn't. This is the one role where a bucket fits the privacy
 thesis.
+
+## LLM token costs and the Bedrock question (2026-10-06)
+
+Hosting and tokens are two unrelated bills. Hosting (Option A above) is
+small and fixed. Tokens depend entirely on how the KB chat is grounded —
+and today that's the whole story.
+
+### What Quintacle actually spends
+
+Defaults: Haiku 4.5 for routine parsing (`DEFAULT_MODEL`), Sonnet 5 for
+chat (`RESEARCH_MODEL`). First-party rates at time of writing:
+
+| Model | Input $/1M | Output $/1M |
+|---|---|---|
+| Haiku 4.5 | $1 | $5 |
+| Sonnet 5 | $2 | $10 |
+
+Estimated from the call patterns in the code:
+
+| Workload | Assumption | Monthly |
+|---|---|---|
+| Nightly journal parse | one Haiku call + two small resolution calls/day | ~$0.50 |
+| Drops | ~10/day, some with images, Haiku | ~$1 |
+| KB chat **as built today** | 10 msgs/day on Sonnet 5, whole KB stuffed | **~$60** |
+| KB chat **with top-k retrieval** | same volume, ~5K tokens context/msg | ~$3 |
+
+The chat row is the only one that matters. `_kb_context()` concatenates the
+entire KB into every message — at 44 files that's ~100K tokens, ~$0.20 per
+message. At thousands of entries it stops being expensive and becomes
+impossible (see the `architecture.md` 2026-09-30 amendment — same
+conclusion from the other direction). Everything else is pocket change.
+
+**Realistic all-in:** ~$12–20/mo (hosting + tokens) once retrieval exists;
+$70+/mo if the chat stays as-is and gets daily use. Prompt caching on the
+stable system prefix shaves more. Provider choice is a rounding error next
+to fixing the grounding.
+
+### Bedrock: not cheaper, and it costs features
+
+Question asked: does routing both Anthropic *and* OpenAI models through
+Bedrock beat separate API billing? **No.**
+
+- Bedrock is a reseller. For Claude it has historically charged Anthropic's
+  list price — no undercut, no personal-account volume bundle. Two
+  providers on one bill is the same money as two providers on two bills.
+  Where AWS differs it's upward (cross-region inference profiles,
+  provisioned throughput), not downward.
+- Confirmed 2026-10-06 from the Bedrock model catalog: proprietary OpenAI
+  models *are* on Bedrock now (GPT-5.4, 5.5, 5.6 variants, GPT-6 variants,
+  plus gpt-oss). But the models in Quintacle's chat picker today —
+  `gpt-4o-mini`, `gpt-5-nano`, `gpt-5-mini` — are **not** in that list. A
+  switch means picking different OpenAI models, not repointing.
+- Could not pull per-token Bedrock prices for the GPT models (the AWS
+  pricing page renders dynamically; fetch returned only legacy rows). Check
+  https://aws.amazon.com/bedrock/pricing/ directly before deciding.
+
+**What Bedrock would give:** one invoice, IAM creds instead of API keys, no
+Anthropic/OpenAI accounts, data stays inside the AWS account/region, one
+request shape across providers.
+
+**What it would take away, specific to this codebase:**
+
+- **Web search in the chat.** Both the Anthropic and OpenAI paths in
+  `nodes/kb/chat.py` use the provider's server-side web search tool.
+  Bedrock doesn't offer Anthropic's web search; the OpenAI Responses API
+  tools aren't the Bedrock surface either. Feature goes away or gets
+  rebuilt on a third-party search.
+- **Batch pricing.** Anthropic's direct API runs batches at 50% off.
+  Bedrock has no batch mode for Claude. Unused today; it's the obvious
+  lever for nightly re-embedding / bulk reprocessing later.
+- **A refactor.** 35 direct `anthropic.Anthropic()` constructions across the
+  nodes plus 2 OpenAI ones. All need to go through a factory in
+  `llm_config.py` (Bedrock Mantle client, `anthropic.`-prefixed model IDs)
+  before any of this works.
+
+**Middle option worth knowing:** *Claude Platform on AWS* is
+Anthropic-operated, bills through AWS, full first-party feature parity
+including web search. If the goal is "pay through AWS" rather than "use
+Bedrock specifically," that avoids the feature gaps.
+
+**Verdict:** if the appeal is one bill and AWS-resident data, Bedrock is
+fine and roughly cost-neutral. If the appeal is saving money, it won't —
+the chat's grounding is where the money is. Hosting location and model
+provider are separate decisions; the token bill is identical on a Mac mini
+or an EC2 instance.
 
 ## Open questions
 

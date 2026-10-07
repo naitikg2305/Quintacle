@@ -96,6 +96,83 @@ doing on March 13" pulling both journal and media-analysis for that date) is sti
 handled by deterministic code that knows how to reach into each relevant node by
 date/id — not by merging the nodes' stores together.
 
+## Amendment 2026-09-30: "structure replaces search" was too absolute
+
+The original claim above — retrieval accuracy doesn't depend on embeddings,
+only on folder structure — holds for **typed, dated data** (logs, nutrition,
+finance, body stats, todos). Those are SQL queries and must never go near a
+vector index.
+
+It does **not** hold for **prose recall** across the KB and journal once
+they're large. Today: 44 KB files, 416KB; `kb/api.py`'s `/search` is a
+case-insensitive substring scan that re-reads every file per query, and
+`kb/chat.py`'s `_kb_context()` concatenates the *entire* KB into the prompt
+on every message. Both are fine at 44. Both are dead at thousands, which is
+where this is headed:
+
+- Context stuffing: thousands of notes × 1–2KB = millions of characters. No
+  window holds it; paying for the whole KB per message is absurd anyway.
+  Chat grounding has to become retrieval.
+- Substring search: misses synonyms ("shoulder pinch" vs. a note that says
+  "rotator cuff"). The more captured over years, the more the user's own
+  vocabulary drifts. That's the abyss problem reappearing at the read side —
+  captured but not retrievable.
+
+The doc's warning that RAG over an undifferentiated blob gets lost is still
+true. The cause is the *undifferentiated* part, which the node/folder
+structure already solves. Semantic search **inside** a known folder or type
+is a different thing from RAG over one's whole life.
+
+### Decision: hybrid search inside the existing SQLite, not a vector DB
+
+**Not** a separate vector service (Pinecone/Chroma/Weaviate). Thousands of
+entries is tiny by vector standards; brute-force cosine over ~5k × 768-dim
+vectors in `sqlite-vec` is a few ms. No ANN index needed until ~100k chunks,
+a lifetime away for personal notes. Everything stays in `quintacle.db`: one
+process, offline, backed up with everything else.
+
+Design, to build **before the KB crosses a few hundred entries** — don't wait
+for the usability tests to prove the need; use them to shape the tool:
+
+- **Hybrid from day one.** SQLite FTS5 (exact/phrase, stemming, ranking) +
+  `sqlite-vec` (semantic), merged with reciprocal rank fusion. Each covers
+  the other's blind spots; building both is barely more work than one.
+- **Embed at ingest.** The drop pipeline is already the single write path —
+  embed there, once, when a note lands. Edits re-embed. No batch job, no
+  stale index.
+- **Chunk, don't embed whole notes.** A 10-line writeup is 3–4 chunks, each
+  pointing back to `(folder, slug, line range)`. Retrieval returns the
+  passage with a citation, not the file.
+- **Scope by structure.** Every chunk carries its folder and type. Searches
+  can be scoped to one folder, KB-only, or journal prose. This is where the
+  thesis and vectors reconcile: structure narrows candidates, embeddings rank
+  them.
+- **Typed data stays out.** Only prose enters the index.
+- **Local embedding model** (nomic-embed-text, bge-small class) on CPU.
+  Milliseconds per chunk, data never leaves the box. Cloud embeddings would
+  ship every note off-box just to index it — no, per
+  `deployment-and-privacy.md`.
+
+### Constraints this creates
+
+- **Android can't embed.** `stack.md` already notes sentence-transformers has
+  no real Android wheels under Chaquopy. So either the phone calls a cloud
+  embedding API (privacy no) or embedding runs on the always-on home box and
+  the phone only queries. Another argument for the home server in
+  `self-hosting.md` — it becomes the indexer as well as the host.
+- **The chat's `_kb_context()` must change** from concatenate-all to
+  retrieve-top-k. Standing instruction is not to mess with the chat; this is
+  the one change it will eventually need, and it's a grounding change, not a
+  UI/behavior change.
+
+### Relationship to MCP
+
+The `search` tool becomes the most important tool in the MCP set
+(`mcp-angle.md`). "What do I know about shoulder warmups" → five ranked
+passages with citations in one call, instead of walking the folder tree
+with `list_folders` → `list_entries` → `read_entry`. Exactly "code fetches,
+model narrates" — just with a better fetch.
+
 ## Open questions (not decided yet)
 
 - What the per-domain folder schemas actually look like beyond `schedules/` + `media/`

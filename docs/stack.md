@@ -43,6 +43,10 @@ Real on-device NPU inference needs a native runtime:
 - **ONNX Runtime + QNN execution provider** (Qualcomm's official NPU backend), or
 - **Google AI Edge / MediaPipe LLM Inference** (has first-class Android support).
 
+> 2026-10-07: researched properly in `on-device-s25u.md` — measured
+> numbers, GenieX (Kotlin SDK, NPU) and LiteRT-LM (Gemma 4 + EmbeddingGemma)
+> as the two real paths, and a no-code test to run first.
+
 Python still orchestrates — this is just another edge-call per
 `architecture.md`'s "LLM only at the edges" principle, invoked via
 subprocess/JNI, with the deterministic core untouched. Fully deferred: the
