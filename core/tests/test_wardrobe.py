@@ -25,10 +25,10 @@ def test_item_asset_save_and_read_round_trip(tmp_path):
 def test_item_write_with_asset_persists_in_frontmatter(tmp_path):
     store = WardrobeItemStore(tmp_path)
     asset_path = store.save_asset("jacket.jpg", b"data")
-    store.write("Black Bomber Jacket", "jacket", "leather", asset=asset_path)
+    store.write("Black Bomber Jacket", "jacket", "leather", assets=[asset_path])
 
     items = store.all()
-    assert items[0]["asset"] == "assets/jacket.jpg"
+    assert items[0]["assets"] == ["assets/jacket.jpg"]
 
 
 def test_outfit_store_round_trip(tmp_path):

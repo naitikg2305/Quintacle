@@ -25,10 +25,10 @@ def test_item_asset_save_and_read_round_trip(tmp_path):
 def test_item_write_with_asset_persists_in_frontmatter(tmp_path):
     store = GroomingItemStore(tmp_path)
     asset_path = store.save_asset("cleanser.jpg", b"data")
-    store.write("CeraVe Foaming Cleanser", "skincare", "gel cleanser", asset=asset_path)
+    store.write("CeraVe Foaming Cleanser", "skincare", "gel cleanser", assets=[asset_path])
 
     items = store.all()
-    assert items[0]["asset"] == "assets/cleanser.jpg"
+    assert items[0]["assets"] == ["assets/cleanser.jpg"]
 
 
 def test_routine_store_round_trip(tmp_path):

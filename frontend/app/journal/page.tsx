@@ -4,10 +4,7 @@ import { useEffect, useState } from "react";
 import EntryCard from "@/components/EntryCard";
 import { ExerciseSet, getJournal, listExerciseNames, listMeals, Meal, ParsedEntry, parseJournal, saveJournal } from "@/lib/api";
 import { commitEntry } from "@/lib/entries";
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+import { todayIso } from "@/lib/date";
 
 // The nightly dump — its own page again, distinct from Drop (quick,
 // structured, one-off things) and from the KB chat (planning/discussion).
@@ -16,9 +13,13 @@ function today(): string {
 // entries for review — same review/commit flow Drop uses, just triggered
 // from a full day's narrative instead of a single quick note.
 export default function JournalPage() {
-  const [date, setDate] = useState(today());
+  const [date, setDate] = useState(todayIso());
+  // `existing` is what's already on disk for the day (read-only here);
+  // `content` is only the new dump. The store appends a timestamped block on
+  // every save, so loading the old text into the editor and saving again
+  // duplicated it.
+  const [existing, setExisting] = useState<string | null>(null);
   const [content, setContent] = useState("");
-  const [saved, setSaved] = useState(false);
   const [entries, setEntries] = useState<ParsedEntry[]>([]);
   const [meals, setMeals] = useState<Meal[]>([]);
   const [exerciseNames, setExerciseNames] = useState<string[]>([]);
@@ -33,18 +34,21 @@ export default function JournalPage() {
   useEffect(() => {
     setEntries([]);
     setStatus(null);
-    getJournal(date).then((j) => {
-      setContent(j.content ?? "");
-      setSaved(j.content != null);
-    });
+    setContent("");
+    getJournal(date).then((j) => setExisting(j.content));
   }, [date]);
 
   async function save() {
     setBusy(true);
     setStatus("saving...");
-    await saveJournal(date, content);
-    setSaved(true);
-    setStatus("saved");
+    try {
+      await saveJournal(date, content.trim());
+      setContent("");
+      setExisting((await getJournal(date)).content);
+      setStatus("saved");
+    } catch (e) {
+      setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
     setBusy(false);
   }
 
@@ -121,15 +125,16 @@ export default function JournalPage() {
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="block border rounded px-2 py-1 mt-1" />
       </label>
 
+      {existing && (
+        <div className="border rounded p-3 text-sm whitespace-pre-wrap opacity-70 max-h-64 overflow-y-auto">{existing}</div>
+      )}
+
       <textarea
         className="w-full border rounded p-2 text-sm"
         rows={12}
-        placeholder="How did today go?"
+        placeholder={existing ? "Add more to this day..." : "How did today go?"}
         value={content}
-        onChange={(e) => {
-          setContent(e.target.value);
-          setSaved(false);
-        }}
+        onChange={(e) => setContent(e.target.value)}
       />
 
       <div className="flex flex-wrap gap-2 items-center">
@@ -138,7 +143,7 @@ export default function JournalPage() {
           disabled={busy || !content.trim()}
           className="bg-black text-white dark:bg-white dark:text-black rounded px-4 py-2 text-sm disabled:opacity-40"
         >
-          {saved ? "Saved ✓" : "Save Journal"}
+          {existing ? "Append to Journal" : "Save Journal"}
         </button>
         <button
           onClick={parse}
