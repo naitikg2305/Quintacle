@@ -243,3 +243,71 @@ code. Change what a store does without updating the description and the
 model calls it with wrong expectations — and nothing throws. Mitigation: a
 small test per tool against the real store (like the existing `test_store.py`
 pattern) for the code side; discipline for the description side.
+
+---
+
+## Update 2026-10-07: decided, approval-first writes
+
+Status: **design decision, still not built.** Naitik picked this on
+2026-10-07. It answers the "write tools" open question above: the MCP
+gets write tools, and *every* write waits for his approval.
+
+### The rule
+
+**Every MCP write goes through an approval queue inside Quintacle.** That
+covers adds, edits, moves and deletes. No write tool ever touches a store
+directly.
+
+1. A client (Claude, GPT, a local model, any of them, even running on
+   full auto) calls a write tool, e.g. `log_expense(...)` or
+   `move_kb_entry(...)`.
+2. Quintacle records it as a **pending proposal**: what would be written,
+   where, and which client asked.
+3. He sees it in Quintacle, in an approval inbox in the app and ideally as a
+   phone notification, e.g. "Claude wants to log $14.50 at Chipotle →
+   Finance": **Approve / Edit / Reject**.
+4. Only his action in the app commits it.
+
+Reads need no approval.
+
+### Why the gate lives in Quintacle, not the chat client
+
+- **Approving is never an MCP tool.** The approve/reject action exists only
+  in Quintacle's own UI/API, so a model has no tool it could call to approve
+  its own write. "Auto mode" in the client can't skip it.
+- **It works with any client.** The rule is the same for Claude, GPT and
+  local models, because no client is trusted to do the asking.
+- **Considered and not used as the gate: MCP elicitation.** That's the server
+  asking a yes/no question through the chat client. Clients support it
+  unevenly, and a client set to auto-accept could answer yes on his behalf.
+  At most a convenience later, never the safety mechanism.
+- **It matches how Quintacle already works.** Journal parse and Drop only
+  *propose* entries and nothing is written until he reviews them. The MCP is
+  another way into that same review step, not a new trust model.
+
+### Confirmation back to the chat
+
+After approval, the tool result says exactly what was written and where,
+with a deep link into the app (e.g. `/kb/browse?path=&open=`), so the chat
+can show "here it is, check it yourself." Edits applied in the inbox are
+reflected in that result, so the model learns what actually landed.
+
+The chat can't wait forever, so a write tool should:
+- **wait briefly** (~30–60s) for approval, for when he's holding his phone,
+  then return the confirmation; else
+- **return "pending #id"** and let the model check later with a read tool
+  like `proposal_status(id)`.
+
+### Still to decide
+
+- Where the inbox lives: its own page, a badge on the shell, or both. Phone
+  notifications need the phone to be able to reach Quintacle (see
+  `self-hosting.md`).
+- Whether some write types can ever be trusted to commit automatically
+  (e.g. journal appends) with an undo instead. Default for now: **no, every
+  write needs approval.**
+- How this fits the earlier "one drop-style write tool feeding the router"
+  idea. Probably the router fills in the proposal and the queue gates it,
+  but edits/moves/deletes need their own tools since the router only
+  creates new entries.
+- What happens to pending items nobody acts on: do they expire?
