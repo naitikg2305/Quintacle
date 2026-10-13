@@ -1,7 +1,14 @@
 # Quintacle as a real Android APK, no PC needed
 
-Status: **idea, planned, not started.** No code written, no tooling
-installed yet. Revisit when ready to actually do this — not urgent.
+Status: **backend-bootstrap half written, not yet verified on a real
+device.** The Termux setup/migration/persistence scripts described in step
+6 below now exist — see `scripts/termux/` and
+`docs/termux-backend-setup.md` for the concrete, runnable version of that
+step. They were written and syntax-checked (plus the data-migration pair
+round-trip tested) in an environment without a physical Android device
+attached, so "should work per Termux's documented package manager and
+APIs" is the honest claim, not "tested on-device." The Capacitor/frontend
+half (steps 1-5, 7) is separate work, not covered here.
 
 ## Why
 
@@ -80,18 +87,31 @@ over-WiFi scenario).
    Debug-signing is fine for personal sideloading (no Play Store involved);
    produces a real installable `.apk`.
 
-6. **Termux backend setup** (written as an exact script + instructions — has
-   to be handed to the user to run themselves in Termux; no direct access to
-   the physical phone from a coding session):
-   - `pkg install python` (+ whatever native build deps Pillow needs on
-     Termux, e.g. `libjpeg-turbo`), `pip install -r requirements.txt`.
-   - Copy the real `~/.quintacle` from the desktop onto the phone (exact
-     transfer method spelled out concretely when this is picked back up —
-     not just "copy it somehow").
-   - Run `uvicorn quintacle_core.api:app --host 127.0.0.1 --port 8000`.
-   - `Termux:Boot` + `termux-wake-lock` so the backend survives reboots and
-     Android's background-process killing, instead of needing to be started
-     by hand every time.
+6. **Termux backend setup** — now written as exact scripts + instructions,
+   see `docs/termux-backend-setup.md` and `scripts/termux/`:
+   - `scripts/termux/setup.sh` — `pkg install`s Python plus Termux-prebuilt
+     native deps (Pillow, numpy, opencv, lxml — pip source-builds of these
+     are impractical/unreliable on Termux's Bionic libc, detailed in the
+     doc), then pip-installs the rest of `core/requirements.txt` into a
+     `--system-site-packages` venv. Flags `pydantic-core` (Rust build,
+     ~10 min first time) and `opencv-python` (no guaranteed prebuilt
+     package on every Termux repo mirror — and notably, `cv2` is imported
+     at module load time in `kb/drop.py`, so if it's missing the *whole*
+     API fails to start, not just video-drop handling) as the two real
+     risk points.
+   - `scripts/termux/migrate-export.sh` (desktop) /
+     `migrate-import.sh` (Termux) — tarball-based one-time copy of the real
+     `~/.quintacle` onto the phone (chosen over the LAN-sync mechanic in
+     `deployment-and-privacy.md`, which is designed for two already-running
+     copies diffing an existing shared file, not a cold first seed).
+   - `scripts/termux/start-backend.sh` — runs
+     `uvicorn quintacle_core.api:app --host 127.0.0.1 --port 8000` with a
+     restart-on-crash loop and `termux-wake-lock`.
+   - `scripts/termux/install-boot-autostart.sh` — wires
+     `scripts/termux/start-backend.sh` into `~/.termux/boot/`. Installing
+     the Termux:Boot app itself, opening it once, and exempting Termux from
+     battery optimization are manual, physical-device steps that can't be
+     scripted — spelled out in `docs/termux-backend-setup.md`.
 
 7. **Hand off the `.apk`** — transferred to the phone (cable/cloud/`adb
    install` if connected via USB) and sideloaded ("install unknown apps"
