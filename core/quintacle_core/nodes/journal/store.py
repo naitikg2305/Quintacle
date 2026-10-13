@@ -84,8 +84,15 @@ class JournalStore:
         return True
 
     def load(self, entry_date: date) -> str | None:
+        """The day's content for reading — MCP-append undo markers are plumbing
+        (undo_write re-reads the raw file itself), and the journal/day pages
+        render this as plain text, so the marker comments get stripped here
+        rather than shown to the user."""
         path = self._path(entry_date)
-        return path.read_text(encoding="utf-8") if path.exists() else None
+        if not path.exists():
+            return None
+        raw = path.read_text(encoding="utf-8")
+        return re.sub(r"[ \t]*<!-- /?mcp-append:[0-9a-f]+ -->\n?", "", raw)
 
     def list_dates(self) -> list[date]:
         """Every day that actually has a journal entry — used by the graph

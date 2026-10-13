@@ -33,3 +33,16 @@ def test_different_days_stay_independent(tmp_path):
 
     assert "day two stuff" not in store.load(date(2026, 9, 8))
     assert "day one stuff" not in store.load(date(2026, 9, 9))
+
+
+def test_load_strips_mcp_append_markers_but_keeps_content(tmp_path):
+    from datetime import date
+
+    store = JournalStore(tmp_path)
+    store.save(date(2026, 10, 13), "from the app")
+    store.save(date(2026, 10, 13), "from mcp", marker="abc123def456")
+
+    content = store.load(date(2026, 10, 13))
+    assert "from the app" in content
+    assert "from mcp" in content
+    assert "mcp-append" not in content
