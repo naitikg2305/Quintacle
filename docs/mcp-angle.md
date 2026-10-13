@@ -298,16 +298,179 @@ The chat can't wait forever, so a write tool should:
 - **return "pending #id"** and let the model check later with a read tool
   like `proposal_status(id)`.
 
-### Still to decide
+### Still to decide (carried over, see superseding update below)
 
-- Where the inbox lives: its own page, a badge on the shell, or both. Phone
-  notifications need the phone to be able to reach Quintacle (see
-  `self-hosting.md`).
-- Whether some write types can ever be trusted to commit automatically
-  (e.g. journal appends) with an undo instead. Default for now: **no, every
-  write needs approval.**
 - How this fits the earlier "one drop-style write tool feeding the router"
-  idea. Probably the router fills in the proposal and the queue gates it,
-  but edits/moves/deletes need their own tools since the router only
-  creates new entries.
-- What happens to pending items nobody acts on: do they expire?
+  idea. Probably the router fills in the write and the ledger records it,
+  but edits/deletes need their own tools since the router only creates new
+  entries.
+
+---
+
+## Update 2026-10-13 — superseded: auto-write everywhere, undo instead of approval
+
+Status: **design decision, still not built.** Settled 2026-10-13, over a
+longer conversation working through what undo would actually have to look
+like. This replaces the approval-first design directly above — kept in
+place rather than deleted, since the reasoning that led to it (and the
+reasoning that reversed it) are both worth keeping.
+
+### The reversal, and why it holds up
+
+Approval-before-the-fact and undo-after-the-fact solve the same problem:
+catching a bad write before it does damage. If undo is airtight — every
+destructive action stages a full, exact snapshot of what existed *before*
+it touches the real store — then nothing is actually unrecoverable, which
+means the human gate before the fact stops earning its friction.
+
+The other half of why this is safe to do: **Quintacle is single-user.**
+Naitik is the only one using this instance (or, for whoever else ever runs
+their own copy — see `generic-multi-user-migration.md` — the only one using
+theirs). Approval exists to catch *your own* mistake, not to referee between
+multiple people's clients writing to shared data. Undo catches the same
+mistake, just slightly later, with far less friction for every write that
+turns out fine — which is most of them.
+
+### The rule
+
+**Every MCP write commits immediately. Add, edit, delete — no approval,
+ever.** The earlier plan (approval gates destructive writes, adds auto-write)
+is gone; everything is now the same: auto-write, logged, undoable.
+
+### The mechanism that makes this safe
+
+1. **A staging/shadow folder**, separate from the real stores. Before any
+   edit or delete touches real data, the exact prior state is captured
+   there first: full file bytes for a markdown file, the full row for a
+   SQLite record, or the exact span of text for an append (so undoing an
+   append removes only that span, not the whole file — the same precision
+   problem flagged in the approval-first design above still applies here,
+   just solved after the fact instead of before).
+2. **One combined ledger** — a single, human-readable, append-only log of
+   every push ever made: what, where, which client, when. This *is* the
+   "recent writes" page in the app; it just renders the ledger's tail.
+3. **Clicking a ledger entry opens a diff** built from the staged snapshot:
+   what text got appended, the before/after for an edit, or the full
+   content that existed right before a delete.
+4. **"Undo" on an entry replays the snapshot backward** — restores the
+   file, reinserts the row, or strips the appended span.
+5. **Multi-part pushes** (one MCP call that creates or changes several
+   things at once — the car-maintenance-entry case in
+   `ai-managed-pages.md`, or a journal parse spawning several entries) are
+   grouped as a single ledger entry, so undo reverses the whole group
+   together, never partially.
+
+### Retention
+
+The app only *offers* the Undo button for a rolling 24 hours — past that,
+undoing something risks surprising whatever's been built on top of it
+since. The raw staged snapshots themselves are kept indefinitely regardless
+(plain text, storage is a non-concern) — nothing is ever truly gone, just
+harder to recover past the window without going to the files directly.
+
+### Left as an open idea, not a requirement
+
+Flagging deletes more visibly in the ledger (bold, a distinct marker, kept
+near the top) — since a missed delete is the one case where missing the 24h
+window is a real, permanent loss, unlike a stray addition or a bad edit
+someone's unlikely to build directly on top of before noticing. Not asked
+for; worth considering if deletes end up actually happening often enough to
+get lost in the scroll.
+
+### Where approval-first still might matter
+
+Only if Quintacle ever becomes multi-user (`generic-multi-user-migration.md`,
+its own branch, not on `main`). A shared instance with several people's
+clients writing to shared data is a different trust problem than one person
+catching their own mistakes — that's the point at which approval-first (or
+per-user visibility) might need to come back for other users' writes, even
+if the owner's own instance stays auto-write.
+
+---
+
+## Update 2026-10-13 — structured writes, and the full tool surface
+
+Status: **design decision + inventory, still not built.** Settled over the
+same 2026-10-13 conversation as the auto-write/undo reversal above. Two
+things: a rule about what a write tool's *input* looks like, and a complete
+pass over every domain in the app to make sure none gets left uncovered.
+
+### The structured-input rule, and why it's a real cost decision, not style
+
+Quintacle's own backend already makes its own direct, metered Anthropic API
+calls — 35 separate call sites across `core/quintacle_core`, Haiku by
+default for routine parsing, Sonnet for heavier work (`llm_config.py`). That
+billing is on Naitik's own API key, separate from and unrelated to a Claude
+Pro/Max or ChatGPT Plus subscription, which is flat-rate and doesn't carry
+API credits.
+
+The use case that makes this concrete: planning a meal, a trip, or just
+talking through something in a normal Claude.ai or ChatGPT conversation —
+already paid for by the subscription — then saying "push that to Quintacle."
+If the write tool's input is raw text that Quintacle's backend then
+reclassifies with its own `drop_router.py` / `suggest_kb_entry`-style calls,
+the structuring gets paid for *twice*: once implicitly in the subscription
+conversation, again literally on the metered API key. If the write tool
+instead takes the **already-decided shape** — title, folder, content,
+`fields`, `links`, the exact store-specific arguments — Quintacle's backend
+just persists it. No second LLM call, no second bill, because the thinking
+already happened in the conversation the write tool is being called from.
+
+**Rule: every structured write tool's parameters are the final, decided
+shape of the thing being written — never raw text for Quintacle to figure
+out.** A small, separate class of "let Quintacle think about it" tools (see
+below) exists on purpose for quick, unstructured capture — those are the
+one category that still costs Quintacle's own API budget, and should read as
+clearly different from the structured tools in how they're described to a
+client.
+
+### The full tool surface, by domain
+
+Every domain gets a read tool and a structured write tool, built as a thin
+wrapper over the same store classes the existing REST routes already use
+(`nodes/<domain>/api.py`) — same relationship MCP already has to the rest of
+the app per the "does MCP break when Quintacle changes" section above.
+"Convenience" columns are the raw-capture, Quintacle-does-the-thinking
+tools — explicitly the ones that still bill the API key.
+
+| Domain | Read tools | Structured write tools | Convenience (billed) tools |
+|---|---|---|---|
+| Day overview | day detail, day counts | — (derived view) | — |
+| Journal | get day's journal | append to journal | parse day's dump into proposed entries |
+| Schedule / todos | list todos, calendar | create todo, update todo, delete todo | — |
+| KB / notes | list folders, list/search entries, get entry, entries-meta, get/set folder view, list photos | create entry (title, folder, content, fields, links), replace/attach asset, set spreadsheet asset | drop (raw text/photo), batch-drop, auto-sort a folder |
+| Graph | neighborhood(node, hops), reverse-links(node) — per `graph-model.md` Stage 3 | (writes happen as a side effect of every other write's link step, not its own tool) | — |
+| Meals / ingredients / routines | list meals, meal micros, list ingredients, ingredient micros, meal components, list routines | create meal, create ingredient, create routine, compose meal from ingredients | estimate meal from description/photo, suggest routine, suggest meal composition |
+| Food / substances / nutrition | food for date, nutrition for date, nutrition history | log food, log substance | — |
+| Exercise / activities / body stats | exercise names, activities for date/range | log exercise, log activity, log body stat | — |
+| Expenses | expenses in range | log expense | — |
+| Habits | list habits, progress, history | create habit | — |
+| Finance (cards / investments) | list cards/investments | create card entry, create investment entry | — |
+| Documents | list, get asset | create document entry | — (see caveat below) |
+| People | list/search | create person | — |
+| Travel / experience | list | create experience | — |
+| Wardrobe | list items, list outfits | create item, create outfit | suggest an outfit |
+| Grooming | list items, list routines | create item, create routine | suggest a routine |
+| Home | list residences, list items | create residence, create item | — |
+| Profile | get profile, get targets | update profile | — |
+
+### Explicit exclusions and open gaps — not silently covered
+
+- **`nodes/kb/chat.py` and everything under `/kb/chat*` stay untouched.**
+  Standing instruction from earlier in the project, unrelated to MCP — the
+  KB chat doesn't get a tool, full stop.
+- **Documents that are vault-shaped (license, passport, tax docs, visas) —
+  held back, not covered by default.** `vault.md` calls for security-first
+  handling these don't have yet; today's `nodes/documents` store treats them
+  the same as any other document, which is fine for the app's own UI behind
+  normal auth but not obviously fine for "any MCP client I authorize can
+  read my passport on request." Needs its own decision before a read/write
+  tool goes on top of it, not inherited automatically from this table.
+- **Binary asset transfer (photos, PDFs) over MCP is an open question, not
+  solved here.** Every domain above has an asset-carrying write path in the
+  REST API (`multipart/form-data`); MCP's blob/resource mechanics for this
+  haven't been worked out. Flagging it so it isn't assumed solved by being
+  in the table.
+- **Image generation (`/kb/generate-image`)** isn't knowledge capture or
+  retrieval — left out of this pass, revisit only if a concrete use for it
+  through MCP shows up.

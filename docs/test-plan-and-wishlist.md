@@ -134,6 +134,83 @@ whole app and call it ready for his phone.
 - Dust protection for the laptop.
 - Track everything done so far, docs included.
 
+## Everyday-use test flows, by domain (2026-10-13)
+
+A second pass, organized by life domain rather than by app surface. Each
+domain lists what should work through **Drop** vs. through **Chat** — this is
+the file/photo set to build per domain for the test folder, and doubles as the
+acceptance list for "does this domain actually work."
+
+### Food
+- **Chat:** plan a new meal; ideas for ingredients/spices; turn a plan into a
+  recipe and store its macros; swap macros (e.g. swap a carb source and keep
+  calories the same).
+- **Drop:** a recipe and the steps used to make it; what was just eaten, logged
+  as a calorie entry if it's a known item in the database.
+
+### Fitness
+- **Drop:** sets and reps as they're done; track weight and what was done that
+  specific week/day (calories burned, etc.) — entered per set, appending as you
+  go through a workout.
+- **Chat:** plan a workout or a program; plan running/stretching; a workout
+  plan with dates attached.
+
+### Finances
+- **Drop:** a credit card statement — should auto-detect subscriptions and
+  recurring payments; a monthly budget for a category (e.g. housing); credit
+  card points updates and what they're worth (flights, hotels); a specific
+  card's benefits and how much of them have been used; everyday spending,
+  logged as it happens; stocks invested in.
+- **Chat:** plan financial future at current salary, at an ideal salary, or
+  matching salary to financial goals; plan buying a house (payments etc.) or a
+  specific car; discuss stocks and investing knowledge in general.
+
+### Documents
+- **Drop:** driver's license, paychecks, W2, tax docs, passport, car
+  docs/receipts/mail.
+
+### Career
+- **Drop:** specific resumes; job applications actually submitted; Minfy sales
+  and related work; what was done on a specific day for the company
+  (knowledge, KPIs).
+- **Chat:** discuss company politics/conversations, tied to people; discuss
+  emails/messages to plan next steps; make company-specific folders; discuss
+  sales work, write and drop SOWs, and log client interactions/notes as they
+  happen.
+
+### Organisation (home)
+- **Drop:** a catalog of where things are kept (which drawers hold what, how
+  furniture is arranged); rough apartment blueprints/drawings; what was bought
+  and what was on the list for it.
+- **Chat:** discuss Sunday chores/cleaning; discuss meal prepping for the days
+  ahead.
+
+### Schedule
+- **Chat:** the schedule actually followed; what needs doing in a given week
+  (hours-based, so it's generic); how many days drinking vs. days left in a
+  limit; how many days of golf or guitar; whether 10 job applications got sent.
+
+### Travel / experience / date / fun / journal
+- **Drop:** things already done (e.g. a New York trip), pulled from a chat or
+  Claude photos; photos tied to a past experience; journal entries linked to
+  specific people; dating playbooks/tricks that worked; general philosophy
+  learned about people.
+- **Chat:** plan trips, dates, or general life-planning days; tactics for
+  approaching/dating people.
+
+### People
+- Most of the above should link back to People — folders per person tying
+  experiences to them (dates, friends, family). Needs to be filterable, e.g.
+  by date.
+
+### Organisation (tech)
+- Specific apps used; bookmarks/links; specific websites/tools and what each
+  is for; passwords for specific things; phone apps and the reasoning for
+  having each.
+
+### Knowledge
+- General notes on specific niche topics (e.g. physics, whatever comes up).
+
 ## How to use this
 
 1. Build the test folder grouped by the sections above.
