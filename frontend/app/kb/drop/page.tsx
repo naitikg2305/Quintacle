@@ -3,7 +3,18 @@
 import { useEffect, useState } from "react";
 import EntryCard from "@/components/EntryCard";
 import ScribblePad from "@/components/ScribblePad";
-import { ExerciseSet, listExerciseNames, listMeals, Meal, ParsedEntry, proposeDrop, saveJournal } from "@/lib/api";
+import {
+  addKBEntryAsset,
+  ExerciseSet,
+  listExerciseNames,
+  listMeals,
+  Meal,
+  ParsedEntry,
+  proposeDrop,
+  pushKBEntry,
+  saveJournal,
+  sortKBEntry,
+} from "@/lib/api";
 import Link from "next/link";
 import {
   Activity,
@@ -27,6 +38,8 @@ import {
   MapPin,
   Pill,
   PenLine,
+  Paperclip,
+  Plus,
   Scale,
   Shirt,
   Sparkles,
@@ -112,6 +125,18 @@ export default function DropPage() {
   // Auto-ticks for long text until the user decides either way.
   const [saveToJournal, setSaveToJournal] = useState(false);
   const [journalTouched, setJournalTouched] = useState(false);
+
+  // After a single-note drop commits, keep the entry open for more rounds —
+  // a lecture, a live-evolving trip record — instead of forcing a fresh drop
+  // (and a fresh AI classification) for every new sentence or photo. Folds
+  // more text in via the same merge-update /kb/sort already uses for Browse's
+  // "add to this note", and attaches more files via the same endpoint Browse
+  // uses to add a photo to an existing entry after the fact.
+  const [activeSession, setActiveSession] = useState<{ folder: string; slug: string; title: string } | null>(null);
+  const [sessionText, setSessionText] = useState("");
+  const [sessionFile, setSessionFile] = useState<File | null>(null);
+  const [sessionBusy, setSessionBusy] = useState(false);
+  const [sessionStatus, setSessionStatus] = useState<string | null>(null);
 
   useEffect(() => {
     listMeals().then(setMeals);
@@ -241,16 +266,64 @@ export default function DropPage() {
     // the right one unambiguously.
     if (saveToJournal && text.trim()) await appendToJournal();
     const ASSET_TYPES = new Set(["kb_entry", "document_entry", "wardrobe_item", "grooming_item", "home_item", "outfit_photo"]);
+    // A single kb_entry drop is the common "one note, maybe more to add
+    // later" case — capture where it landed so the keep-adding session below
+    // can target it. Multiple entries (a journal dump exploding into several
+    // things) don't have one obvious entry to keep extending, so no session.
+    const singleNote = entries.length === 1 && entries[0].type === "kb_entry" ? entries[0] : null;
+    let newSession: typeof activeSession = null;
     for (const entry of entries) {
       const assets = ASSET_TYPES.has(entry.type) && file ? [file, ...extraPhotos] : [];
-      await commitEntry(date, entry, assets);
+      const result = await commitEntry(date, entry, assets);
+      if (singleNote && result && typeof result === "object" && "slug" in result) {
+        const r = result as { folder: string; slug: string };
+        newSession = { folder: r.folder, slug: r.slug, title: singleNote.title };
+      }
     }
     setStatus(`saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
     setEntries([]);
     setText("");
     setJournalTouched(false);
     onFileChosen(null);
+    setActiveSession(newSession);
+    setSessionStatus(null);
     setBusy(false);
+  }
+
+  async function foldIntoSession() {
+    if (!activeSession || !sessionText.trim()) return;
+    setSessionBusy(true);
+    setSessionStatus("adding...");
+    try {
+      const suggestion = await sortKBEntry(sessionText.trim(), { folder: activeSession.folder, slug: activeSession.slug });
+      await pushKBEntry(suggestion);
+      setSessionText("");
+      setSessionStatus("added");
+    } catch (e) {
+      setSessionStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setSessionBusy(false);
+  }
+
+  async function attachToSession() {
+    if (!activeSession || !sessionFile) return;
+    setSessionBusy(true);
+    setSessionStatus("attaching...");
+    try {
+      await addKBEntryAsset(activeSession.folder, activeSession.slug, sessionFile);
+      setSessionFile(null);
+      setSessionStatus("attached");
+    } catch (e) {
+      setSessionStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setSessionBusy(false);
+  }
+
+  function endSession() {
+    setActiveSession(null);
+    setSessionText("");
+    setSessionFile(null);
+    setSessionStatus(null);
   }
 
   const mono = "font-mono text-[10px] uppercase tracking-[0.14em] text-muted";
@@ -341,30 +414,44 @@ export default function DropPage() {
         </div>
       </div>
 
-      {previewUrl && extraPhotos.length > 0 && (
+      {file && extraPhotos.length > 0 && (
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-          {extraPreviewUrls.map((url, i) => (
-            <div key={i} className="relative">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt="" className="h-28 w-full rounded-lg border border-line object-cover" />
-              <button
-                onClick={() => removeExtraPhoto(i)}
-                aria-label="Remove photo"
-                className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white hover:bg-danger"
-              >
-                <X size={12} />
-              </button>
-            </div>
-          ))}
+          {extraPhotos.map((f, i) =>
+            IMAGE_EXT.includes(extFor(f)) ? (
+              <div key={i} className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={extraPreviewUrls[i]} alt="" className="h-28 w-full rounded-lg border border-line object-cover" />
+                <button
+                  onClick={() => removeExtraPhoto(i)}
+                  aria-label="Remove attachment"
+                  className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white hover:bg-danger"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ) : (
+              <div key={i} className="relative flex h-28 flex-col items-center justify-center gap-1 rounded-lg border border-line p-2 text-center">
+                <Paperclip size={18} className="text-accent" />
+                <span className="line-clamp-2 break-all text-[11px] text-muted">{f.name}</span>
+                <button
+                  onClick={() => removeExtraPhoto(i)}
+                  aria-label="Remove attachment"
+                  className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white hover:bg-danger"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )
+          )}
         </div>
       )}
 
-      {previewUrl && (
+      {file && (
         <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-accent hover:underline">
-          <ImagePlus size={14} /> add another photo (back / label / another angle / another page) — as many as you want
+          <Paperclip size={14} /> add another attachment (photo, video, PDF, DOCX — a ticket, a QR code, another page) — as many as you want
           <input
             type="file"
-            accept="image/*"
+            accept="image/*,video/*,.pdf,.docx,.stl"
             capture="environment"
             className="hidden"
             onChange={(e) => {
@@ -448,11 +535,52 @@ export default function DropPage() {
         </Panel>
       )}
 
-      {entries.length === 0 && !status && !text.trim() && !file && (
+      {entries.length === 0 && !status && !text.trim() && !file && !activeSession && (
         <EmptyState icon={Inbox}>Nothing queued. Type, drop a file, or add an entry by hand — nothing is saved until you review it.</EmptyState>
       )}
 
       {status && <p className="text-sm text-muted">{status}</p>}
+
+      {activeSession && (
+        <Panel title={`Still going — "${activeSession.title}"`} className={cn("border-accent/40")}>
+          <div className="space-y-3">
+            <p className="text-xs text-muted">
+              A lecture, a live trip record, anything you keep adding to — fold in more text or attach more photos
+              without starting a new drop. Each round saves straight into this entry.
+            </p>
+            <Textarea
+              rows={3}
+              placeholder="More notes to fold into this entry..."
+              value={sessionText}
+              onChange={(e) => setSessionText(e.target.value)}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="primary" onClick={foldIntoSession} disabled={sessionBusy || !sessionText.trim()}>
+                <Plus size={15} /> Add to note
+              </Button>
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line-strong px-4 py-2 text-sm transition-colors hover:border-accent/60 hover:bg-accent/10">
+                <Paperclip size={15} /> {sessionFile ? sessionFile.name : "Choose attachment"}
+                <input
+                  type="file"
+                  accept="image/*,video/*,.pdf,.docx,.stl"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => setSessionFile(e.target.files?.[0] ?? null)}
+                />
+              </label>
+              {sessionFile && (
+                <Button onClick={attachToSession} disabled={sessionBusy}>
+                  <ImagePlus size={15} /> Attach
+                </Button>
+              )}
+              <Button variant="ghost" onClick={endSession}>
+                Done
+              </Button>
+            </div>
+            {sessionStatus && <p className="text-xs text-muted">{sessionStatus}</p>}
+          </div>
+        </Panel>
+      )}
     </div>
   );
 }
