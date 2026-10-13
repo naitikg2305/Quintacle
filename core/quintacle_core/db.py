@@ -117,6 +117,24 @@ CREATE TABLE IF NOT EXISTS habits (
     metric TEXT NOT NULL DEFAULT 'activity_hours',
     direction TEXT NOT NULL DEFAULT 'at_least'
 );
+
+-- Mirrors graph/edges/*.md (see quintacle_core/graph.py) — a derived,
+-- fast-query cache, never the source of truth. id is the edge file's
+-- filename stem; source_id/target_id reuse /graph's existing id scheme
+-- ("note:folder/slug", "journal:date", "experience:folder/slug").
+CREATE TABLE IF NOT EXISTS edges (
+    id TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    source_of_edge TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_edges_source_id ON edges(source_id);
+CREATE INDEX IF NOT EXISTS idx_edges_target_id ON edges(target_id);
 """
 
 # habits.metric/direction were added after the table already existed in some

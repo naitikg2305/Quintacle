@@ -62,8 +62,9 @@ def parse_journal(for_date: date, content: str = Body(..., media_type="text/plai
     # trip coming up" naturally gets written, so this can't be dropped just
     # because Journal is its own page again.
     exp_estimate = maybe_structure_experience(content)
+    exp_links: list[str] = []
     if exp_estimate is not None:
-        entries.append({"type": "experience_entry", **exp_estimate.model_dump(exclude={"is_experience"}), "links": []})
+        entries.append({"type": "experience_entry", **exp_estimate.model_dump(exclude={"is_experience"}), "links": exp_links})
 
     known_people = [p["name"] for p in get_people_store().all()]
     person_estimate = maybe_structure_person_mention(content, known_people, for_date)
@@ -83,13 +84,18 @@ def parse_journal(for_date: date, content: str = Body(..., media_type="text/plai
             matched_name = canonicalize_name(person_estimate.person_name, known_people)
             resolved = get_people_store().find(matched_name)
             if resolved is not None:
+                # Same cross-reference as /drop's propose_drop — the real
+                # typed edge (kind="mentions_person") is created at commit
+                # time by graph.link_new_entry once both sides have a real id.
+                if exp_estimate is not None:
+                    exp_links.append(matched_name)
                 entries.append(
                     {
                         "type": "kb_entry",
                         "folder": f"{resolved['folder']}/Mentions",
                         "title": f"{matched_name} — {for_date.isoformat()}",
                         "content": person_estimate.notes,
-                        "links": [],
+                        "links": [exp_estimate.suggested_name] if exp_estimate is not None else [],
                     }
                 )
 

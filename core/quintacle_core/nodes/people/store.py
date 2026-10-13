@@ -34,16 +34,20 @@ class PersonStore:
         how_met: str = "",
         met_date: str | None = None,
         notes: str = "",
+        links: list[str] | None = None,
     ) -> tuple[str, str]:
         """Returns (folder, slug) — folder is the exact string a kb_entry
         (a mention filed under People/<Name>/Mentions) or the folder-scoped
-        chat should be given."""
+        chat should be given. `links` mirrors every other domain's
+        frontmatter `links` field — e.g. an experience this person was
+        mentioned alongside (see graph.py's sync_frontmatter_links)."""
         person_dir = self._dir(name)
         post = frontmatter.Post(notes)
         post["name"] = name
         post["category"] = category
         post["how_met"] = how_met
         post["met_date"] = met_date
+        post["links"] = links or []
         (person_dir / "profile.md").write_text(frontmatter.dumps(post), encoding="utf-8")
         folder = str(person_dir.relative_to(self.kb_root)).replace("\\", "/")
         return folder, slugify(name)

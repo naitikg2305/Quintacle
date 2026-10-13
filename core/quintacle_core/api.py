@@ -14,6 +14,7 @@ load_dotenv()
 
 from . import clock
 from . import db
+from .graph import get_graph_store, init_graph_store, sync_frontmatter_links
 from .nodes.drop_router import (
     IMAGE_MIME_TYPES,
     classify_image_type,
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     # out on its own carries both the reference notes and the real numbers.
     kb_root = DATA_DIR / "kb"
     conn = db.connect(DATA_DIR / "quintacle.db")
+    init_graph_store(DATA_DIR, conn)
     init_repo(conn, LogFileStore(kb_root))
     app.include_router(logs_router)
 
@@ -135,6 +137,30 @@ def create_app() -> FastAPI:
     init_credit_card_store(kb_root)
     app.include_router(credit_card_router)
     app.include_router(investments_router)
+
+    # One-time per-process catch-up: materializes every pre-existing note's
+    # and experience's frontmatter `links` into the edges table (see
+    # graph.py / docs/graph-model.md), so switching /graph over to reading
+    # SQLite doesn't silently blank out connections that existed before this
+    # table did. Cheap at current scale — one pass over the KB at startup,
+    # not on every request. Not the same thing as graph.rebuild_from_folder
+    # (that recovers SQLite from already-materialized edge files; this reads
+    # frontmatter, the thing that hasn't been materialized yet at all).
+    notes = get_kb_store().graph_entries()
+    experiences = get_travel_store().all()
+    note_id_by_title = {n["title"]: f"note:{n['folder']}/{n['slug']}" for n in notes}
+    journal_id_by_date = {d.isoformat(): f"journal:{d.isoformat()}" for d in get_journal_store().list_dates()}
+    experience_id_by_name = {e["name"]: f"experience:{e['folder']}/{e['slug']}" for e in experiences}
+    link_target_by_title = {**note_id_by_title, **journal_id_by_date, **experience_id_by_name}
+    title_lookup = list(link_target_by_title.keys())
+    for n in notes:
+        note_id = f"note:{n['folder']}/{n['slug']}"
+        resolved = [canonicalize_name(t, title_lookup) for t in n["links"]]
+        sync_frontmatter_links(note_id, resolved, link_target_by_title)
+    for e in experiences:
+        exp_id = f"experience:{e['folder']}/{e['slug']}"
+        resolved = [canonicalize_name(t, title_lookup) for t in (e.get("links") or [])]
+        sync_frontmatter_links(exp_id, resolved, link_target_by_title)
 
     @app.get("/day/counts")
     def day_counts(start: date, end: date) -> dict[str, int]:
@@ -423,6 +449,10 @@ def create_app() -> FastAPI:
         # (regex-gated, see travel/llm.py) and additive, not a replacement
         # for the primary classification. Matches the explicit "AI proposes
         # all of them, I prune" preference used for food+finance+experience too.
+        # Pre-declared so the person-mention section below can check "did an
+        # experience also get detected from this same drop" even when it
+        # didn't (experience_check_text falsy, or not experience-worthy).
+        exp_estimate = None
         if experience_check_text:
             exp_estimate = maybe_structure_experience(experience_check_text)
             if exp_estimate is not None:
@@ -487,13 +517,25 @@ def create_app() -> FastAPI:
                     matched_name = canonicalize_name(person_estimate.person_name, known_people)
                     resolved = get_people_store().find(matched_name)
                     if resolved is not None:
+                        # An experience AND a known person detected from the
+                        # SAME drop get cross-referenced by name here — the
+                        # actual typed edge (kind="mentions_person") gets
+                        # created at commit time by graph.link_new_entry
+                        # (see travel/api.py's create_experience and
+                        # kb/api.py's create_entry), once both sides have a
+                        # real id to point at. These `links` hints are what
+                        # makes that match deterministic instead of hoping
+                        # the AI-written notes text happens to repeat the
+                        # name/place verbatim.
+                        if exp_estimate is not None:
+                            exp_links.append(matched_name)
                         entries.append(
                             {
                                 "type": "kb_entry",
                                 "folder": f"{resolved['folder']}/Mentions",
                                 "title": f"{matched_name} — {reference_date.isoformat()}",
                                 "content": person_estimate.notes,
-                                "links": [],
+                                "links": [exp_estimate.suggested_name] if exp_estimate is not None else [],
                             }
                         )
 
@@ -503,32 +545,29 @@ def create_app() -> FastAPI:
     @app.get("/graph")
     def graph() -> dict:
         """Everything connected to everything else, for the graph view:
-        note-to-note links (AI-proposed, frontmatter-only — never rewrites a
-        note's body) and note-to-asset from the KB, plus every relationship
-        that already exists structurally elsewhere in the app (a meal's real
-        ingredients, a routine's real exercises, an outfit's real items).
-        Nothing here is a new kind of data — this just surfaces connections
-        that already exist, in one shape a graph can render."""
+        note-to-note links, note-to-asset from the KB, plus every
+        relationship that already exists structurally elsewhere in the app
+        (a meal's real ingredients, a routine's real exercises, an outfit's
+        real items). Nothing here is a new kind of data — this just surfaces
+        connections that already exist, in one shape a graph can render.
+
+        Note/experience/person links used to be recomputed here on every
+        request (walk every note's frontmatter, fuzzy-match every title) —
+        see docs/graph-model.md's "graph engine plan". Those are now
+        materialized at write time (graph.sync_frontmatter_links,
+        graph.link_new_entry) into the `edges` SQLite table; this just reads
+        it — an indexed query instead of an O(notes x links) walk."""
         nodes: list[dict] = []
         edges: list[dict] = []
 
         # Journal days are a real node type too — a photo's EXIF date gets
         # linked to the day it matches (see kb/api.py's batch_drop), so that
         # link needs somewhere to resolve to.
-        journal_id_by_date = {d.isoformat(): f"journal:{d.isoformat()}" for d in get_journal_store().list_dates()}
-        for iso_date, journal_id in journal_id_by_date.items():
-            nodes.append({"id": journal_id, "type": "journal_day", "label": iso_date})
+        for d in get_journal_store().list_dates():
+            iso_date = d.isoformat()
+            nodes.append({"id": f"journal:{iso_date}", "type": "journal_day", "label": iso_date})
 
         notes = get_kb_store().graph_entries()
-        note_id_by_title = {n["title"]: f"note:{n['folder']}/{n['slug']}" for n in notes}
-        experiences = get_travel_store().all()
-        experience_id_by_name = {e["name"]: f"experience:{e['folder']}/{e['slug']}" for e in experiences}
-        # One combined pool to fuzzy-match a link title against — a link can
-        # point at another note, a journal day (an ISO date string), or an
-        # experience (e.g. a photo note linking back to the restaurant visit
-        # it was taken at, or vice versa).
-        link_target_by_title = {**note_id_by_title, **journal_id_by_date, **experience_id_by_name}
-        title_lookup = list(link_target_by_title.keys())
         for n in notes:
             note_id = f"note:{n['folder']}/{n['slug']}"
             node = {"id": note_id, "type": "note", "label": n["title"], "folder": n["folder"], "slug": n["slug"]}
@@ -539,18 +578,8 @@ def create_app() -> FastAPI:
                 asset_id = f"asset:{n['folder']}/{n['slug']}"
                 nodes.append({"id": asset_id, "type": "asset", "label": n["asset"], "folder": n["folder"], "path": n["asset"]})
                 edges.append({"source": note_id, "target": asset_id, "kind": "has_asset"})
-            for linked_title in n["links"]:
-                # Deterministic, local — same fuzzy-match safety net used
-                # everywhere else, so a slightly-off AI-proposed link title
-                # (or a date like "2026-9-8" vs "2026-09-08") still resolves
-                # instead of silently dropping the edge.
-                matched = canonicalize_name(linked_title, title_lookup)
-                target_id = link_target_by_title.get(matched)
-                if target_id and target_id != note_id:
-                    kind = "on_day" if target_id.startswith("journal:") else "related"
-                    edges.append({"source": note_id, "target": target_id, "kind": kind})
 
-        for e in experiences:
+        for e in get_travel_store().all():
             exp_id = f"experience:{e['folder']}/{e['slug']}"
             nodes.append(
                 {
@@ -563,12 +592,9 @@ def create_app() -> FastAPI:
                     "kind": e.get("kind"),
                 }
             )
-            for linked_title in e.get("links") or []:
-                matched = canonicalize_name(linked_title, title_lookup)
-                target_id = link_target_by_title.get(matched)
-                if target_id and target_id != exp_id:
-                    kind = "on_day" if target_id.startswith("journal:") else "related"
-                    edges.append({"source": exp_id, "target": target_id, "kind": kind})
+
+        for edge in get_graph_store().all():
+            edges.append({"source": edge["source_id"], "target": edge["target_id"], "kind": edge["kind"]})
 
         repo = get_logs_repo()
         ingredients_by_id = {i["id"]: i for i in repo.list_ingredients()}

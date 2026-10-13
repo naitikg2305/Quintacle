@@ -28,6 +28,14 @@ def test_profile_lives_inside_the_persons_own_folder(tmp_path):
     assert folder == "people/alex"
 
 
+def test_links_persisted(tmp_path):
+    store = PersonStore(tmp_path)
+    store.write("Laura", category="dating", links=["Carbone"])
+
+    people = store.all()
+    assert people[0]["links"] == ["Carbone"]
+
+
 def test_find_matches_case_insensitively(tmp_path):
     store = PersonStore(tmp_path)
     store.write("Laura", category="dating")

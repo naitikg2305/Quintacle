@@ -11,8 +11,12 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, Response, Upload
 from openai import OpenAIError
 from pydantic import BaseModel
 
+from ...graph import get_graph_store, link_new_entry, sync_frontmatter_links
 from ..journal.api import get_store as get_journal_store
+from ..journal.normalize import canonicalize_name
+from ..people.api import get_store as get_people_store
 from ..profile.api import get_store as get_profile_store
+from ..travel.api import get_store as get_travel_store
 from .chat import CHAT_MODELS, UnknownModelError, run_kb_chat
 from .chat_store import ChatStore
 from .drop import describe_drop, extract_photo_date, extract_photo_location, is_image
@@ -175,6 +179,36 @@ def sort_entry(
     return suggestion.model_dump()
 
 
+def _sync_note_graph_links(note_id: str, title: str, content: str, link_titles: list[str] | None) -> None:
+    """The Stage 1 fix for `/graph`'s old recompute-on-every-request walk
+    (docs/graph-model.md): materializes this note's stated `links`
+    frontmatter into real edges, resolved against the same note/journal/
+    experience pool `/graph` always fuzzy-matched against — just done once,
+    here, instead of on every read.
+
+    Also runs the write-rule keyword linker (graph.link_new_entry) against
+    known people/experiences — this is what fixes the concrete gap flagged
+    in graph-model.md: a kb_entry filed under People/<Name>/Mentions (the
+    additive person-mention path in api.py's propose_drop and journal/api.py's
+    parse_journal) now actually gets a typed `mentions_person`/`at_location`
+    edge instead of silently carrying `links: []`."""
+    notes_index = get_store().notes_index()
+    experiences = get_travel_store().all()
+    note_id_by_title = {n["title"]: f"note:{n['folder']}/{n['slug']}" for n in notes_index}
+    journal_id_by_date = {d.isoformat(): f"journal:{d.isoformat()}" for d in get_journal_store().list_dates()}
+    experience_id_by_name = {e["name"]: f"experience:{e['folder']}/{e['slug']}" for e in experiences}
+    title_lookup = {**note_id_by_title, **journal_id_by_date, **experience_id_by_name}
+    link_titles = link_titles or []
+    resolved_titles = [canonicalize_name(t, list(title_lookup)) for t in link_titles]
+    sync_frontmatter_links(note_id, resolved_titles, title_lookup)
+
+    candidates = [
+        {"id": f"note:{p['folder']}/profile", "type": "person", "title": p["name"]} for p in get_people_store().all()
+    ] + [{"id": f"experience:{e['folder']}/{e['slug']}", "type": "experience", "title": e["name"]} for e in experiences]
+    text = f"{title}\n{content}\n{' '.join(link_titles)}"
+    link_new_entry(note_id, "note", text, candidates, source_of_edge="ai_link")
+
+
 class EntryCreate(BaseModel):
     folder: str
     title: str
@@ -187,6 +221,7 @@ class EntryCreate(BaseModel):
 def create_entry(body: EntryCreate) -> dict:
     content = _localize_remote_images(body.content, body.folder, get_store())
     folder_slug, entry_slug = get_store().write(body.folder, body.title, content, body.links, fields=body.fields)
+    _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", body.title, content, body.links)
     return {"folder": folder_slug, "slug": entry_slug}
 
 
@@ -386,17 +421,33 @@ async def create_entry_with_asset(
     asset_lines = "\n".join(f"[asset]({p})" for p in asset_paths)
     linked_content = f"{content}\n\n{asset_lines}" if asset_lines else content
     get_store().write(folder, title, linked_content, link_list, location)
+    _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", title, linked_content, link_list)
     return {"folder": folder_slug, "slug": entry_slug, "assets": asset_paths, "location": location}
 
 
 @router.get("/graph")
 def kb_graph() -> dict:
-    """Every relationship the graph view can show: note-to-note links (AI
-    proposed, frontmatter — never touches note bodies), note-to-asset, plus
-    whatever's already structurally connected elsewhere in the app (meals to
-    their ingredients, routines to their exercises, outfits to their items) —
-    pulled in by the caller, this endpoint only owns the KB-note half."""
-    return {"notes": get_store().graph_entries()}
+    """Every relationship the graph view can show: note-to-note links,
+    note-to-asset, plus whatever's already structurally connected elsewhere
+    in the app (meals to their ingredients, routines to their exercises,
+    outfits to their items) — pulled in by the caller, this endpoint only
+    owns the KB-note half.
+
+    `links` used to be each note's raw, as-authored title strings; now it's
+    the resolved target ids already materialized into the `edges` table (see
+    graph.py) — a read from SQLite instead of leaving fuzzy-matching to
+    whoever consumes this."""
+    graph_store = get_graph_store()
+    notes = []
+    for n in get_store().graph_entries():
+        note_id = f"note:{n['folder']}/{n['slug']}"
+        # A single target can be reached by more than one edge kind (e.g.
+        # both a stated frontmatter link AND a keyword-matched one) —
+        # de-duplicated here since this field is just "what's connected",
+        # not "every typed edge" (use /graph for that).
+        resolved_links = sorted({e["target_id"] for e in graph_store.edges_from(note_id)})
+        notes.append({**n, "links": resolved_links})
+    return {"notes": notes}
 
 
 class ChatMessage(BaseModel):
