@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   base64ToFile,
@@ -64,6 +64,14 @@ import { cn } from "@/lib/cn";
 type TargetFile = { folder: string; slug: string; title: string };
 
 export default function KBPage() {
+  return (
+    <Suspense>
+      <KBPageInner />
+    </Suspense>
+  );
+}
+
+function KBPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [scratchpad, setScratchpad] = useState("");

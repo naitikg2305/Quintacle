@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Quintacle's FastAPI backend runs on-device via Termux, bound to
+  127.0.0.1:8000 (see docs/android-apk-migration.md). Android blocks
+  cleartext (plain HTTP) traffic by default on API 28+; this carves out an
+  exception for loopback addresses only, so the app can still reach it.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   buildChatMessage,
@@ -23,6 +23,14 @@ import ChatLog from "@/components/ChatLog";
 // (see run_kb_chat's folder param), and every push is forced into that same
 // folder — never AI-guessed, never somewhere else in the KB.
 export default function FolderChatPage() {
+  return (
+    <Suspense>
+      <FolderChatPageInner />
+    </Suspense>
+  );
+}
+
+function FolderChatPageInner() {
   const path = useSearchParams().get("path") ?? "";
 
   const [chatLog, setChatLog] = useState<ChatMessage[]>([]);
