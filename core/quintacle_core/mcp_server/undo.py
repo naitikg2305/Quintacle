@@ -23,6 +23,7 @@ from .ledger import Ledger, LedgerEntry
 # Only tables an undo step is ever allowed to touch — guards the f-string SQL
 # below against ever being pointed at an arbitrary table name.
 _ALLOWED_TABLES = {
+    "edges",
     "expense_log",
     "food_log",
     "substance_log",

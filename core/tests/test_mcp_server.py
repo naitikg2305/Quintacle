@@ -134,3 +134,53 @@ def test_list_recent_writes_shows_newest_first_and_undo_status():
     recent = s.list_recent_writes(limit=2)
     undone_entry = next(e for e in recent if e["id"] == first["ledger_id"])
     assert undone_entry["undone_at"] is not None
+
+
+# --- MCP write -> graph edge seam (graph_link.py adapter) ---
+
+
+def test_mcp_write_creates_graph_edges_and_undo_removes_them(tmp_path):
+    from quintacle_core.graph import get_graph_store
+    from quintacle_core.nodes.people.store import PersonStore
+
+    # A known person the keyword linker should match against.
+    PersonStore(tmp_path / "kb").write("Alex", "friend", how_met="college")
+
+    created = s.kb_create_entry(
+        folder="Planning/Travel",
+        title="Houston trip",
+        content="Planned the Houston bars crawl with Alex.",
+    )
+    note_id = f"note:{created['folder']}/{created['slug']}"
+
+    store = get_graph_store()
+    edges = store.edges_from(note_id) if hasattr(store, "edges_from") else store.conn.execute(
+        "SELECT * FROM edges WHERE source_id = ?", (note_id,)
+    ).fetchall()
+    edges = [dict(e) for e in edges]
+    assert any(e["kind"] == "mentions_person" for e in edges), edges
+
+    edge_files = list((tmp_path / "graph" / "edges").glob("*.md"))
+    assert edge_files
+
+    # Undoing the push removes the edge files AND their SQLite rows, not
+    # just the note.
+    s.undo_write(created["ledger_id"])
+    assert not list((tmp_path / "graph" / "edges").glob("*.md"))
+    remaining = store.conn.execute("SELECT * FROM edges WHERE source_id = ?", (note_id,)).fetchall()
+    assert remaining == []
+
+
+def test_mcp_declared_links_materialize_as_edges(tmp_path):
+    s.journal_append(for_date="2026-10-12", content="long day")
+    created = s.kb_create_entry(
+        folder="Planning/Travel",
+        title="Flight booking",
+        content="Booked the flight.",
+        links=["2026-10-12"],
+    )
+    note_id = f"note:{created['folder']}/{created['slug']}"
+    from quintacle_core.graph import get_graph_store
+
+    rows = [dict(r) for r in get_graph_store().conn.execute("SELECT * FROM edges WHERE source_id = ?", (note_id,)).fetchall()]
+    assert any(r["target_id"] == "journal:2026-10-12" and r["kind"] == "on_day" for r in rows), rows
