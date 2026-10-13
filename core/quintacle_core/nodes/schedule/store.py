@@ -18,6 +18,11 @@ class TodoStore:
     def _path(self, todo_id: str) -> Path:
         return self.root / f"{todo_id}.md"
 
+    def path_for(self, todo_id: str) -> Path:
+        """Public accessor for a todo's file path — used by the MCP undo
+        layer, which needs it without reaching into a private method."""
+        return self._path(todo_id)
+
     def save(self, todo: Todo) -> None:
         post = frontmatter.Post(todo.notes)
         post["id"] = todo.id

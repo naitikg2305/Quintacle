@@ -11,3 +11,4 @@ Pillow
 openpyxl
 opencv-python-headless
 openai
+mcp==1.30.0

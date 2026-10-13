@@ -198,6 +198,27 @@ class KBStore:
         folder_slug = str(folder_path.relative_to(self.root)).replace("\\", "/")
         return folder_slug, entry_slug
 
+    def search(self, query: str, limit: int = 50) -> list[dict]:
+        """Case-insensitive substring scan over every entry's filename + body,
+        regardless of folder — shared by the REST `/kb/search` route and the
+        MCP `kb_search_entries` tool so both stay behind one implementation.
+        Fine at today's KB size; `architecture.md`'s hybrid-search amendment
+        is the planned replacement once that stops being true."""
+        needle = query.strip().lower()
+        if not needle:
+            return []
+        results = []
+        for folder in self.list_folders():
+            for slug in self.list_entries(folder):
+                content = self.read(folder, slug) or ""
+                haystack = f"{slug}\n{content}".lower()
+                if needle not in haystack:
+                    continue
+                idx = content.lower().find(needle)
+                snippet = content[max(0, idx - 40) : idx + 80].strip() if idx != -1 else content[:80].strip()
+                results.append({"folder": folder, "slug": slug, "snippet": snippet})
+        return results[:limit]
+
     def notes_index(self) -> list[dict]:
         """{folder, slug, title} for every entry — enough context for AI to
         propose relevant [[links]] without dumping full KB content into the

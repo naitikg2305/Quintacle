@@ -140,21 +140,7 @@ def search_entries(q: str) -> list[dict]:
     """Search every entry in the KB by filename and body content, regardless
     of which folder it's filed under — lets Browse jump straight to a note
     instead of clicking through the folder tree to find it."""
-    needle = q.strip().lower()
-    if not needle:
-        return []
-    store = get_store()
-    results = []
-    for folder in store.list_folders():
-        for slug in store.list_entries(folder):
-            content = store.read(folder, slug) or ""
-            haystack = f"{slug}\n{content}".lower()
-            if needle not in haystack:
-                continue
-            idx = content.lower().find(needle)
-            snippet = content[max(0, idx - 40) : idx + 80].strip() if idx != -1 else content[:80].strip()
-            results.append({"folder": folder, "slug": slug, "snippet": snippet})
-    return results[:50]
+    return get_store().search(q)
 
 
 @router.post("/sort")
