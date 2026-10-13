@@ -7,7 +7,6 @@ import zipfile
 from datetime import date, datetime
 
 import anthropic
-import cv2
 from docx import Document
 from PIL import Image
 
@@ -122,7 +121,13 @@ def _extract_video_frames(data: bytes, count: int = _VIDEO_SAMPLE_FRAMES) -> lis
     file, sample `count` frames evenly across the duration, encode each as
     JPEG. Returns [] for anything that fails to open (corrupt/unsupported
     container) rather than raising, so a bad video degrades to "no visual
-    description" instead of a 500."""
+    description" instead of a 500. cv2 imports lazily — on Termux there's no
+    opencv wheel and the pkg build can be unavailable per mirror; a phone
+    install without it should lose video description, not the whole API."""
+    try:
+        import cv2
+    except ImportError:
+        return []
     with tempfile.NamedTemporaryFile(suffix=".mp4") as tmp:
         tmp.write(data)
         tmp.flush()
