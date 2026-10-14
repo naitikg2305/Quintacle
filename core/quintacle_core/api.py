@@ -79,6 +79,7 @@ from .nodes.people.llm import maybe_structure_person_mention, structure_person
 from .nodes.finance.api import init_store as init_credit_card_store, router as credit_card_router, investments_router, get_investment_store
 from .nodes.finance.llm import structure_credit_card, structure_investment
 from .nodes.vault.api import init_store as init_vault_store, router as vault_router
+from .sync import init_sync, router as sync_router
 
 DATA_DIR = Path(os.environ.get("QUINTACLE_DATA_DIR", Path.home() / ".quintacle"))
 
@@ -144,6 +145,11 @@ def create_app() -> FastAPI:
     # sibling directory is what keeps secrets structurally unreachable.
     init_vault_store(DATA_DIR / "vault")
     app.include_router(vault_router)
+
+    # Manual LAN sync (sync.py) — must come after the logs/graph inits above,
+    # since a pull rebuilds those stores' SQLite indexes when it finishes.
+    init_sync(DATA_DIR)
+    app.include_router(sync_router)
 
     # One-time per-process catch-up: materializes every pre-existing note's
     # and experience's frontmatter `links` into the edges table (see
