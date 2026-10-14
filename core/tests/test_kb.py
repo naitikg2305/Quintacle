@@ -97,3 +97,19 @@ def test_graph_entries_includes_links_and_asset(tmp_path):
     assert entries["deadlift-cues"]["links"] == ["Squat Cues"]
     assert entries["deadlift-cues"]["asset"] == "assets/form.jpg"
     assert entries["squat-cues"]["links"] == []
+
+
+def test_asset_paths_cannot_escape_the_kb_root(tmp_path):
+    store = KBStore(tmp_path / "kb")
+    store.write("fitness", "Deadlift", "notes")
+    secret_file = tmp_path / "vault" / "entries" / "x.enc"
+    secret_file.parent.mkdir(parents=True)
+    secret_file.write_bytes(b"ciphertext")
+
+    assert store.read_asset("fitness", "../../vault/entries/x.enc") is None
+
+    import pytest
+
+    with pytest.raises(FileNotFoundError):
+        store.replace_asset("fitness", "../../vault/entries/x.enc", b"overwritten")
+    assert secret_file.read_bytes() == b"ciphertext"

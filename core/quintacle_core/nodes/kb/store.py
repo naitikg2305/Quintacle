@@ -270,8 +270,21 @@ class KBStore:
         (assets_dir / safe_name).write_bytes(data)
         return f"assets/{safe_name}"
 
+    def _clamped_asset_path(self, folder: str, asset_path: str) -> Path:
+        """`asset_path` comes from a request query/form raw — unlike `folder`
+        it never went through resolve_nested's slugify, so "../.." could walk
+        out of kb/ into siblings (the vault's ciphertext, or worse for the
+        write path). Resolve and require the result to stay under root."""
+        path = (resolve_nested(self.root, folder) / asset_path).resolve()
+        if not path.is_relative_to(self.root.resolve()):
+            raise FileNotFoundError(f"asset path escapes the KB root: {asset_path}")
+        return path
+
     def read_asset(self, folder: str, asset_path: str) -> bytes | None:
-        path = resolve_nested(self.root, folder) / asset_path
+        try:
+            path = self._clamped_asset_path(folder, asset_path)
+        except FileNotFoundError:
+            return None  # an escaping path reads as "no such asset", a plain 404
         return path.read_bytes() if path.exists() else None
 
     def add_asset_to_entry(self, folder: str, slug: str, filename: str, data: bytes) -> str:
@@ -296,7 +309,7 @@ class KBStore:
         from whatever's uploaded, this keeps the exact path the markdown
         entry's [asset](...) link already points to, so "replace this file
         with a newer version" never breaks the link."""
-        path = resolve_nested(self.root, folder) / asset_path
+        path = self._clamped_asset_path(folder, asset_path)
         if not path.parent.exists():
             raise FileNotFoundError(f"asset folder does not exist: {path.parent}")
         path.write_bytes(data)
