@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -1085,3 +1085,19 @@ export const putVaultEntry = (
 ) => request<VaultEntrySummary>(`/vault/entries/${encodeURIComponent(slug)}`, { method: "PUT", body: JSON.stringify(body) });
 export const deleteVaultEntry = (slug: string) =>
   request<{ deleted: string }>(`/vault/entries/${encodeURIComponent(slug)}`, { method: "DELETE" });
+// --- sync (manual LAN sync — pull from a peer device running the same backend) ---
+
+export type SyncReport = {
+  pulled: string[];
+  merged_journals: string[];
+  overwritten_with_snapshot: string[];
+  skipped_identical: number;
+  kept_local_newer: number;
+  errors: string[];
+  warnings: string[];
+  rebuilt: { logs: Record<string, number>; graph_edges: number };
+  push_back?: SyncReport;
+};
+
+export const syncPull = (body: { peer_url: string; push_back?: boolean; self_url?: string }) =>
+  request<SyncReport>("/sync/pull", { method: "POST", body: JSON.stringify(body) });

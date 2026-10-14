@@ -19,6 +19,7 @@ import {
   MessageSquare,
   Network,
   Plane,
+  RefreshCw,
   Shirt,
   User,
   Users,
@@ -57,6 +58,7 @@ const TOOLS: NavItem[] = [
   { href: "/kb/batch", label: "Batch import", icon: Layers },
   { href: "/kb/graph", label: "Graph", icon: Network },
   { href: "/vault", label: "Vault", icon: KeyRound },
+  { href: "/sync", label: "Sync", icon: RefreshCw },
 ];
 
 function isActive(item: NavItem, path: string): boolean {
