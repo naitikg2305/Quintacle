@@ -3,6 +3,85 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-13 — The big one: MCP server, graph engine, Vault, LAN sync, Drop sessions, Android scaffolding
+
+One marathon session (plus its 10-07 prelude) took several of the oldest
+"planned, not started" items to built-and-pushed. Everything below is live on
+`redone-UI` (pushed through `9baf59a`), 205 backend tests passing, tsc clean.
+Full detail: `~/work-logs/2026-10-13.md` sessions 2-4, and the per-feature
+design docs named below.
+
+### Built this session
+
+- **MCP server** (`core/quintacle_core/mcp_server/`, run `python -m
+  quintacle_core.mcp_server`, stdio): 14 tools over journal/KB/expenses/todos,
+  **auto-write with no approval** — safety is a staged-snapshot undo instead:
+  every push is one entry in the human-readable ledger `~/.quintacle/mcp-log.md`,
+  undoable via `undo_write` (journal appends strip exactly their marked block;
+  multi-step pushes undo as a unit). Write tools take final structured input,
+  never raw text to reclassify — the cost design in `mcp-angle.md`'s 2026-10-13
+  sections, which also list the ~12 domains not yet covered, the exclusions
+  (kb chat, vault-shaped docs, binary assets), and the remote-transport open
+  question.
+- **Graph engine** (`core/quintacle_core/graph.py`, spec in `graph-model.md`):
+  edge files under `~/.quintacle/graph/edges/` as truth + an `edges` SQLite
+  table as the derived fast index; typed edges (`mentions_person`,
+  `at_location`, `on_day`...); `neighborhood()`/`reverse_lookup()` via
+  recursive SQL; `/graph` now reads the table instead of re-walking all
+  frontmatter per request, with a one-time startup backfill. The
+  experience↔person same-drop linking gap is fixed. Every MCP write
+  auto-links (`mcp_server/graph_link.py`), and undoing a push removes the
+  edges it created.
+- **Vault** (`core/quintacle_core/nodes/vault/`, page at `/vault`): encrypted
+  secrets — scrypt KDF + Fernet, one `.enc` file per entry, at
+  `~/.quintacle/vault/`, deliberately a **sibling of kb/** so search, graph,
+  MCP, KB chat, and the drop pipeline structurally never see it. One
+  passphrase, memory-only key, 5-minute auto-lock, no recovery flow by
+  design. The build's audit also exposed a path-traversal hole in
+  `/kb/asset(+/replace)` — now clamped to the KB root.
+- **Manual LAN sync** (`core/quintacle_core/sync.py`, page at `/sync`):
+  pull/two-way between two devices on shared wifi, manual button only.
+  Journal days union-merge (both sides' blocks, byte-exact MCP markers);
+  everything else newest-wins with the loser snapshotted to
+  `_sync_snapshots/`; additive — **deletions do not propagate** in v1;
+  `quintacle.db` and the MCP ledger stay device-local, indexes rebuild after
+  a pull. Verified against two live backends over real HTTP: journals
+  converged identically both directions, synced vault entries unlock on the
+  peer, second pull is a no-op.
+- **Drop upgrades**: multi-attachments of any type on one drop (ticket photo
+  + PDF + QR → one entry, every file kept), and the "Still going" session
+  panel — after a single-note save, keep folding text / attaching photos into
+  that same entry (lectures, recipes-in-progress, live trip records).
+- **Android scaffolding** (not yet an APK): `frontend/android/` Capacitor
+  project + `CAPACITOR_BUILD=true` static export (builds all pages), and
+  `scripts/termux/` backend bootstrap + `docs/termux-backend-setup.md`.
+  Blocked only on a JDK/Android SDK or the phone itself; cv2 now
+  lazy-imports so a phone without opencv still boots the API.
+- **Fixes from the 10-07 prelude**: journal page no longer duplicates on
+  save; "today" is Eastern Time everywhere (`frontend/lib/date.ts`,
+  `core/quintacle_core/clock.py`) instead of UTC/host-local.
+
+### Decisions worth remembering (the why lives in the named docs)
+
+- Approval-first MCP writes were designed, then **superseded the same week**:
+  single-user means undo-after equals approve-before at less friction
+  (`mcp-angle.md`, both sections kept).
+- Graph is a small bespoke engine, deliberately not Neo4j — data an LLM sees
+  is engine-agnostic; what matters is edges existing (`graph-model.md`).
+- Generic-vs-bespoke is tentatively settled: logs/quotas/schedule stay
+  hard-typed (the value is arithmetic), everything item-shaped can go
+  generic KB + fields + graph (`ai-managed-pages.md`) — to be confirmed by
+  the real-use test run (`test-plan-and-wishlist.md`), which is the next step
+  and is Naitik-driven by choice.
+
+### How this was built
+
+Six parallel subagents across two waves, each in an isolated git worktree,
+integrated by cherry-pick onto `redone-UI`. Wave-1 gotcha for the record:
+worktrees were cut from `main`'s old snapshot, so agents built on the
+pre-redesign base and everything needed rebase-style integration; wave 2 was
+told to `git reset --hard redone-UI` first and landed clean.
+
 ## 2026-09-07 — Goals extended, Journal rebuilt with AI, Knowledge Base built from scratch, full nutrition
 
 Big session. Went from "Daily Tracker v0" to most of Pillars 1–3 actually
