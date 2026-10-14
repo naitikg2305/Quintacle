@@ -1064,3 +1064,24 @@ export const loadChatSession = (id: string) => request<ChatMessage[]>(`/kb/chats
 export const saveChatSession = (id: string, title: string, messages: ChatMessage[]) =>
   request(`/kb/chats/${id}`, { method: "PUT", body: JSON.stringify({ title, messages }) });
 export const deleteChatSession = (id: string) => request(`/kb/chats/${id}`, { method: "DELETE" });
+
+// --- vault (encrypted secrets — entries live outside kb/, never reach any AI surface) ---
+
+export type VaultStatus = { initialized: boolean; locked: boolean; auto_lock_seconds_remaining: number | null };
+export type VaultEntrySummary = { slug: string; name: string; username: string; url: string; updated_at: string };
+export type VaultEntry = VaultEntrySummary & { secret: string; notes: string };
+
+export const vaultStatus = () => request<VaultStatus>("/vault/status");
+export const vaultInit = (passphrase: string) =>
+  request<VaultStatus>("/vault/init", { method: "POST", body: JSON.stringify({ passphrase }) });
+export const vaultUnlock = (passphrase: string) =>
+  request<VaultStatus>("/vault/unlock", { method: "POST", body: JSON.stringify({ passphrase }) });
+export const vaultLock = () => request<VaultStatus>("/vault/lock", { method: "POST" });
+export const listVaultEntries = () => request<VaultEntrySummary[]>("/vault/entries");
+export const getVaultEntry = (slug: string) => request<VaultEntry>(`/vault/entries/${encodeURIComponent(slug)}`);
+export const putVaultEntry = (
+  slug: string,
+  body: { name: string; username?: string; secret?: string; url?: string; notes?: string }
+) => request<VaultEntrySummary>(`/vault/entries/${encodeURIComponent(slug)}`, { method: "PUT", body: JSON.stringify(body) });
+export const deleteVaultEntry = (slug: string) =>
+  request<{ deleted: string }>(`/vault/entries/${encodeURIComponent(slug)}`, { method: "DELETE" });

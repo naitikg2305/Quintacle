@@ -12,6 +12,7 @@ import {
   House,
   Image as ImageIcon,
   Inbox,
+  KeyRound,
   Layers,
   LayoutDashboard,
   ListChecks,
@@ -55,6 +56,7 @@ const LIFE: NavItem[] = [
 const TOOLS: NavItem[] = [
   { href: "/kb/batch", label: "Batch import", icon: Layers },
   { href: "/kb/graph", label: "Graph", icon: Network },
+  { href: "/vault", label: "Vault", icon: KeyRound },
 ];
 
 function isActive(item: NavItem, path: string): boolean {

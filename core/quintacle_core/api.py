@@ -78,6 +78,7 @@ from .nodes.people.api import init_store as init_people_store, get_store as get_
 from .nodes.people.llm import maybe_structure_person_mention, structure_person
 from .nodes.finance.api import init_store as init_credit_card_store, router as credit_card_router, investments_router, get_investment_store
 from .nodes.finance.llm import structure_credit_card, structure_investment
+from .nodes.vault.api import init_store as init_vault_store, router as vault_router
 
 DATA_DIR = Path(os.environ.get("QUINTACLE_DATA_DIR", Path.home() / ".quintacle"))
 
@@ -137,6 +138,12 @@ def create_app() -> FastAPI:
     init_credit_card_store(kb_root)
     app.include_router(credit_card_router)
     app.include_router(investments_router)
+
+    # Deliberately OUTSIDE kb_root — every model-facing surface (KB chat,
+    # MCP tools, search, graph, drop) only walks kb/, so vault/ being a
+    # sibling directory is what keeps secrets structurally unreachable.
+    init_vault_store(DATA_DIR / "vault")
+    app.include_router(vault_router)
 
     # One-time per-process catch-up: materializes every pre-existing note's
     # and experience's frontmatter `links` into the edges table (see

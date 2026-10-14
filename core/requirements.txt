@@ -12,3 +12,4 @@ openpyxl
 opencv-python-headless
 openai
 mcp==1.30.0
+cryptography==50.0.2
