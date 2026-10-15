@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { forceCenter, forceLink, forceManyBody, forceSimulation, SimulationNodeDatum } from "d3-force";
 import { getGraph, GraphEdge, GraphNode } from "@/lib/api";
 
-type SimNode = GraphNode & SimulationNodeDatum;
+type SimNode = GraphNode & SimulationNodeDatum & { isHub?: boolean };
 type ViewBox = { x: number; y: number; w: number; h: number };
 
 const COLORS: Record<string, string> = {
@@ -17,7 +17,28 @@ const COLORS: Record<string, string> = {
   exercise: "#e67e22",
   wardrobe_item: "#f39c12",
   outfit: "#d35400",
+  experience: "#e056a5",
+  person: "#1abc9c",
 };
+
+// Hub display names — one anchor node per type present in the data, purely a
+// view-level skeleton (synthesized client-side, never stored as real edges)
+// so the graph reads as constellations instead of scattered dots. Real
+// cross-links (a trip's edge to a person) draw on top as before.
+const HUB_LABELS: Record<string, string> = {
+  note: "Notes",
+  asset: "Photos",
+  journal_day: "Journal",
+  ingredient: "Ingredients",
+  meal: "Food",
+  routine: "Routines",
+  exercise: "Exercise",
+  wardrobe_item: "Wardrobe",
+  outfit: "Outfits",
+  experience: "Travel",
+  person: "People",
+};
+const MEMBER_KIND = "__member";
 
 const WIDTH = 900;
 const HEIGHT = 600;
@@ -43,6 +64,10 @@ export default function GraphPage() {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const nodesRef = useRef<SimNode[]>([]);
   const drag = useRef<{ startX: number; startY: number; vb: ViewBox } | null>(null);
+  // Auto-fit tracks the layout while it settles, then hands the camera over
+  // for good the moment the user pans or zooms.
+  const userDroveCamera = useRef(false);
+  const tickCount = useRef(0);
 
   function fitToContent() {
     const pts = nodesRef.current.filter((n) => n.x != null && n.y != null);
@@ -58,22 +83,41 @@ export default function GraphPage() {
 
   useEffect(() => {
     getGraph().then(({ nodes: rawNodes, edges: rawEdges }) => {
-      const simNodes: SimNode[] = rawNodes.map((n) => ({ ...n }));
+      const presentTypes = Array.from(new Set(rawNodes.map((n) => n.type)));
+      const hubs: SimNode[] = presentTypes.map((type) => ({
+        id: `hub:${type}`,
+        type,
+        label: HUB_LABELS[type] ?? type.replace("_", " "),
+        isHub: true,
+      } as SimNode));
+      const memberEdges: GraphEdge[] = rawNodes.map((n) => ({
+        source: `hub:${n.type}`,
+        target: n.id,
+        kind: MEMBER_KIND,
+      }));
+      const simNodes: SimNode[] = [...rawNodes.map((n) => ({ ...n })), ...hubs];
       setNodes(simNodes);
       nodesRef.current = simNodes;
-      setEdges(rawEdges);
+      setEdges([...rawEdges, ...memberEdges]);
+      setVisibleTypes(new Set(presentTypes));
 
       const sim = forceSimulation<SimNode>(simNodes)
         .force(
           "link",
-          forceLink<SimNode, GraphEdge>(rawEdges.map((e) => ({ ...e })))
+          forceLink<SimNode, GraphEdge>([...rawEdges, ...memberEdges].map((e) => ({ ...e })))
             .id((d) => d.id)
-            .distance(70)
+            .distance((l) => ((l as unknown as GraphEdge).kind === MEMBER_KIND ? 110 : 60))
         )
         .force("charge", forceManyBody().strength(-120))
         .force("center", forceCenter(WIDTH / 2, HEIGHT / 2))
-        .on("tick", () => setTick((t) => t + 1))
-        .on("end", fitToContent);
+        .on("tick", () => {
+          tickCount.current += 1;
+          if (!userDroveCamera.current && tickCount.current % 20 === 0) fitToContent();
+          setTick((t) => t + 1);
+        })
+        .on("end", () => {
+          if (!userDroveCamera.current) fitToContent();
+        });
       simRef.current = sim;
     });
     return () => {
@@ -88,6 +132,7 @@ export default function GraphPage() {
     if (!svg) return;
     function onWheel(e: WheelEvent) {
       e.preventDefault();
+      userDroveCamera.current = true;
       setViewBox((vb) => {
         const rect = svg!.getBoundingClientRect();
         const px = vb.x + ((e.clientX - rect.left) / rect.width) * vb.w;
@@ -109,6 +154,7 @@ export default function GraphPage() {
 
   function onPointerMove(e: React.PointerEvent<SVGSVGElement>) {
     if (!drag.current || !svgRef.current) return;
+    userDroveCamera.current = true;
     const rect = svgRef.current.getBoundingClientRect();
     const { startX, startY, vb } = drag.current;
     setViewBox({
@@ -123,6 +169,7 @@ export default function GraphPage() {
   }
 
   function zoom(factor: number) {
+    userDroveCamera.current = true;
     setViewBox((vb) => {
       const w = Math.min(Math.max(vb.w * factor, 60), 20000);
       const h = (w / vb.w) * vb.h;
@@ -155,11 +202,11 @@ export default function GraphPage() {
       </p>
 
       <div className="flex flex-wrap gap-3 text-xs">
-        {Object.entries(COLORS).map(([type, color]) => (
+        {Array.from(new Set(nodes.filter((n) => !n.isHub).map((n) => n.type))).map((type) => [type, COLORS[type] ?? "#888"] as const).map(([type, color]) => (
           <label key={type} className="flex items-center gap-1 cursor-pointer">
             <input type="checkbox" checked={visibleTypes.has(type)} onChange={() => toggleType(type)} />
             <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
-            {type.replace("_", " ")}
+            {HUB_LABELS[type] ?? type.replace("_", " ")}
           </label>
         ))}
       </div>
@@ -192,7 +239,8 @@ export default function GraphPage() {
                       x2={t.x ?? 0}
                       y2={t.y ?? 0}
                       stroke="currentColor"
-                      strokeOpacity={0.2}
+                      strokeOpacity={e.kind === MEMBER_KIND ? 0.07 : 0.3}
+                      strokeDasharray={e.kind === MEMBER_KIND ? `${3 * scale} ${3 * scale}` : undefined}
                       strokeWidth={scale}
                     />
                   );
@@ -207,17 +255,21 @@ export default function GraphPage() {
                     <circle
                       cx={n.x ?? 0}
                       cy={n.y ?? 0}
-                      r={(selected?.id === n.id ? 8 : 5) * scale}
+                      r={(n.isHub ? 13 : selected?.id === n.id ? 8 : 5) * scale}
                       fill={COLORS[n.type] ?? "#888"}
+                      fillOpacity={n.isHub ? 0.25 : 1}
+                      stroke={n.isHub ? COLORS[n.type] ?? "#888" : undefined}
+                      strokeWidth={n.isHub ? 1.5 * scale : undefined}
                     />
                     <text
-                      x={(n.x ?? 0) + 8 * scale}
-                      y={(n.y ?? 0) + 3 * scale}
-                      fontSize={10 * scale}
-                      fill="currentColor"
-                      opacity={0.7}
+                      x={(n.x ?? 0) + (n.isHub ? 16 : 8) * scale}
+                      y={(n.y ?? 0) + (n.isHub ? 4 : 3) * scale}
+                      fontSize={(n.isHub ? 14 : 10) * scale}
+                      fontWeight={n.isHub ? 700 : 400}
+                      fill={n.isHub ? COLORS[n.type] ?? "currentColor" : "currentColor"}
+                      opacity={n.isHub ? 0.95 : 0.7}
                     >
-                      {n.label.length > 24 ? n.label.slice(0, 24) + "…" : n.label}
+                      {n.isHub ? n.label : n.label.length > 24 ? n.label.slice(0, 24) + "…" : n.label}
                     </text>
                   </g>
                 ))}
