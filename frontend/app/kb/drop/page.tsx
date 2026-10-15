@@ -8,12 +8,15 @@ import {
   ExerciseSet,
   listExerciseNames,
   listMeals,
+  listPeople,
   Meal,
   ParsedEntry,
+  PerceptionSummary,
   proposeDrop,
   pushKBEntry,
   saveJournal,
   sortKBEntry,
+  tagUnknownFace,
 } from "@/lib/api";
 import Link from "next/link";
 import {
@@ -137,6 +140,27 @@ export default function DropPage() {
   const [sessionFile, setSessionFile] = useState<File | null>(null);
   const [sessionBusy, setSessionBusy] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<string | null>(null);
+
+  // The "who is this?" tag flow — a saved photo's unrecognized faces come
+  // back on the commit response; each one can be tagged (an existing person
+  // or a new name) or dismissed. Tagging is never required for the save —
+  // the photo is already committed by the time this panel appears.
+  type PendingFace = {
+    embeddingId: string;
+    suggestedName: string | null;
+    photo: { folder: string; slug: string };
+    photoTitle: string;
+    pick: string; // dropdown choice ("" = type a new name)
+    newName: string;
+  };
+  const [pendingFaces, setPendingFaces] = useState<PendingFace[]>([]);
+  const [peopleNames, setPeopleNames] = useState<string[]>([]);
+  const [faceBusy, setFaceBusy] = useState(false);
+  const [faceStatus, setFaceStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pendingFaces.length > 0) listPeople().then((ps) => setPeopleNames(ps.map((p) => p.name)));
+  }, [pendingFaces.length]);
 
   useEffect(() => {
     listMeals().then(setMeals);
@@ -272,12 +296,28 @@ export default function DropPage() {
     // things) don't have one obvious entry to keep extending, so no session.
     const singleNote = entries.length === 1 && entries[0].type === "kb_entry" ? entries[0] : null;
     let newSession: typeof activeSession = null;
+    const newFaces: PendingFace[] = [];
     for (const entry of entries) {
       const assets = ASSET_TYPES.has(entry.type) && file ? [file, ...extraPhotos] : [];
       const result = await commitEntry(date, entry, assets);
       if (singleNote && result && typeof result === "object" && "slug" in result) {
         const r = result as { folder: string; slug: string };
         newSession = { folder: r.folder, slug: r.slug, title: singleNote.title };
+      }
+      // A committed photo reports faces it couldn't match — queue them for
+      // the optional tag flow below (never blocks the save, which is done).
+      if (result && typeof result === "object" && "perception" in result) {
+        const r = result as { folder: string; slug: string; perception: PerceptionSummary };
+        for (const f of r.perception?.unknown_faces ?? []) {
+          newFaces.push({
+            embeddingId: f.embedding_id,
+            suggestedName: f.suggested_name ?? null,
+            photo: { folder: r.folder, slug: r.slug },
+            photoTitle: entry.type === "kb_entry" ? entry.title : r.slug,
+            pick: f.suggested_name ?? "",
+            newName: "",
+          });
+        }
       }
     }
     setStatus(`saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
@@ -287,7 +327,40 @@ export default function DropPage() {
     onFileChosen(null);
     setActiveSession(newSession);
     setSessionStatus(null);
+    if (newFaces.length > 0) {
+      setPendingFaces((prev) => [...prev, ...newFaces]);
+      setFaceStatus(null);
+    }
     setBusy(false);
+  }
+
+  function updateFace(i: number, patch: Partial<PendingFace>) {
+    setPendingFaces((prev) => prev.map((f, idx) => (idx === i ? { ...f, ...patch } : f)));
+  }
+
+  function dismissFace(i: number) {
+    setPendingFaces((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  async function tagFace(i: number) {
+    const face = pendingFaces[i];
+    const name = (face.pick || face.newName).trim();
+    if (!name) return;
+    setFaceBusy(true);
+    setFaceStatus("tagging...");
+    try {
+      const result = await tagUnknownFace(face.embeddingId, name, face.photo);
+      dismissFace(i);
+      setFaceStatus(
+        `tagged ${result.person_name}${result.created_person ? " (new person)" : ""}${
+          result.journal_updated ? " — journal updated" : ""
+        }`
+      );
+      if (result.created_person) setPeopleNames((prev) => [...prev, result.person_name]);
+    } catch (e) {
+      setFaceStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setFaceBusy(false);
   }
 
   async function foldIntoSession() {
@@ -540,6 +613,53 @@ export default function DropPage() {
       )}
 
       {status && <p className="text-sm text-muted">{status}</p>}
+
+      {pendingFaces.length > 0 && (
+        <Panel title={`Unknown faces (${pendingFaces.length})`} className={cn("border-accent/40")}>
+          <div className="space-y-3">
+            <p className="text-xs text-muted">
+              Someone in a saved photo wasn&apos;t recognized. Tell me who they are — pick a person or type a new name —
+              and they get connected to the photo and that day&apos;s journal. Or dismiss; the photo is already saved.
+            </p>
+            {pendingFaces.map((face, i) => (
+              <div key={`${face.embeddingId}-${i}`} className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-2">
+                <User size={15} className="shrink-0 text-accent" />
+                <span className="text-xs text-muted">
+                  in &quot;{face.photoTitle}&quot;
+                  {face.suggestedName ? ` — maybe ${face.suggestedName}?` : ""}
+                </span>
+                <select
+                  value={face.pick}
+                  onChange={(e) => updateFace(i, { pick: e.target.value })}
+                  className="rounded-lg border border-line bg-transparent px-2 py-1 text-sm"
+                >
+                  <option value="">new person…</option>
+                  {peopleNames.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+                {!face.pick && (
+                  <Input
+                    placeholder="their name"
+                    value={face.newName}
+                    onChange={(e) => updateFace(i, { newName: e.target.value })}
+                    className="w-36 py-1 text-sm"
+                  />
+                )}
+                <Button variant="primary" onClick={() => tagFace(i)} disabled={faceBusy || !(face.pick || face.newName.trim())}>
+                  Tag
+                </Button>
+                <Button variant="ghost" onClick={() => dismissFace(i)} aria-label="Dismiss unknown face">
+                  <X size={14} />
+                </Button>
+              </div>
+            ))}
+            {faceStatus && <p className="text-xs text-muted">{faceStatus}</p>}
+          </div>
+        </Panel>
+      )}
 
       {activeSession && (
         <Panel title={`Still going — "${activeSession.title}"`} className={cn("border-accent/40")}>

@@ -188,7 +188,13 @@ export async function commitEntry(date: string, entry: ParsedEntry, assets: File
         kind: entry.kind,
       });
     case "kb_entry": {
-      const suggestion: KBSuggestion = { folder: entry.folder, title: entry.title, content: entry.content, links: entry.links };
+      const suggestion: KBSuggestion = {
+        folder: entry.folder,
+        title: entry.title,
+        content: entry.content,
+        links: entry.links,
+        perception: entry.perception ?? null,
+      };
       return assets.length > 0 ? pushKBEntryWithAsset(suggestion, assets) : pushKBEntry(suggestion);
     }
     case "ingredient_preset":

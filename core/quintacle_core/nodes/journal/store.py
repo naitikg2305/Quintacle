@@ -6,11 +6,18 @@ from pathlib import Path
 
 from ... import clock
 
-# Wraps an MCP-originated append so undo can strip exactly that span later —
-# see mcp_server/undo.py's JournalAppendStep. A normal (non-MCP) save() call
-# passes no marker and is untagged, same as before this existed.
+# Wraps a machine-originated append so undo can strip exactly that span
+# later — see mcp_server/undo.py's JournalAppendStep. A normal (human) save()
+# call passes no marker and is untagged, same as before this existed. Marker
+# ids are hex tokens for MCP appends, or namespaced ids like
+# "auto-photo:<folder>/<slug>" for the photo auto-journal (the wrapper
+# keeps the historical "mcp-append" comment name so files written before
+# namespaced markers existed still strip/undo identically).
 _MARKER_OPEN = "<!-- mcp-append:{marker} -->"
 _MARKER_CLOSE = "<!-- /mcp-append:{marker} -->"
+# What load() strips: hex MCP tokens AND namespaced ids (letters/digits with
+# ":", "/", ".", "_", "-") — one pattern covering every marker save() writes.
+_MARKER_STRIP_RE = re.compile(r"[ \t]*<!-- /?mcp-append:[\w:./-]+ -->\n?")
 _SEPARATOR = "\n\n---\n\n"
 
 
@@ -92,7 +99,45 @@ class JournalStore:
         if not path.exists():
             return None
         raw = path.read_text(encoding="utf-8")
-        return re.sub(r"[ \t]*<!-- /?mcp-append:[0-9a-f]+ -->\n?", "", raw)
+        return _MARKER_STRIP_RE.sub("", raw)
+
+    def _marked_block_re(self, marker: str) -> re.Pattern:
+        return re.compile(
+            re.escape(_MARKER_OPEN.format(marker=marker))
+            + r"\n(.*?)\n"
+            + re.escape(_MARKER_CLOSE.format(marker=marker)),
+            re.DOTALL,
+        )
+
+    def read_marked_append(self, entry_date: date, marker: str) -> str | None:
+        """The content inside one marker's span, or None if the file or the
+        span doesn't exist — the check-before-append dedup for the photo
+        auto-journal (and what its tag flow edits in place)."""
+        path = self._path(entry_date)
+        if not path.exists():
+            return None
+        match = self._marked_block_re(marker).search(path.read_text(encoding="utf-8"))
+        return match.group(1) if match else None
+
+    def has_marked_append(self, entry_date: date, marker: str) -> bool:
+        return self.read_marked_append(entry_date, marker) is not None
+
+    def rewrite_marked_append(self, entry_date: date, marker: str, content: str) -> bool:
+        """Replaces the content INSIDE one marker's span, keeping its
+        position and timestamp heading — the photo auto-journal's tag flow
+        folds a newly-identified person into the photo's existing line
+        rather than appending a second, contradicting one. Returns False if
+        the file or the span no longer exists."""
+        path = self._path(entry_date)
+        if not path.exists():
+            return False
+        text = path.read_text(encoding="utf-8")
+        pattern = self._marked_block_re(marker)
+        if pattern.search(text) is None:
+            return False
+        replacement = f"{_MARKER_OPEN.format(marker=marker)}\n{content}\n{_MARKER_CLOSE.format(marker=marker)}"
+        path.write_text(pattern.sub(lambda _: replacement, text, count=1), encoding="utf-8")
+        return True
 
     def list_dates(self) -> list[date]:
         """Every day that actually has a journal entry — used by the graph

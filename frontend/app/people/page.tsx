@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { createPerson, listPeople, Person } from "@/lib/api";
+import { createPerson, listPeople, Person, personAppearances, PersonAppearances } from "@/lib/api";
 
 const CATEGORIES = ["friend", "dating", "family", "coworker", "acquaintance", "other"];
 const OTHER_CATEGORIES = ["family", "coworker", "acquaintance", "other"];
@@ -16,6 +16,12 @@ export default function PeoplePage() {
   const [people, setPeople] = useState<Person[]>([]);
   const [roster, setRoster] = useState<Roster>("friend");
   const [otherCategory, setOtherCategory] = useState<string | null>(null);
+
+  // "Appears in" is COMPUTED from the graph's pictured_with edges (nothing
+  // is written into the person's file) — fetched lazily per person on
+  // expand, keyed by slug. null while loading.
+  const [appearances, setAppearances] = useState<Record<string, PersonAppearances | null>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
@@ -48,6 +54,20 @@ export default function PeoplePage() {
     }
     return people.filter((p) => p.category === roster);
   }, [people, roster, otherCategory]);
+
+  async function toggleAppearances(p: Person) {
+    const open = !expanded[p.slug];
+    setExpanded((prev) => ({ ...prev, [p.slug]: open }));
+    if (open && appearances[p.slug] === undefined) {
+      setAppearances((prev) => ({ ...prev, [p.slug]: null }));
+      try {
+        const result = await personAppearances(p.name);
+        setAppearances((prev) => ({ ...prev, [p.slug]: result }));
+      } catch {
+        setAppearances((prev) => ({ ...prev, [p.slug]: { name: p.name, photos: [], dates: [] } }));
+      }
+    }
+  }
 
   async function submit() {
     if (!name.trim()) return;
@@ -170,15 +190,49 @@ export default function PeoplePage() {
                 {roster === "other" && <span className="text-xs opacity-50">{p.category}</span>}
                 {p.met_date && <span className="text-xs opacity-50">met {p.met_date}</span>}
               </div>
-              <a
-                href={`/kb/folder?path=${encodeURIComponent(p.folder)}`}
-                className="text-xs border rounded px-2 py-1 hover:bg-black/5 dark:hover:bg-white/5"
-              >
-                💬 Chat about {p.name} →
-              </a>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => toggleAppearances(p)}
+                  className="text-xs border rounded px-2 py-1 hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  📷 Appears in {expanded[p.slug] ? "▴" : "▾"}
+                </button>
+                <a
+                  href={`/kb/folder?path=${encodeURIComponent(p.folder)}`}
+                  className="text-xs border rounded px-2 py-1 hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  💬 Chat about {p.name} →
+                </a>
+              </div>
             </div>
             {p.how_met && <p className="text-xs opacity-60 mt-1">met via {p.how_met}</p>}
             {p.notes && <p className="text-sm mt-1 whitespace-pre-wrap">{p.notes}</p>}
+            {expanded[p.slug] && (
+              <div className="mt-2 border-t pt-2">
+                {appearances[p.slug] === null || appearances[p.slug] === undefined ? (
+                  <p className="text-xs opacity-60">loading…</p>
+                ) : appearances[p.slug]!.photos.length === 0 ? (
+                  <p className="text-xs opacity-60">No tagged photos yet — drop one and tag the face.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {appearances[p.slug]!.photos.map((photo) => (
+                      <li key={`${photo.folder}/${photo.slug}`}>
+                        <a
+                          href={`/kb/browse?path=${encodeURIComponent(photo.folder)}&open=${encodeURIComponent(photo.slug)}`}
+                          className="text-xs underline hover:opacity-70"
+                        >
+                          📷 {photo.title}
+                        </a>
+                        <span className="text-xs opacity-50 ml-1">({photo.folder})</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {appearances[p.slug] && appearances[p.slug]!.dates.length > 0 && (
+                  <p className="text-xs opacity-60 mt-1">In your journal on {appearances[p.slug]!.dates.join(", ")}</p>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>

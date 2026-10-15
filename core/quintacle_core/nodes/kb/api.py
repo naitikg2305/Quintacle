@@ -7,6 +7,8 @@ import urllib.request
 from datetime import date
 from typing import Literal
 
+import json
+
 from fastapi import APIRouter, Body, File, Form, HTTPException, Response, UploadFile
 from openai import OpenAIError
 from pydantic import BaseModel
@@ -17,6 +19,7 @@ from ..journal.api import get_store as get_journal_store
 from ..journal.normalize import canonicalize_name
 from ..profile.api import get_store as get_profile_store
 from ..travel.api import get_store as get_travel_store
+from .auto_journal import process_photo_commit
 from .chat import CHAT_MODELS, BedrockError, OllamaError, UnknownModelError, run_kb_chat
 from .chat_store import ChatStore
 from .drop import _IMAGE_MIME, describe_drop, describe_images, extract_photo_date, extract_photo_location, is_image
@@ -436,6 +439,7 @@ async def create_entry_with_asset(
     content: str = Form(...),
     files: list[UploadFile] = File(...),  # as many as you want — one [asset](...) line per file
     links: str = Form(""),  # comma-separated — multipart forms don't carry real arrays cleanly
+    perception: str = Form(""),  # optional JSON PerceptionResult dump carried through review from the drop proposal
 ) -> dict:
     file_data = [(f.filename or "asset", await f.read()) for f in files]
     link_list = [l.strip() for l in links.split(",") if l.strip()]
@@ -452,7 +456,27 @@ async def create_entry_with_asset(
     linked_content = f"{content}\n\n{asset_lines}" if asset_lines else content
     get_store().write(folder, title, linked_content, link_list, location)
     _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", title, linked_content, link_list)
-    return {"folder": folder_slug, "slug": entry_slug, "assets": asset_paths, "location": location}
+
+    # The photo auto-journal: deterministic line into that EXIF date's
+    # journal + pictured_with/at_location edges (see nodes/kb/auto_journal).
+    # Additive, never blocking — a broken perception step must not fail a
+    # save that already happened.
+    try:
+        perception_payload = json.loads(perception) if perception.strip() else None
+    except ValueError:
+        perception_payload = None
+    try:
+        perception_summary = process_photo_commit(folder_slug, entry_slug, title, file_data, perception_payload)
+    except Exception:
+        perception_summary = None
+
+    return {
+        "folder": folder_slug,
+        "slug": entry_slug,
+        "assets": asset_paths,
+        "location": location,
+        "perception": perception_summary,
+    }
 
 
 @router.get("/graph")

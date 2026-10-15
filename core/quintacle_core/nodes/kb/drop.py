@@ -223,11 +223,7 @@ def _describe_video(data: bytes) -> str:
     return next((b.text for b in response.content if b.type == "text"), "")
 
 
-def extract_photo_date(data: bytes) -> date | None:
-    """Deterministic — reads the photo's own embedded capture date (EXIF),
-    no AI involved. Lets a batch of trip photos connect to the day you
-    actually journaled about, without any manual date-sorting. Returns None
-    for anything with no EXIF date (screenshots, scans, stripped images)."""
+def _exif_date_candidates(data: bytes) -> list:
     try:
         img = Image.open(io.BytesIO(data))
         exif = img.getexif()
@@ -243,13 +239,34 @@ def extract_photo_date(data: bytes) -> date | None:
             pass
         if 306 in exif:  # DateTime
             candidates.append(exif[306])
-        for raw in candidates:
-            try:
-                return datetime.strptime(str(raw).split(" ")[0], "%Y:%m:%d").date()
-            except ValueError:
-                continue
+        return candidates
     except Exception:
-        pass
+        return []
+
+
+def extract_photo_date(data: bytes) -> date | None:
+    """Deterministic — reads the photo's own embedded capture date (EXIF),
+    no AI involved. Lets a batch of trip photos connect to the day you
+    actually journaled about, without any manual date-sorting. Returns None
+    for anything with no EXIF date (screenshots, scans, stripped images)."""
+    for raw in _exif_date_candidates(data):
+        try:
+            return datetime.strptime(str(raw).split(" ")[0], "%Y:%m:%d").date()
+        except ValueError:
+            continue
+    return None
+
+
+def extract_photo_datetime(data: bytes) -> datetime | None:
+    """Same EXIF read as extract_photo_date but keeping the capture TIME —
+    the photo auto-journal line leads with it ("📷 2:14 PM — ..."). Returns
+    None when EXIF carries no full date+time (a date-only tag still dates
+    the journal entry via extract_photo_date; it just gets no clock time)."""
+    for raw in _exif_date_candidates(data):
+        try:
+            return datetime.strptime(str(raw).strip(), "%Y:%m:%d %H:%M:%S")
+        except ValueError:
+            continue
     return None
 
 

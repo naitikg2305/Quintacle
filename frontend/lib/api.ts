@@ -310,7 +310,17 @@ export type ParsedFinance = {
   entry_date: string | null;
   kind: FinanceKind;
 };
-export type ParsedKBEntry = { type: "kb_entry"; folder: string; title: string; content: string; links?: string[] };
+export type ParsedKBEntry = {
+  type: "kb_entry";
+  folder: string;
+  title: string;
+  content: string;
+  links?: string[];
+  // A photo drop proposal may carry a PerceptionResult dump (tags/scene/
+  // faces) computed at propose time — passed through verbatim on commit so
+  // the backend doesn't have to re-run perception on the same bytes.
+  perception?: Record<string, unknown> | null;
+};
 export type MicroEstimate = { nutrient: string; amount: number; unit: string };
 export type ParsedIngredientPreset = {
   type: "ingredient_preset";
@@ -879,7 +889,28 @@ export const saveKBView = (folder: string, view: KBView) =>
 export const searchKBEntries = (q: string) =>
   request<{ folder: string; slug: string; snippet: string }[]>(`/kb/search?q=${encodeURIComponent(q)}`);
 
-export type KBSuggestion = { folder: string; title: string; content: string; links?: string[]; fields?: Record<string, string> };
+export type KBSuggestion = {
+  folder: string;
+  title: string;
+  content: string;
+  links?: string[];
+  fields?: Record<string, string>;
+  perception?: Record<string, unknown> | null;
+};
+
+// What a photo commit reports back from the auto photo-journal step:
+// matched people (threshold-passing perception matches only), the unknown
+// faces feeding the "who is this?" tag flow, and what landed in the journal.
+export type UnknownFace = { embedding_id: string; box?: unknown; suggested_name?: string | null };
+export type PerceptionSummary = {
+  people: string[];
+  unknown_faces: UnknownFace[];
+  journal_date: string | null;
+  journal_appended: boolean;
+  auto_line: string | null;
+  place: string | null;
+  edges: string[];
+} | null;
 
 // target.slug given -> merge-update that one existing entry. target.folder
 // alone (no slug) -> folder-scoped new entry, folder fixed, never AI-guessed.
@@ -913,17 +944,44 @@ export async function dropIntoKB(file: File, description: string): Promise<KBSug
 export async function pushKBEntryWithAsset(
   suggestion: KBSuggestion,
   files: File[]
-): Promise<{ folder: string; slug: string; assets: string[]; location: unknown }> {
+): Promise<{ folder: string; slug: string; assets: string[]; location: unknown; perception: PerceptionSummary }> {
   const form = new FormData();
   form.append("folder", suggestion.folder);
   form.append("title", suggestion.title);
   form.append("content", suggestion.content);
   for (const f of files) form.append("files", f);
   form.append("links", (suggestion.links ?? []).join(","));
+  // Perception computed at propose time rides through review to the commit
+  // so the backend reuses it instead of re-running on the same bytes.
+  if (suggestion.perception) form.append("perception", JSON.stringify(suggestion.perception));
   const res = await fetch(`${API_BASE}/kb/entries/with-asset`, { method: "POST", body: form });
   if (!res.ok) throw new Error(`push failed: ${res.status} ${await res.text()}`);
   return res.json();
 }
+
+// The "who is this?" tag flow — resolves one unknown face on one committed
+// photo (enrolls the embedding, creates the person if new, wires the
+// pictured_with edges, folds the name into the photo's journal line).
+export const tagUnknownFace = (embedding_id: string, person_name: string, photo: { folder: string; slug: string }) =>
+  request<{
+    person_name: string;
+    created_person: boolean;
+    enrolled: boolean;
+    edges: string[];
+    journal_date: string | null;
+    journal_updated: boolean;
+  }>("/perception/tag", { method: "POST", body: JSON.stringify({ embedding_id, person_name, photo }) });
+
+export type PersonAppearances = {
+  name: string;
+  photos: { folder: string; slug: string; title: string; created_at: string }[];
+  dates: string[];
+};
+
+// Computed from the graph's pictured_with edges — nothing is ever written
+// into the person's own file about appearances.
+export const personAppearances = (name: string) =>
+  request<PersonAppearances>(`/people/${encodeURIComponent(name)}/appearances`);
 
 export function kbAssetUrl(folder: string, path: string): string {
   return `${API_BASE}/kb/asset?folder=${encodeURIComponent(folder)}&path=${encodeURIComponent(path)}`;

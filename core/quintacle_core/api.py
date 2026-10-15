@@ -38,6 +38,7 @@ from .nodes.logs.api import init_repo, init_profile_ref, get_repo as get_logs_re
 from .nodes.logs.log_store import LogFileStore
 from .nodes.journal.api import init_store as init_journal_store, get_store as get_journal_store, router as journal_router
 from .nodes.kb.api import init_store as init_kb_store, init_chat_store, get_store as get_kb_store, router as kb_router
+from .nodes.kb.perception_api import router as perception_router
 from .nodes.profile.api import init_store as init_profile_store, router as profile_router
 from .nodes.wardrobe.api import (
     init_store as init_wardrobe_store,
@@ -114,6 +115,7 @@ def create_app() -> FastAPI:
     init_kb_store(kb_root)
     init_chat_store(DATA_DIR / "kb_chats")
     app.include_router(kb_router)
+    app.include_router(perception_router)
 
     profile_store = init_profile_store(DATA_DIR / "profile.json")
     init_profile_ref(profile_store)
