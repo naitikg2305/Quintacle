@@ -127,6 +127,24 @@ default, and winning on the home turf where it matters: the questions that
 make up a life, which are finite, repetitive, and already answered by your
 own past.
 
+## vs. GraphRAG (Neo4j RAG / Amazon Neptune) — the industry-standard comparison
+
+Asked by an industry voice: "Neo4j RAG is the standard — evaluate against
+it." The honest eval, kept here because it sharpens the positioning:
+
+| | GraphRAG (Neo4j/Neptune + LLM) | Quintacle |
+|---|---|---|
+| Who writes the graph | An LLM extracts entities/relations from text — hallucinated edges and entity-resolution cleanup are documented failure modes | Deterministic code: EXIF, face embeddings, prefix routing, whole-word matching to existing entities, birth-certificate event provenance. Models propose, the user ratifies, code wires — **integrity is provable, not probabilistic** |
+| Intelligence spend | Big models at ingest AND at every query, forever | Amortized at capture into structure; queries are indexed traversal + a small local narrator |
+| The graph models | A document corpus (entities as derived artifacts of text) | The life directly — the expense, the photo, the day ARE the records; and it's read-WRITE, with gated/undoable writes |
+| Retrieval | Vector similarity + LLM-guided traversal: fuzzy, unexplainable misses | Typed-edge traversal + SQL: exact, repeatable, every edge provenance-tagged |
+| Infrastructure | Managed cloud / server; data rides through hosted LLMs per query | Markdown + SQLite on your disk; biometrics sealed; device-to-device sync; phone-ready. Neptune cannot run on your phone |
+| Right domain | Million-doc corpora nobody will curate — LLM extraction is the only option at that scale | One person's life: small enough to curate deterministically, important enough that it must be |
+
+Same core insight as GraphRAG — graphs ground LLMs. Opposite trust model.
+Not Neo4j-RAG-but-worse: **what GraphRAG would be if the corpus were your
+life and hallucinated edges were unacceptable.**
+
 ## Tagline candidates
 
 - *Your life, indexed. Your models, local. Your cloud bill, optional.*
