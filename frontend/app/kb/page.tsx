@@ -63,6 +63,10 @@ import { cn } from "@/lib/cn";
 
 type TargetFile = { folder: string; slug: string; title: string };
 
+// The dropdown value for "type your own Bedrock model id" — not a real model;
+// the typed id is sent to the backend as `bedrock:<id>` (see sendChat).
+const CUSTOM_BEDROCK = "__custom_bedrock__";
+
 export default function KBPage() {
   return (
     <Suspense>
@@ -93,6 +97,10 @@ function KBPageInner() {
   const [useKB, setUseKB] = useState(true);
   const [models, setModels] = useState<ChatModel[]>([]);
   const [model, setModel] = useState<string | undefined>(undefined);
+  // Free-form Bedrock model id — picking "Custom model id…" in the dropdown
+  // reveals an input; whatever's typed is sent as `bedrock:<id>` (any model
+  // the AWS account can invoke, not just the curated list).
+  const [customBedrockId, setCustomBedrockId] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   // Phone only: one pane at a time (chat | scratchpad). lg+ shows both.
   const [pane, setPane] = useState<"chat" | "scratch">("chat");
@@ -109,10 +117,13 @@ function KBPageInner() {
     listChatModels().then((list) => {
       setModels(list);
       let saved: string | null = null;
+      let savedCustom: string | null = null;
       try {
         saved = localStorage.getItem("quintacle.chatModel");
+        savedCustom = localStorage.getItem("quintacle.chatBedrockCustomId");
       } catch {}
-      setModel(list.some((m) => m.id === saved) ? (saved as string) : list[0]?.id);
+      if (savedCustom) setCustomBedrockId(savedCustom);
+      setModel(saved === CUSTOM_BEDROCK || list.some((m) => m.id === saved) ? (saved as string) : list[0]?.id);
     });
   }, []);
 
@@ -120,6 +131,13 @@ function KBPageInner() {
     setModel(id);
     try {
       localStorage.setItem("quintacle.chatModel", id);
+    } catch {}
+  }
+
+  function pickCustomBedrockId(id: string) {
+    setCustomBedrockId(id);
+    try {
+      localStorage.setItem("quintacle.chatBedrockCustomId", id);
     } catch {}
   }
 
@@ -384,6 +402,11 @@ function KBPageInner() {
   async function sendChat() {
     if (!chatInput.trim() && !chatFile) return;
     setChatError(null);
+    if (model === CUSTOM_BEDROCK && !customBedrockId.trim()) {
+      setChatError("Enter a Bedrock model id first (or pick a model from the list).");
+      return;
+    }
+    const effectiveModel = model === CUSTOM_BEDROCK ? `bedrock:${customBedrockId.trim()}` : model;
     const inputForTitle = chatInput;
     let userMessage: ChatMessage;
     try {
@@ -410,7 +433,7 @@ function KBPageInner() {
 
     let finalLog = next;
     try {
-      const { reply } = await chatWithKB(next, useKB, false, undefined, model);
+      const { reply } = await chatWithKB(next, useKB, false, undefined, effectiveModel);
       finalLog = [...next, { role: "assistant" as const, content: reply }];
     } catch (e) {
       finalLog = [...next, { role: "assistant" as const, content: `(error: ${e instanceof Error ? e.message : String(e)})` }];
@@ -466,15 +489,37 @@ function KBPageInner() {
               >
                 <Database size={14} /> Knowledge base {useKB ? "on" : "off"}
               </button>
-              <label className="flex items-center gap-2" title="Which model answers — price is $ per 1M tokens in / out. Web search is always on.">
+              <label className="flex items-center gap-2" title="Which model answers — price is $ per 1M tokens in / out (Bedrock bills through AWS). Web search is always on for direct-API models.">
                 <span className={label}>Model</span>
                 <Select className="w-auto py-1 text-xs" value={model ?? ""} onChange={(e) => pickModel(e.target.value)}>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label} ({m.price})
-                    </option>
-                  ))}
+                  <optgroup label="Direct API">
+                    {models
+                      .filter((m) => m.provider !== "bedrock")
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label} ({m.price})
+                        </option>
+                      ))}
+                  </optgroup>
+                  <optgroup label="AWS Bedrock">
+                    {models
+                      .filter((m) => m.provider === "bedrock")
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                    <option value={CUSTOM_BEDROCK}>Custom model id…</option>
+                  </optgroup>
                 </Select>
+                {model === CUSTOM_BEDROCK && (
+                  <Input
+                    className="w-56 py-1 font-mono text-xs"
+                    placeholder="e.g. us.meta.llama3-3-70b-instruct-v1:0"
+                    value={customBedrockId}
+                    onChange={(e) => pickCustomBedrockId(e.target.value)}
+                  />
+                )}
               </label>
             </div>
             <div className="flex flex-wrap items-center gap-2">

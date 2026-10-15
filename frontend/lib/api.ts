@@ -1045,7 +1045,7 @@ export function chatMessageText(content: ChatMessage["content"]): string {
     .join("\n");
 }
 
-export type ChatModel = { id: string; label: string; provider: "anthropic" | "openai"; price: string };
+export type ChatModel = { id: string; label: string; provider: "anthropic" | "openai" | "bedrock"; price: string };
 
 export const listChatModels = () => request<ChatModel[]>("/kb/models");
 

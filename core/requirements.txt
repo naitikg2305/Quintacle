@@ -4,6 +4,7 @@ pydantic
 python-frontmatter
 pytest
 anthropic
+boto3
 python-dotenv
 python-docx
 python-multipart

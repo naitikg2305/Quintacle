@@ -17,7 +17,7 @@ from ..journal.normalize import canonicalize_name
 from ..people.api import get_store as get_people_store
 from ..profile.api import get_store as get_profile_store
 from ..travel.api import get_store as get_travel_store
-from .chat import CHAT_MODELS, UnknownModelError, run_kb_chat
+from .chat import CHAT_MODELS, BedrockError, UnknownModelError, run_kb_chat
 from .chat_store import ChatStore
 from .drop import _IMAGE_MIME, describe_drop, describe_images, extract_photo_date, extract_photo_location, is_image
 from .image_gen import generate_image
@@ -510,6 +510,9 @@ def chat_endpoint(body: ChatRequest) -> dict:
             get_store(), [m.model_dump() for m in body.messages], body.use_kb, body.research, body.folder, body.model
         )
     except UnknownModelError as e:
+        raise HTTPException(400, str(e))
+    except BedrockError as e:
+        # Already a readable, user-facing message (see chat._run_bedrock).
         raise HTTPException(400, str(e))
     except OpenAIError as e:
         # Missing key vs. a real API error read differently to the user.

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -101,29 +103,55 @@ def _kb_context_for_folder(store: KBStore, folder: str) -> str:
 
 # The chat's model picker. Anthropic models go through the anthropic SDK
 # (server-side web_search tool); OpenAI models go through the Responses API
-# (its own web_search tool). Both take the same Anthropic-shaped message list
-# from the frontend — the OpenAI path converts it (see _to_openai_input).
-# `price` is $/1M tokens in/out, shown in the dropdown so the cost is visible.
+# (its own web_search tool); Bedrock models go through AWS (see _run_bedrock —
+# the anthropic SDK's Bedrock client for Claude-family IDs, boto3's Converse
+# API for everything else). All take the same Anthropic-shaped message list
+# from the frontend — the OpenAI/Converse paths convert it.
+# `price` is $/1M tokens in/out, shown in the dropdown so the cost is visible;
+# Bedrock entries bill through AWS, so the dropdown just says so.
 CHAT_MODELS: list[dict] = [
     {"id": "claude-haiku-4-5", "label": "Claude Haiku 4.5", "provider": "anthropic", "price": "$1 / $5"},
+    {"id": "claude-haiku-5-5", "label": "Claude Haiku 5.5", "provider": "anthropic", "price": "$0.10 / $0.50"},
     {"id": "claude-sonnet-5", "label": "Claude Sonnet 5", "provider": "anthropic", "price": "$2 / $10"},
+    {"id": "claude-sonnet-5-5", "label": "Claude Sonnet 5.5", "provider": "anthropic", "price": "$2 / $10"},
     {"id": "claude-opus-5", "label": "Claude Opus 5", "provider": "anthropic", "price": "$5 / $25"},
+    {"id": "claude-opus-5-5", "label": "Claude Opus 5.5", "provider": "anthropic", "price": "$4 / $20"},
     {"id": "gpt-4o-mini", "label": "GPT-4o mini", "provider": "openai", "price": "$0.15 / $0.60"},
     {"id": "gpt-5-nano", "label": "GPT-5 nano", "provider": "openai", "price": "$0.05 / $0.40"},
     {"id": "gpt-5-mini", "label": "GPT-5 mini", "provider": "openai", "price": "$0.25 / $2"},
+    {"id": "bedrock:anthropic.claude-sonnet-5-5", "label": "Claude Sonnet 5.5 (Bedrock)", "provider": "bedrock", "price": "AWS billing"},
+    {"id": "bedrock:us.amazon.nova-lite-v1:0", "label": "Amazon Nova Lite (Bedrock)", "provider": "bedrock", "price": "AWS billing"},
 ]
 _MODELS_BY_ID = {m["id"]: m for m in CHAT_MODELS}
+
+# Any picker value with this prefix routes to AWS Bedrock; the rest of the
+# string is the raw Bedrock model ID. The curated entries above use it too —
+# "custom" Bedrock models are the same convention, just typed in by hand.
+BEDROCK_PREFIX = "bedrock:"
 
 # The dynamic-filtering search variant needs Sonnet 5+; Haiku takes the basic one.
 _ANTHROPIC_SEARCH_TYPE = {
     "claude-haiku-4-5": "web_search_20250305",
+    "claude-haiku-5-5": "web_search_20250305",
     "claude-sonnet-5": "web_search_20260209",
+    "claude-sonnet-5-5": "web_search_20260209",
     "claude-opus-5": "web_search_20260209",
+    "claude-opus-5-5": "web_search_20260209",
 }
+
+# Opus-tier safety classifiers can decline a request; these models get the
+# server-side fallback so a refusal reroutes instead of failing the chat.
+_ANTHROPIC_FALLBACK_MODELS = {"claude-opus-5", "claude-opus-5-5"}
 
 
 class UnknownModelError(ValueError):
     pass
+
+
+class BedrockError(RuntimeError):
+    """A readable, user-facing Bedrock failure (missing AWS credentials, a
+    bad/unavailable model ID, region problems) — the API layer turns this
+    into a clear chat error instead of a 500 stack trace."""
 
 
 def resolve_model(model: str | None, research: bool) -> dict:
@@ -132,6 +160,12 @@ def resolve_model(model: str | None, research: bool) -> dict:
     chat, the read-only chat) keep working on the same defaults as before."""
     wanted = model or (RESEARCH_MODEL if research else DEFAULT_MODEL)
     entry = _MODELS_BY_ID.get(wanted)
+    if entry is None and wanted.startswith(BEDROCK_PREFIX):
+        # Free-form "bedrock:<raw model id>" — any Bedrock model, not just the
+        # curated ones. The raw ID is validated by AWS at invoke time.
+        raw = wanted[len(BEDROCK_PREFIX):].strip()
+        if raw:
+            return {"id": wanted, "label": raw, "provider": "bedrock", "price": "AWS billing"}
     if entry is None:
         raise UnknownModelError(f"unknown chat model: {wanted}")
     return entry
@@ -176,7 +210,7 @@ def _run_anthropic(model: str, messages: list[dict], kb_text: str | None) -> str
         # Always on — the model only searches when a question needs fresh info.
         "tools": [{"type": _ANTHROPIC_SEARCH_TYPE[model], "name": "web_search", "max_uses": 5}],
     }
-    if model == "claude-opus-5":
+    if model in _ANTHROPIC_FALLBACK_MODELS:
         # Opus's safety classifiers can decline a request; this routes a
         # refusal to a fallback model server-side instead of failing the chat.
         response = client.beta.messages.create(
@@ -243,6 +277,107 @@ def _run_openai(model: str, messages: list[dict], kb_text: str | None) -> str:
     return response.output_text or "(the model returned an empty reply)"
 
 
+def bedrock_region() -> str:
+    """QUINTACLE_BEDROCK_REGION wins (a knob just for this), then the standard
+    AWS env vars, then us-east-1 — the region most Bedrock models launch in."""
+    return (
+        os.environ.get("QUINTACLE_BEDROCK_REGION")
+        or os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or "us-east-1"
+    )
+
+
+def _to_converse_messages(messages: list[dict]) -> list[dict]:
+    """Anthropic-shaped chat messages -> Bedrock Converse `messages`. Text
+    stays text; attached image/PDF blocks (base64) become Converse bytes
+    blocks. Assistant turns are text-only, same as the OpenAI conversion."""
+    out: list[dict] = []
+    for m in messages:
+        content = m["content"]
+        if isinstance(content, str):
+            parts = [{"text": content}]
+        elif m["role"] == "assistant":
+            parts = [{"text": "\n".join(b["text"] for b in content if b.get("type") == "text")}]
+        else:
+            parts = []
+            for b in content:
+                if b["type"] == "text":
+                    parts.append({"text": b["text"]})
+                elif b["type"] == "image":
+                    src = b["source"]
+                    fmt = src["media_type"].split("/")[-1].replace("jpg", "jpeg")
+                    parts.append({"image": {"format": fmt, "source": {"bytes": base64.b64decode(src["data"])}}})
+                elif b["type"] == "document":
+                    src = b["source"]
+                    parts.append(
+                        {"document": {"format": "pdf", "name": "document", "source": {"bytes": base64.b64decode(src["data"])}}}
+                    )
+        out.append({"role": m["role"], "content": parts})
+    return out
+
+
+def _run_bedrock_anthropic(raw_id: str, messages: list[dict], kb_text: str | None) -> str:
+    """Claude-family Bedrock IDs go through the anthropic SDK's Bedrock client
+    (same Messages shape as the direct API, AWS credentials/billing). No
+    web_search tool here — server tools aren't a given on Bedrock deployments."""
+    client = anthropic.AnthropicBedrockMantle(aws_region=bedrock_region())
+    system: list[dict] = []
+    if kb_text:
+        system.append({"type": "text", "text": kb_text})
+    system.append({"type": "text", "text": _PHOTO_INSTRUCTION})
+    response = client.messages.create(model=raw_id, max_tokens=4096, messages=messages, system=system)
+    if response.stop_reason == "refusal":
+        return "(the model declined to answer that one — try rephrasing, or pick a different model)"
+    return "\n\n".join(b.text for b in response.content if b.type == "text")
+
+
+def _run_bedrock_converse(raw_id: str, messages: list[dict], kb_text: str | None) -> str:
+    """Everything else on Bedrock (Nova, Llama, Mistral, any raw model ID the
+    user types) goes through boto3's Converse API — one request shape that
+    Bedrock translates for whatever model is behind the ID."""
+    import boto3  # imported lazily: only the Bedrock path needs it
+
+    client = boto3.client("bedrock-runtime", region_name=bedrock_region())
+    system_text = f"{kb_text}\n\n{_PHOTO_INSTRUCTION}" if kb_text else _PHOTO_INSTRUCTION
+    response = client.converse(
+        modelId=raw_id,
+        messages=_to_converse_messages(messages),
+        system=[{"text": system_text}],
+        inferenceConfig={"maxTokens": 4096},
+    )
+    parts = response["output"]["message"]["content"]
+    reply = "\n\n".join(p["text"] for p in parts if "text" in p)
+    return reply or "(the model returned an empty reply)"
+
+
+def _run_bedrock(picker_id: str, messages: list[dict], kb_text: str | None) -> str:
+    """Routes a `bedrock:<raw id>` picker value: Claude-family IDs use the
+    anthropic SDK's Bedrock client, anything else the Converse API. AWS
+    failures (no credentials, expired SSO, a bad model ID, no access in this
+    region) come back as a readable BedrockError, never a stack trace."""
+    import botocore.exceptions  # botocore ships with boto3; lazy like boto3 above
+
+    raw_id = picker_id[len(BEDROCK_PREFIX):].strip() if picker_id.startswith(BEDROCK_PREFIX) else picker_id
+    try:
+        if "anthropic." in raw_id:
+            return _run_bedrock_anthropic(raw_id, messages, kb_text)
+        return _run_bedrock_converse(raw_id, messages, kb_text)
+    except botocore.exceptions.ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        msg = e.response.get("Error", {}).get("Message", str(e))
+        if code in ("ValidationException", "ResourceNotFoundException"):
+            raise BedrockError(f"Bedrock rejected model \"{raw_id}\": {msg}") from e
+        if code in ("AccessDeniedException", "UnrecognizedClientException", "ExpiredTokenException"):
+            raise BedrockError(f"AWS access problem for \"{raw_id}\": {msg} — check your AWS credentials and model access in {bedrock_region()}") from e
+        raise BedrockError(f"Bedrock error for \"{raw_id}\": {msg}") from e
+    except botocore.exceptions.BotoCoreError as e:
+        # NoCredentialsError, NoRegionError, expired SSO token retrieval, ...
+        raise BedrockError(f"AWS credentials problem: {e} — configure AWS credentials (env vars or ~/.aws) to use Bedrock models") from e
+    except anthropic.AnthropicError as e:
+        raise BedrockError(f"Bedrock error for \"{raw_id}\": {e}") from e
+
+
 def run_kb_chat(
     store: KBStore,
     messages: list[dict],
@@ -255,6 +390,8 @@ def run_kb_chat(
     kb_text = _system_text(store, use_kb, folder)
     if entry["provider"] == "openai":
         reply = _run_openai(entry["id"], messages, kb_text)
+    elif entry["provider"] == "bedrock":
+        reply = _run_bedrock(entry["id"], messages, kb_text)
     else:
         reply = _run_anthropic(entry["id"], messages, kb_text)
     return _resolve_photo_tags(reply)
