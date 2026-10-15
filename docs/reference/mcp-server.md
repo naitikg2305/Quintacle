@@ -6,6 +6,14 @@ Derived from code at commit `884d057` on 2026-10-15.
 > (the deterministic day bundle, shared with `GET /day/{date}`) and
 > `describe_photo` (billed on-demand vision, read-only, no ledger entry) —
 > so "14 tools" below is now 16.*
+>
+> *Moved again, later 2026-10-15 (code at `1a46c92`): the perception wave
+> added `perceive_photo` — the LOCAL & FREE twin of `describe_photo` (YOLO
+> tags + face observations with enrolled-name matches + scene attributes
+> over a stored KB photo; no AI call, no ledger entry; image bytes and face
+> embedding vectors never cross MCP) — so the count is now **17**
+> (verified: 17 `@mcp.tool()` decorators in `server.py`). See
+> `reference/perception-and-autojournal.md`.*
 
 Code: [core/quintacle_core/mcp_server/](../../core/quintacle_core/mcp_server/)
 — `server.py` (tools), `ledger.py` (the write log), `undo.py` (snapshots +

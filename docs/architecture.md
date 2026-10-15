@@ -216,3 +216,18 @@ routing rule + build status), `docs/reference/` (as-built internals),
 `docs/seamless-mode.md` (how auto-mode later leans on seams local models
 have proven). The full as-built inventory — which is now genuinely too big
 to hold in one head — is `docs/reference/00-statement-of-work.md`.
+
+> *Status note, later 2026-10-15 (code at `1a46c92`): points 1–2 above are
+> now BUILT and live on the desktop. Perception (YOLO tags, face matching,
+> scene basics) runs locally with no LLM at all
+> (`core/quintacle_core/perception/`); the easy ingest seams default to a
+> local model with cloud auto-fallback
+> (`QUINTACLE_INGEST_PROVIDER=auto`, `llm_dispatch.py`) and every parse
+> response carries `provider_used` so the review card can offer the
+> step-back "Redo with cloud ↻"; the KB chat defaults to `local:qwen3:8b`
+> with a per-reply "Escalate ↗" that transfers the conversation to a cloud
+> model by choice. Verified live: real journal parses answering with
+> `provider_used: local`. Full as-built detail and the env-knob table:
+> `reference/local-models.md`. Point 3 stands as written (vision+schema and
+> research-grade work stay cloud); the phone halves are scripted in
+> `phone/` and still device-pending.*

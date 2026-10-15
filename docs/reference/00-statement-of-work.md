@@ -179,3 +179,77 @@ Tailwind CSS 4 (+typography) · TypeScript 5 · lucide-react · react-markdown
 | [drop-pipeline.md](drop-pipeline.md) | Prefix table, image/file classification, additive checks, batch drop, Drop-page session |
 | [frontend.md](frontend.md) | Page map, `lib/api.ts`, `commitEntry`, UI kit, HUD theme, nav, date helpers |
 | [android.md](android.md) | Capacitor project, Termux scripts, verified vs. unverified, remaining steps to an APK |
+
+## Addendum 2026-10-15 — the perception / local-model wave (code at `1a46c92`)
+
+The body above stays as stamped at `884d057`; 22 commits landed on
+`redone-UI` since (through `1a46c92`, the Tier 2 phone-perception commit).
+What changed, verified against code on 2026-10-15:
+
+**New capability areas (not in the stamped inventory):**
+
+- **Local perception** — `core/quintacle_core/perception/` (YOLOX-nano
+  tags, SCRFD+ArcFace faces with enrollment, deterministic scene
+  attributes; onnxruntime CPU, optional TFLite/LiteRT backend behind
+  `QUINTACLE_PERCEPTION_BACKEND`). Fully local; embeddings never leave
+  `~/.quintacle/perception/`. See
+  [perception-and-autojournal.md](perception-and-autojournal.md).
+- **Auto photo-journal + tag flow** — `nodes/kb/auto_journal.py` +
+  `nodes/kb/perception_api.py`: deterministic journal line on photo commit
+  under an undoable marker, `pictured_with`/`at_location` edges
+  (`source_of_edge="photo_perception"`), unknown-face tagging, appearances
+  derived from the graph. Same doc.
+- **Local-first ingest dispatch** — `core/quintacle_core/llm_dispatch.py`
+  routes 16 structured-parse call sites across 7 node modules through
+  local-Ollama-first/cloud-fallback (`QUINTACLE_INGEST_PROVIDER`, default
+  `auto`), with per-request `?provider=` step-back redo and `provider_used`
+  surfacing. Local chat provider (`local:` in `nodes/kb/chat.py`) and local
+  vision backends (`local_vlm/` ollama + llamacpp) complete the three
+  lanes. See [local-models.md](local-models.md). Property 1's "LLM only at
+  the edges" is unchanged; WHICH model answers at an edge is now local by
+  default for ingest and chat, cloud-by-default only for vision.
+- **Graph capture layer** — `core/quintacle_core/graph_capture.py`: every
+  content write path runs the shared deterministic linker, startup mention
+  backfill, emergent places at `PLACE_EMERGENCE_THRESHOLD = 3`. Appended
+  section in [graph-engine.md](graph-engine.md).
+- **Day recall** — `core/quintacle_core/day_bundle.py` behind
+  `GET /day/{date}` and MCP `day_recall`; billed on-demand re-look via
+  `POST /kb/asset/describe` / MCP `describe_photo`.
+- **Desktop shell** — `desktop/` (pywebview + PyInstaller; Linux binary
+  smoke-passed, Windows workflow unexecuted).
+- **Phone stack** — `phone/` (three tiers, each with its own README:
+  `tier1-local-llm/` Termux+Ollama scripts, `tier2-perception-tflite/`
+  conversion + desktop-proven parity, `tier3-vlm/` llama.cpp VLM lane,
+  client desktop-proven). Charter + verified-vs-device-pending table in
+  `phone/README.md`.
+
+**Counts, re-verified in code:**
+
+- MCP tools: 14 → **17** (`grep -c @mcp.tool server.py`; added
+  `day_recall`, `describe_photo`, `perceive_photo`).
+- REST routes: 4 added since the stamp (`POST /kb/asset/describe`,
+  `POST /kb/asset/perceive`, `POST /perception/tag`,
+  `GET /people/{name}/appearances`) — endpoints.md's 114 is now **118** by
+  its own counting.
+- Tests: 33 → **42** test modules; suite at `1a46c92` runs **335 passed /
+  5 skipped** with `perception-requirements.txt` installed (the 5 are
+  TFLite interpreter tests needing converted models), 331 / 9 on the
+  minimal venv — both verified in fresh venvs on 2026-10-15.
+- New frontend surfaces: provider badge + "Redo with cloud ↻" on Drop and
+  Journal, chat local default + per-reply "Escalate ↗", the Drop
+  unknown-faces tag panel, Day photos strip, People "Appears in".
+
+**The not-built list, updated (items above struck where closed; the
+stamped list otherwise stands):**
+
+- APK compile + any on-device run (Termux scripts, tok/s, TFLite
+  NNAPI/QNN delegate, llama.cpp OpenCL) — all of `phone/` is
+  desktop-proven-or-scripted, device-pending.
+- Vision+schema local parsing (`classify_image_type`, receipt extraction,
+  `describe_*` estimators) — deliberately still cloud.
+- The recent-writes / undo-window UI page; remaining ~12 MCP domains;
+  remote MCP transport.
+- Seamless mode (`docs/seamless-mode.md`) — still sequenced after the
+  real-use test, which also remains to be run.
+- Still open from the stamped list: tombstone sync, Graph Stage 4, FTS5 +
+  sqlite-vec search, encrypted vault-shaped documents, LLM day narration.

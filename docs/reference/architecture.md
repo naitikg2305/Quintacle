@@ -41,6 +41,22 @@ the metered Anthropic call and a local VLM served by Ollama on localhost
 `http://localhost:11434`). `auto` tries local and falls back to cloud with
 a warning log line; `local` raises rather than silently billing the cloud.
 
+> *Moved since the stamp, later 2026-10-15 (code at `1a46c92`): the env
+> surface above is no longer the whole story. The local VLM now has a
+> second backend (`QUINTACLE_VISION_BACKEND=ollama|llamacpp`, llama.cpp's
+> llama-server at `QUINTACLE_LLAMACPP_URL`); structured ingest got its own
+> provider switch (`QUINTACLE_INGEST_PROVIDER=auto|local|cloud`, default
+> **auto** — local-first with cloud fallback — plus
+> `QUINTACLE_LOCAL_PARSE_MODEL`, default `qwen3:8b`, and
+> `QUINTACLE_OLLAMA_HOST` for the daemon address shared with the chat's
+> `local:` provider); and the perception lane added
+> `QUINTACLE_PERCEPTION_BACKEND`, `QUINTACLE_TFLITE_VARIANT`,
+> `QUINTACLE_TFLITE_DELEGATE`, `QUINTACLE_PERCEPTION_MODELS_DIR`,
+> `QUINTACLE_FACE_MATCH_THRESHOLD`, `QUINTACLE_AUTOJOURNAL_POLISH`. The
+> complete knob table with defaults and reading modules is
+> `reference/local-models.md` (and the perception subset in
+> `reference/perception-and-autojournal.md`).*
+
 ## Startup sequence — `create_app()` top to bottom
 
 Everything is wired once per process, in this exact order (ordering

@@ -31,6 +31,19 @@ in local mode — "my data is safe."
 > computer-local model tiers are **unbuilt** — today every model call is a
 > cloud API call.*
 
+> *Correction, later 2026-10-15: that last sentence aged out the same day —
+> the **computer-local tier is now built** and is the DEFAULT for ingest
+> and chat. Structured ingest parses run local-first with cloud fallback
+> (`QUINTACLE_INGEST_PROVIDER=auto`, `core/quintacle_core/llm_dispatch.py`),
+> the KB chat defaults to a local model with explicit cloud escalation,
+> photo descriptions have a local lane (`QUINTACLE_VISION`, default still
+> cloud), and perception (object tags, face matching, scene) is fully local
+> with **no model call at all** — face embeddings never leave
+> `~/.quintacle/perception/`, which is this doc's identity-matching rule
+> implemented as built. The phone-local tier is scripted (`phone/`, three
+> tiers) but still unproven on a device. As-built detail:
+> `reference/local-models.md`, `reference/perception-and-autojournal.md`.*
+
 - The phone works standalone anywhere. Changes/new info get written to markdown
   files locally on the phone as they happen.
 - Sync requires two things to be true **at the same time**: both the phone app

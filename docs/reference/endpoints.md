@@ -6,6 +6,15 @@ Every route in the FastAPI app, enumerated from the `@app.*`/`@router.*`
 decorators in [core/quintacle_core/api.py](../../core/quintacle_core/api.py),
 [core/quintacle_core/sync.py](../../core/quintacle_core/sync.py), and every
 `nodes/*/api.py`. **114 routes total** (counts per section in headings).
+
+> *Moved since the stamp, later 2026-10-15 (code at `1a46c92`): 4 routes
+> added — `POST /kb/asset/describe` (billed re-look at a stored image),
+> `POST /kb/asset/perceive` (free local perception), `POST /perception/tag`
+> (the unknown-face tag flow, `nodes/kb/perception_api.py`), and
+> `GET /people/{name}/appearances` (graph-derived) — so 114 is now **118**.
+> `/drop`, `/kb/sort` and `/journal/{date}/parse` additionally take a
+> `?provider=local|cloud|auto` query param and return `provider_used`. See
+> `reference/perception-and-autojournal.md` and `reference/local-models.md`.*
 "Store" names the class(es) the handler touches. Unless noted, request/
 response bodies are JSON; "multipart" means `multipart/form-data` (file
 uploads); "text" means a raw `text/plain` body.

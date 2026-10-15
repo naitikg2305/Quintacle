@@ -5,6 +5,19 @@ git branch**, never merged into `main` until proven working end-to-end —
 today's cloud-API build (Claude Haiku 4.5 for everything, via `llm_config.py`)
 stays the working, deployed version throughout.
 
+> *Status update, later 2026-10-15 (code at `1a46c92`): the "Decided
+> 2026-10-15" section at the bottom is now **BUILT** — and NOT on a separate
+> branch as this header planned. The auto-fallback dispatch
+> (`core/quintacle_core/llm_dispatch.py`: local Ollama first, cloud on any
+> local failure, `provider_used` surfaced, review-gated redo-with-cloud)
+> made the separate-branch safety net unnecessary: the cloud path stays one
+> env var / one click away, so it ships on the main dev branch
+> (`redone-UI`). The vision slice (`QUINTACLE_VISION` + `local_vlm/`, now
+> with an llamacpp backend) and the fully-local perception lane landed in
+> the same wave. Still cloud on purpose: vision+schema sites and geocoding.
+> As-built detail: `reference/local-models.md`. The desktop-hardware
+> analysis above remains accurate history.*
+
 ## Why
 
 Every AI call in Quintacle today (`nodes/*/llm.py` across journal, kb, logs,

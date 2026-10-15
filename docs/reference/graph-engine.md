@@ -197,3 +197,14 @@ experience's own KB file is no longer duplicated as an untyped note. Stored
 edges are clamped to emitted node ids so a stale/structural-id edge degrades
 to "not drawn" instead of crashing the d3 layout. The REST safe wrappers log
 (never raise) linking failures so a write can't be lost to the capture step.
+
+> *Added later 2026-10-15 (code at `1a46c92`): the perception wave
+> introduced one new edge kind and one new provenance tag — `pictured_with`
+> (photo note → person profile, and journal day → person) and `at_location`
+> edges with `source_of_edge="photo_perception"`, created by
+> `nodes/kb/auto_journal.py` on photo commit and in the tag flow (not by the
+> keyword matcher — these come from face recognition + the photo's own
+> folder/EXIF, all local and deterministic at assert time).
+> `GET /people/{name}/appearances` is a new consumer: it derives a person's
+> photo/day appearances purely from `reverse_lookup` over `pictured_with`
+> edges. See `reference/perception-and-autojournal.md`.*

@@ -14,7 +14,10 @@ prove-the-pipeline tier. Charter and verified-vs-pending status for the whole
   `core/quintacle_core/nodes/kb/chat.py`, and any other pulled model works
   as free-form `local:<name>`) run against the on-phone daemon. No API key,
   no network, no tokens billed.
-- **Local parse — effective once the ingest dispatch merges.** The env
+- **Local parse — effective once the ingest dispatch merges.**
+  *(Update, later 2026-10-15: it merged — `core/quintacle_core/llm_dispatch.py`
+  is in this tree, so the two ingest knobs below are live, not forward
+  wiring. See `docs/reference/local-models.md`.)* The env
   profile pre-sets `QUINTACLE_LOCAL_PARSE_MODEL` and
   `QUINTACLE_INGEST_PROVIDER`; the core code reading them is landing from a
   parallel workstream, so until that merges these are inert forward wiring

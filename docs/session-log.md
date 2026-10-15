@@ -3,6 +3,123 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-15 — The perception wave: local-first ingest, on-device perception, auto photo-journal, the phone/ stack
+
+Seven parallel worktree agents plus the main-thread integration, landed on
+`redone-UI` through `1a46c92` (22 commits past the truth-sweep's `884d057`
+stamp). This is the wave that made `architecture.md`'s 2026-10-15
+local-first amendment real code. Suite: **335 passed / 5 skipped** with
+perception deps (331/9 minimal venv), verified in fresh venvs. Full detail:
+`~/work-logs/2026-10-15.md` sessions 5–12 and the two new reference docs —
+`reference/perception-and-autojournal.md`, `reference/local-models.md`.
+
+### Built this session
+
+- **Local-first ingest dispatch** (`core/quintacle_core/llm_dispatch.py`):
+  every easy text-parse seam (journal dump, KB sort/placement/update/batch,
+  drop classification, people/travel/finance/home extractors — 16 call
+  sites) now routes through `parse_structured`: local Ollama with the
+  Pydantic schema as `format` (`QUINTACLE_LOCAL_PARSE_MODEL`, default
+  qwen3:8b) first, cloud fallback on ANY local failure
+  (`QUINTACLE_INGEST_PROVIDER=auto` default). `/drop`, `/kb/sort`,
+  `/journal/{date}/parse` take `?provider=` and return `provider_used`;
+  Drop/Journal show a provider badge + **"Redo with cloud ↻"** (re-runs
+  from the ORIGINAL input — a step back); the KB chat defaults to
+  `local:qwen3:8b` with a per-local-reply **"Escalate ↗"** that transfers
+  the conversation to a cloud model. **Live-proven: real journal parses
+  answered with `provider_used: local`.** Vision+schema sites and geocoding
+  deliberately stay cloud.
+- **Perception core** (`core/quintacle_core/perception/`): YOLOX-nano tags +
+  SCRFD/ArcFace faces + deterministic scene attributes, onnxruntime CPU, no
+  LLM, no cloud; embeddings persist only under `~/.quintacle/perception/`.
+  Wired into `/drop` proposals, `POST /kb/asset/perceive`, and a free MCP
+  `perceive_photo` tool (count now 17). TFLite/LiteRT backend behind
+  `QUINTACLE_PERCEPTION_BACKEND=tflite` for the phone lane.
+- **Auto photo-journal + tag flow** (`nodes/kb/auto_journal.py`): on photo
+  commit, a deterministic line (`📷 2:14 PM — with Alex at Hermann Park ·
+  sunny · dog, frisbee (photo: …)`) lands in the EXIF date's journal under
+  an undoable `auto-photo:` marker (dedup-checked), plus
+  `pictured_with`/`at_location` edges, `source_of_edge="photo_perception"`.
+  Unknown faces flow to the Drop page's "who is this?" panel →
+  `POST /perception/tag` enrolls, creates the person, wires edges, and
+  edits the photo's ONE journal line in place. `GET
+  /people/{name}/appearances` derives appearances purely from the graph.
+  **E2E proven on real photos: drop a real selfie → auto-journal line on
+  the EXIF day → tag the unknown face → person + edges + in-place line
+  update → the same person re-matched at 0.803 cosine on a different
+  photo.**
+- **Local chat + local vision lanes**: `local:<model>` chat provider
+  (`nodes/kb/chat.py`, readable OllamaError 400s); `QUINTACLE_VISION_BACKEND=
+  ollama|llamacpp` inside `local_vlm/` — the llama.cpp client is the
+  phone-capable one, desktop-proven through `/kb/asset/describe` (CUDA
+  7.6 s, CPU 3m41s on a 12MP photo — prefill dominates).
+- **`phone/` — the three-tier on-device stack**, each tier with its own
+  README: Tier 1 Termux+Ollama scripts (pkg verified real, never run
+  on-device), Tier 2 ONNX→TFLite conversion + parity (**11/11
+  cross-backend enrollment matches** for f32 AND int8-DRQ; LiteRT ~2.6x
+  faster than ORT-CPU on desktop), Tier 3 llama.cpp VLM lane. Charter in
+  `phone/README.md`.
+- **Deterministic routine expansion** (`nodes/journal/normalize.py`
+  `expand_routine_mentions` + the header-drop/kcal-carry in
+  `nodes/journal/llm.py`): "pull day" → the preset's exercises is now
+  string matching in code, both providers, with the model's redundant
+  header entry dropped and its lone calorie estimate carried onto the first
+  expanded exercise. Live-proven on the real presets via local parse.
+
+### Decisions
+
+- **Deterministic-over-model for routine matching**: the seam audit showed
+  cloud follows the expand-the-routine prompt rule and small local models
+  reliably don't — and whether a name matches a preset is string matching,
+  not judgment, so the rule moved into code and stopped being a provider
+  difference at all.
+- **Write-errors-durable split in the dispatch**: daemon-unreachable
+  (`OllamaError`) and answered-but-schema-invalid (`LocalParseError`) are
+  distinct, both readable 400s in `local` mode, both auto-fallback triggers
+  in `auto` — ingest never 500s because the local model fumbled.
+- Two face thresholds on purpose: perception labels a match at ≥ 0.55
+  cosine; the journal/graph only *assert* a name at ≥ 0.8
+  (`QUINTACLE_FACE_MATCH_THRESHOLD`) — in between, the UI offers the name
+  as a suggestion without the record ever claiming it.
+- Cloud escalation is always a step BACK (redo from original input) or an
+  explicit chat choice — never re-prompting over local output, never a
+  silent default.
+
+### Gotchas and incidents
+
+- The worktree stale-base gotcha struck AGAIN, repeatedly: agent worktrees
+  cut from `c9cd583` instead of `redone-UI`. The standing rule
+  (`git reset --hard redone-UI` before starting) held in every session that
+  remembered it.
+- **qwen3:8b spills ~29% to CPU at 16k ctx** on the 12 GB card — the
+  dispatch's `num_ctx: 16384` is needed for parse payloads (meal/routine
+  libraries), but it costs; seam-audit latency numbers reflect it.
+- **onnx2tf's default `flatbuffer_direct` backend emits broken
+  dynamic-range-quant files** (outputs saturated at inf/3.4e38 on all three
+  models) — `convert.py` forces the `tf_converter` backend. That backend in
+  turn **reattaches ONNX tensor names to the wrong TFLite outputs**
+  (observed: a bbox tensor wearing a score head's name), so both the smoke
+  check and the runtime adapter map outputs by unique static shape, never
+  by name. Also: onnx2tf applies `overwrite_input_shape` by shelling out to
+  the `onnxsim` CLI — off PATH, the input silently collapsed to
+  `[1,1,1,3]`. All in `phone/tier2-perception-tflite/README.md` and
+  `~/work-logs/2026-10-15.md` sessions 11–12.
+- Seam audit so far: local 8B at parity on todos/dates/meal-presets; weak
+  on dual-meaning food+money clauses (drops the expense) — exactly what the
+  review gate + redo-with-cloud cover.
+
+### Still device-pending / not built (honest list)
+
+- **Nothing in `phone/` has touched the real S25U**: no APK build (needs
+  JDK/device), no Termux script run, no on-device tok/s, no TFLite
+  NNAPI/QNN delegate proof (wired, desktop no-op), no llama.cpp OpenCL run.
+- Vision+schema local parsing (receipt extraction, image classification) —
+  deliberately still cloud, the named next wave.
+- Recent-writes/undo UI, remaining MCP domains, remote transport — still
+  open from the previous entries.
+- Seamless mode — still sequenced after Naitik's full manual test run,
+  which remains the actual gate.
+
 ## 2026-10-14/15 — Day recall, Bedrock models, desktop shell, graph view usability, docs/reference, docs truth-sweep
 
 Six commits on `redone-UI` after the 10-13 wave (`884d057..7694ffc`), built

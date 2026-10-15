@@ -3,7 +3,10 @@
 > **Status update 2026-10-15: BUILT.** The MCP server exists and is live on
 > `redone-UI`: `core/quintacle_core/mcp_server/` (run
 > `python -m quintacle_core.mcp_server`, stdio), 16 tools over
-> journal/KB/expenses/todos plus `day_recall` and `describe_photo`,
+> journal/KB/expenses/todos plus `day_recall` and `describe_photo`
+> (later 2026-10-15: **17** — the perception wave added `perceive_photo`,
+> the local-and-free twin of `describe_photo`; see
+> `reference/perception-and-autojournal.md`),
 > **auto-write** with the staged-snapshot + combined ledger
 > (`~/.quintacle/mcp-log.md`) + 24h-undo design settled in the 2026-10-13
 > sections below, and every write auto-linking into the graph. The
