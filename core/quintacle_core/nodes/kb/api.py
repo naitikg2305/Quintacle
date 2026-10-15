@@ -19,7 +19,7 @@ from ..profile.api import get_store as get_profile_store
 from ..travel.api import get_store as get_travel_store
 from .chat import CHAT_MODELS, UnknownModelError, run_kb_chat
 from .chat_store import ChatStore
-from .drop import describe_drop, extract_photo_date, extract_photo_location, is_image
+from .drop import _IMAGE_MIME, describe_drop, describe_images, extract_photo_date, extract_photo_location, is_image
 from .image_gen import generate_image
 from .llm import suggest_kb_batch, suggest_kb_entry, suggest_kb_entry_for_folder, suggest_kb_update
 from .photo_organizer import compute_photo_folder
@@ -232,6 +232,35 @@ def get_asset(folder: str, path: str) -> Response:
         raise HTTPException(404, "asset not found")
     mime_type, _ = mimetypes.guess_type(path)
     return Response(content=data, media_type=mime_type or "application/octet-stream")
+
+
+class AssetDescribeRequest(BaseModel):
+    folder: str
+    path: str  # relative to `folder`, e.g. "assets/lake-hike.jpg"
+    question: str | None = None
+
+
+@router.post("/asset/describe")
+def describe_asset(body: AssetDescribeRequest) -> dict:
+    """Look at an already-stored image asset AGAIN, now — a fresh vision
+    pass over the stored bytes, generically describing the photo or (with
+    `question`) answering that question about it.
+
+    BILLED: every call here costs real Anthropic API budget (one vision
+    call on DEFAULT_MODEL) — this is the deliberate, on-demand counterpart
+    to the free drop-time description already stored in the note's body.
+
+    Bytes are read through the store's clamped read_asset — a path that
+    escapes the KB root reads as a plain 404, never a traversal into the
+    vault or anywhere else."""
+    ext = body.path.rsplit(".", 1)[-1].lower() if "." in body.path else ""
+    mime = _IMAGE_MIME.get(ext)
+    if mime is None:
+        raise HTTPException(400, f"not an image asset: {body.path}")
+    data = get_store().read_asset(body.folder, body.path)
+    if data is None:
+        raise HTTPException(404, "asset not found")
+    return {"folder": body.folder, "path": body.path, "description": describe_images([(data, mime)], body.question)}
 
 
 @router.post("/entry/asset")

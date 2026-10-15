@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from datetime import date
 from pathlib import Path
@@ -14,6 +13,7 @@ load_dotenv()
 
 from . import clock
 from . import db
+from .day_bundle import build_day_bundle
 from .graph import get_graph_store, init_graph_store, sync_frontmatter_links
 from .nodes.drop_router import (
     IMAGE_MIME_TYPES,
@@ -201,32 +201,18 @@ def create_app() -> FastAPI:
     @app.get("/day/{for_date}")
     def day_detail(for_date: date) -> dict:
         """Calendar B: what actually happened on a given date, pulled deterministically
-        from every node that touches it — architecture.md's March-13 example, generalized."""
-        repo = get_logs_repo()
-        todos = get_schedule_store().list()
-        todos_due = [t for t in todos if t.due_date == for_date]
-        todos_completed = sorted(
-            (t for t in todos if t.done and t.completed_at and t.completed_at.date() == for_date),
-            key=lambda t: t.completed_at,
+        from every node that touches it — architecture.md's March-13 example, generalized.
+        Includes `photos`: the KB notes linked to this day via the edges table (a photo's
+        EXIF date -> `on_day` edge), each with its stored drop-time description and asset
+        paths. Shared assembly with the MCP `day_recall` tool — see day_bundle.py."""
+        return build_day_bundle(
+            for_date,
+            journal_store=get_journal_store(),
+            todo_store=get_schedule_store(),
+            logs_repo=get_logs_repo(),
+            kb_store=get_kb_store(),
+            edges_conn=get_graph_store().conn,
         )
-        return {
-            "date": for_date.isoformat(),
-            "journal": get_journal_store().load(for_date),
-            "todos_due": [t.model_dump(mode="json") for t in todos_due],
-            "todos_completed": [t.model_dump(mode="json") for t in todos_completed],
-            "activities": [dict(row) for row in repo.activities_for_date(for_date)],
-            "exercise": [
-                {**dict(row), "sets": json.loads(row["sets_json"] or "[]")}
-                for row in repo.exercise_for_date(for_date)
-            ],
-            "food": {
-                "entries": [dict(row) for row in repo.food_log_for_date(for_date)],
-                "totals": dict(repo.daily_totals(for_date)),
-            },
-            "body_stats": [dict(row) for row in repo.body_stats_for_date(for_date)],
-            "substances": [dict(row) for row in repo.substances_for_date(for_date)],
-            "expenses": [dict(row) for row in repo.expenses_for_date(for_date)],
-        }
 
     @app.post("/drop")
     async def propose_drop(

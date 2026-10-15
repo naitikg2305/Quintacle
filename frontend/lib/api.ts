@@ -775,6 +775,18 @@ export async function proposeDrop(
 
 // --- day detail (Calendar B) ---
 
+// A KB note linked to this day via a real `on_day` edge (a photo's EXIF
+// date links it at drop time). `description` is the stored drop-time
+// vision text; `assets` the note's file paths (may be empty for a plain
+// text note about the day).
+export type DayPhoto = {
+  folder: string;
+  slug: string;
+  title: string;
+  description: string;
+  assets: string[];
+};
+
 export type DayDetail = {
   date: string;
   journal: string | null;
@@ -785,6 +797,7 @@ export type DayDetail = {
   food: { entries: unknown[]; totals: Record<string, number> };
   body_stats: unknown[];
   substances: unknown[];
+  photos: DayPhoto[];
 };
 
 export const getDayDetail = (date: string) => request<DayDetail>(`/day/${date}`);

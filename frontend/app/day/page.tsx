@@ -1,16 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { PageHeader, Panel } from "@/components/ui/Panel";
 import { Segmented } from "@/components/ui/Segmented";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { cn } from "@/lib/cn";
-import { DayDetail, formatSets, getDayCounts, getDayDetail, getNutritionForDate, listTodos, NutritionForDate, Todo } from "@/lib/api";
+import { DayDetail, formatSets, getDayCounts, getDayDetail, getNutritionForDate, kbAssetUrl, listTodos, NutritionForDate, Todo } from "@/lib/api";
 import { calendarIso, currentMonthStart, todayIso } from "@/lib/date";
 
 type Tab = "regular" | "action";
+
+const IMAGE_EXT = ["jpg", "jpeg", "png", "gif", "webp"];
+
+function firstImageAsset(assets: string[]): string | undefined {
+  return assets.find((a) => IMAGE_EXT.includes(a.split(".").pop()?.toLowerCase() ?? ""));
+}
 
 function monthLabel(d: Date): string {
   return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
@@ -293,12 +300,46 @@ export default function DayViewPage() {
               </div>
             )}
 
+            {expandedDetail.photos.length > 0 && (
+              <div>
+                <h3 className="mb-1 font-mono text-[11px] font-normal uppercase tracking-[0.14em] text-accent">Photos</h3>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {expandedDetail.photos.map((p) => {
+                    const thumb = firstImageAsset(p.assets);
+                    return (
+                      <Link
+                        key={`${p.folder}/${p.slug}`}
+                        href={`/kb/browse?path=${encodeURIComponent(p.folder)}&open=${encodeURIComponent(p.slug)}`}
+                        className="w-24 shrink-0 space-y-1"
+                        title={p.title}
+                      >
+                        {thumb ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={kbAssetUrl(p.folder, thumb)}
+                            alt={p.title}
+                            className="h-24 w-24 rounded-lg border border-line object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-24 w-24 items-center justify-center rounded-lg border border-line bg-surface-2/50 p-2 text-center text-[10px] text-muted">
+                            {p.title}
+                          </div>
+                        )}
+                        <p className="truncate text-xs text-foreground/80">{p.title}</p>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {Object.keys(expandedActivitiesByCategory).length === 0 &&
               expandedDetail.food.entries.length === 0 &&
               expandedDetail.exercise.length === 0 &&
               expandedDetail.substances.length === 0 &&
               expandedDetail.body_stats.length === 0 &&
               expandedDetail.todos_completed.length === 0 &&
+              expandedDetail.photos.length === 0 &&
               !expandedDetail.journal && <p className="text-sm text-muted">Nothing logged.</p>}
           </>
         )}

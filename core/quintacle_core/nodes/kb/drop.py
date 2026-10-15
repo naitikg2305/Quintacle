@@ -47,20 +47,37 @@ def is_image(filename: str) -> bool:
     return _extension(filename) in _IMAGE_MIME
 
 
-def _describe_image(photos: list[tuple[bytes, str]]) -> str:
+def describe_images(photos: list[tuple[bytes, str]], question: str | None = None) -> str:
+    """One vision call over one-or-more (bytes, mime) photos — the same
+    machinery every drop-time description already runs on, exposed for
+    on-demand "look at this photo again, now" calls (/kb/asset/describe,
+    the MCP describe_photo tool). With `question` given, the call answers
+    that question about the photo(s) instead of generically describing
+    them. Costs a real metered Anthropic API call (DEFAULT_MODEL) every
+    time — callers decide when that spend is worth it."""
     client = anthropic.Anthropic()
-    prompt = (
-        "These are two photos of the same thing (e.g. front and back, or a closer detail shot) "
-        "— describe them together in a few sentences, for filing into a personal knowledge base."
-        if len(photos) > 1
-        else "Describe what's in this image in a few sentences, for filing into a personal knowledge base."
-    )
+    if question and question.strip():
+        prompt = (
+            f"Answer this question about the attached photo{'s' if len(photos) > 1 else ''}, "
+            f"based only on what's actually visible: {question.strip()}"
+        )
+    elif len(photos) > 1:
+        prompt = (
+            "These are two photos of the same thing (e.g. front and back, or a closer detail shot) "
+            "— describe them together in a few sentences, for filing into a personal knowledge base."
+        )
+    else:
+        prompt = "Describe what's in this image in a few sentences, for filing into a personal knowledge base."
     response = client.messages.create(
         model=DEFAULT_MODEL,
         max_tokens=1024,
         messages=[{"role": "user", "content": [*image_content_blocks(photos), {"type": "text", "text": prompt}]}],
     )
     return next((b.text for b in response.content if b.type == "text"), "")
+
+
+def _describe_image(photos: list[tuple[bytes, str]]) -> str:
+    return describe_images(photos)
 
 
 def _describe_pdf(data: bytes) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -9,8 +10,10 @@ from uuid import uuid4
 from mcp.server.fastmcp import FastMCP
 
 from .. import db
+from ..day_bundle import build_day_bundle, entry_assets
 from ..markdown_paths import resolve_nested, slugify
 from ..nodes.journal.store import JournalStore
+from ..nodes.kb.drop import _IMAGE_MIME, describe_images
 from ..nodes.kb.store import KBStore
 from ..nodes.logs.log_store import LogFileStore, home_for
 from ..nodes.logs.repository import LogsRepository
@@ -35,6 +38,7 @@ todo_store: TodoStore
 log_file_store: LogFileStore
 logs_repo: LogsRepository
 ledger: Ledger
+db_conn: sqlite3.Connection
 
 mcp = FastMCP("quintacle")
 
@@ -47,7 +51,7 @@ def init(data_dir: Path | None = None) -> None:
     it again with a tmp_path to get a fully isolated set of stores, since the
     @mcp.tool()-decorated functions below look up these names from the
     module's globals at call time, not at decoration time."""
-    global DATA_DIR, _db_path, journal_store, kb_store, todo_store, log_file_store, logs_repo, ledger
+    global DATA_DIR, _db_path, journal_store, kb_store, todo_store, log_file_store, logs_repo, ledger, db_conn
     DATA_DIR = Path(data_dir) if data_dir is not None else Path(os.environ.get("QUINTACLE_DATA_DIR", Path.home() / ".quintacle"))
     kb_root = DATA_DIR / "kb"
     _db_path = DATA_DIR / "quintacle.db"
@@ -56,6 +60,7 @@ def init(data_dir: Path | None = None) -> None:
     todo_store = TodoStore(DATA_DIR / "schedule" / "todos")
     log_file_store = LogFileStore(kb_root)
     conn = db.connect(_db_path)
+    db_conn = conn
     logs_repo = LogsRepository(conn, log_file_store)
     ledger = Ledger(DATA_DIR / "mcp-log.md")
     # Same connection the logs repo uses — the graph's edges table lives in
@@ -295,6 +300,63 @@ def todo_list(include_done: bool = False) -> list[dict]:
     todos = todo_store.list()
     ranked = todos if include_done else rank_todos(todos)
     return [t.model_dump(mode="json") for t in ranked]
+
+
+# --- Day recall / photos ---
+
+
+@mcp.tool()
+def day_recall(for_date: str) -> dict:
+    """Everything recorded on a given day (YYYY-MM-DD), in one bundle: the
+    journal text, todos due, activities, exercise, food (entries + totals),
+    body stats, substances, expenses, and `photos` — every KB note linked to
+    that day (a photo's EXIF date links it at drop time), each with its
+    stored drop-time description and asset paths. Deterministic and
+    read-only: no AI call, no ledger entry — YOU do the narrating. Same
+    assembly the app's own GET /day/{date} uses. Pair with describe_photo
+    for a fresh (billed) look at any listed photo."""
+    return build_day_bundle(
+        date.fromisoformat(for_date),
+        journal_store=journal_store,
+        todo_store=todo_store,
+        logs_repo=logs_repo,
+        kb_store=kb_store,
+        edges_conn=db_conn,
+    )
+
+
+@mcp.tool()
+def describe_photo(folder: str, slug_or_path: str, question: str | None = None) -> dict:
+    """Convenience (billed — uses Quintacle's own AI): look at a stored KB
+    photo again, NOW. One fresh vision call on Quintacle's own metered
+    Anthropic key per call — unlike every other read tool here, which is
+    free and deterministic; the stored drop-time description (day_recall /
+    kb_get_entry) is the free alternative. Pass a note's slug to describe
+    its first image asset, or a direct "assets/..." path within `folder`;
+    `question` makes the call answer that question about the photo instead
+    of generically describing it. Image bytes never cross MCP — they're
+    read and sent to vision server-side; only text comes back. It's a
+    read: no ledger entry, nothing to undo."""
+    if slug_or_path.startswith("assets/"):
+        asset_path = slug_or_path
+    else:
+        entry = kb_store.read_full(folder, slug_or_path)
+        if entry is None:
+            raise ValueError(f"no such entry: {folder}/{slug_or_path}")
+        asset_path = next(
+            (a for a in entry_assets(entry) if a.rsplit(".", 1)[-1].lower() in _IMAGE_MIME),
+            None,
+        )
+        if asset_path is None:
+            raise ValueError(f"entry {folder}/{slug_or_path} has no image asset to describe")
+    ext = asset_path.rsplit(".", 1)[-1].lower() if "." in asset_path else ""
+    mime = _IMAGE_MIME.get(ext)
+    if mime is None:
+        raise ValueError(f"not an image asset: {asset_path}")
+    data = kb_store.read_asset(folder, asset_path)
+    if data is None:
+        raise ValueError(f"asset not found: {folder}/{asset_path}")
+    return {"folder": folder, "path": asset_path, "description": describe_images([(data, mime)], question)}
 
 
 # --- Ledger / undo ---
