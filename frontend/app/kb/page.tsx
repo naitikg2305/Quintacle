@@ -66,6 +66,8 @@ type TargetFile = { folder: string; slug: string; title: string };
 // The dropdown value for "type your own Bedrock model id" — not a real model;
 // the typed id is sent to the backend as `bedrock:<id>` (see sendChat).
 const CUSTOM_BEDROCK = "__custom_bedrock__";
+// Same for "type your own local Ollama model" — sent as `local:<id>`.
+const CUSTOM_LOCAL = "__custom_local__";
 
 export default function KBPage() {
   return (
@@ -101,6 +103,9 @@ function KBPageInner() {
   // reveals an input; whatever's typed is sent as `bedrock:<id>` (any model
   // the AWS account can invoke, not just the curated list).
   const [customBedrockId, setCustomBedrockId] = useState("");
+  // Free-form local Ollama model — same deal, sent as `local:<id>` (any
+  // model the local daemon has pulled, not just the curated list).
+  const [customLocalId, setCustomLocalId] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   // Phone only: one pane at a time (chat | scratchpad). lg+ shows both.
   const [pane, setPane] = useState<"chat" | "scratch">("chat");
@@ -118,12 +123,15 @@ function KBPageInner() {
       setModels(list);
       let saved: string | null = null;
       let savedCustom: string | null = null;
+      let savedCustomLocal: string | null = null;
       try {
         saved = localStorage.getItem("quintacle.chatModel");
         savedCustom = localStorage.getItem("quintacle.chatBedrockCustomId");
+        savedCustomLocal = localStorage.getItem("quintacle.chatLocalCustomId");
       } catch {}
       if (savedCustom) setCustomBedrockId(savedCustom);
-      setModel(saved === CUSTOM_BEDROCK || list.some((m) => m.id === saved) ? (saved as string) : list[0]?.id);
+      if (savedCustomLocal) setCustomLocalId(savedCustomLocal);
+      setModel(saved === CUSTOM_BEDROCK || saved === CUSTOM_LOCAL || list.some((m) => m.id === saved) ? (saved as string) : list[0]?.id);
     });
   }, []);
 
@@ -138,6 +146,13 @@ function KBPageInner() {
     setCustomBedrockId(id);
     try {
       localStorage.setItem("quintacle.chatBedrockCustomId", id);
+    } catch {}
+  }
+
+  function pickCustomLocalId(id: string) {
+    setCustomLocalId(id);
+    try {
+      localStorage.setItem("quintacle.chatLocalCustomId", id);
     } catch {}
   }
 
@@ -406,7 +421,12 @@ function KBPageInner() {
       setChatError("Enter a Bedrock model id first (or pick a model from the list).");
       return;
     }
-    const effectiveModel = model === CUSTOM_BEDROCK ? `bedrock:${customBedrockId.trim()}` : model;
+    if (model === CUSTOM_LOCAL && !customLocalId.trim()) {
+      setChatError("Enter an Ollama model name first (or pick a model from the list).");
+      return;
+    }
+    const effectiveModel =
+      model === CUSTOM_BEDROCK ? `bedrock:${customBedrockId.trim()}` : model === CUSTOM_LOCAL ? `local:${customLocalId.trim()}` : model;
     const inputForTitle = chatInput;
     let userMessage: ChatMessage;
     try {
@@ -494,7 +514,7 @@ function KBPageInner() {
                 <Select className="w-auto py-1 text-xs" value={model ?? ""} onChange={(e) => pickModel(e.target.value)}>
                   <optgroup label="Direct API">
                     {models
-                      .filter((m) => m.provider !== "bedrock")
+                      .filter((m) => m.provider !== "bedrock" && m.provider !== "local")
                       .map((m) => (
                         <option key={m.id} value={m.id}>
                           {m.label} ({m.price})
@@ -511,6 +531,16 @@ function KBPageInner() {
                       ))}
                     <option value={CUSTOM_BEDROCK}>Custom model id…</option>
                   </optgroup>
+                  <optgroup label="Local (Ollama)">
+                    {models
+                      .filter((m) => m.provider === "local")
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                    <option value={CUSTOM_LOCAL}>Custom model…</option>
+                  </optgroup>
                 </Select>
                 {model === CUSTOM_BEDROCK && (
                   <Input
@@ -518,6 +548,14 @@ function KBPageInner() {
                     placeholder="e.g. us.meta.llama3-3-70b-instruct-v1:0"
                     value={customBedrockId}
                     onChange={(e) => pickCustomBedrockId(e.target.value)}
+                  />
+                )}
+                {model === CUSTOM_LOCAL && (
+                  <Input
+                    className="w-56 py-1 font-mono text-xs"
+                    placeholder="e.g. qwen3:14b"
+                    value={customLocalId}
+                    onChange={(e) => pickCustomLocalId(e.target.value)}
                   />
                 )}
               </label>

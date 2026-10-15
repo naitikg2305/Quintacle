@@ -3,6 +3,9 @@ logic only. No live API calls: the provider runners are monkeypatched, the
 same style as the rest of the suite."""
 
 import base64
+import io
+import json
+import urllib.error
 
 import pytest
 from fastapi import FastAPI
@@ -14,9 +17,12 @@ from quintacle_core.nodes.kb import chat
 from quintacle_core.nodes.kb.chat import (
     BEDROCK_PREFIX,
     CHAT_MODELS,
+    LOCAL_PREFIX,
     BedrockError,
+    OllamaError,
     UnknownModelError,
     bedrock_region,
+    ollama_host,
     resolve_model,
     run_kb_chat,
 )
@@ -36,7 +42,7 @@ def test_registry_ids_are_unique():
 
 
 def test_registry_providers_are_known():
-    assert {m["provider"] for m in CHAT_MODELS} <= {"anthropic", "openai", "bedrock"}
+    assert {m["provider"] for m in CHAT_MODELS} <= {"anthropic", "openai", "bedrock", "local"}
 
 
 def test_every_anthropic_model_has_a_search_tool_variant():
@@ -51,6 +57,12 @@ def test_bedrock_entries_use_the_prefix_convention():
     for m in CHAT_MODELS:
         if m["provider"] == "bedrock":
             assert m["id"].startswith(BEDROCK_PREFIX)
+
+
+def test_local_entries_use_the_prefix_convention():
+    for m in CHAT_MODELS:
+        if m["provider"] == "local":
+            assert m["id"].startswith(LOCAL_PREFIX)
 
 
 def test_defaults_still_resolve():
@@ -90,6 +102,24 @@ def test_curated_bedrock_entry_resolves():
     assert entry["provider"] == "bedrock"
 
 
+def test_freeform_local_id_resolves():
+    entry = resolve_model("local:qwen3:14b", research=False)
+    assert entry["provider"] == "local"
+    assert entry["id"] == "local:qwen3:14b"
+
+
+def test_empty_local_id_raises():
+    with pytest.raises(UnknownModelError):
+        resolve_model("local:", research=False)
+    with pytest.raises(UnknownModelError):
+        resolve_model("local:   ", research=False)
+
+
+def test_curated_local_entry_resolves():
+    entry = resolve_model("local:qwen2.5:1.5b", research=False)
+    assert entry["provider"] == "local"
+
+
 # --- run_kb_chat dispatch ---
 
 
@@ -98,6 +128,7 @@ def _capture_runners(monkeypatch):
     monkeypatch.setattr(chat, "_run_anthropic", lambda m, msgs, kb: calls.append(("anthropic", m)) or "a-reply")
     monkeypatch.setattr(chat, "_run_openai", lambda m, msgs, kb: calls.append(("openai", m)) or "o-reply")
     monkeypatch.setattr(chat, "_run_bedrock", lambda m, msgs, kb: calls.append(("bedrock", m)) or "b-reply")
+    monkeypatch.setattr(chat, "_run_local", lambda m, msgs, kb: calls.append(("local", m)) or "l-reply")
     return calls
 
 
@@ -109,10 +140,12 @@ def test_dispatch_by_provider(tmp_path, monkeypatch):
     assert run_kb_chat(store, msgs, use_kb=False, research=False, model="claude-sonnet-5-5") == "a-reply"
     assert run_kb_chat(store, msgs, use_kb=False, research=False, model="gpt-4o-mini") == "o-reply"
     assert run_kb_chat(store, msgs, use_kb=False, research=False, model="bedrock:whatever.model-v1:0") == "b-reply"
+    assert run_kb_chat(store, msgs, use_kb=False, research=False, model="local:qwen3:4b") == "l-reply"
     assert calls == [
         ("anthropic", "claude-sonnet-5-5"),
         ("openai", "gpt-4o-mini"),
         ("bedrock", "bedrock:whatever.model-v1:0"),
+        ("local", "local:qwen3:4b"),
     ]
 
 
@@ -173,6 +206,112 @@ def test_to_converse_messages_conversion():
     assert out[2]["content"][2] == {"document": {"format": "pdf", "name": "document", "source": {"bytes": b"pdf-bytes"}}}
 
 
+# --- local (Ollama) internals ---
+
+
+def test_ollama_host_resolution(monkeypatch):
+    for var in ("QUINTACLE_OLLAMA_HOST", "OLLAMA_HOST"):
+        monkeypatch.delenv(var, raising=False)
+    assert ollama_host() == "http://127.0.0.1:11434"
+    monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:11435")  # the bare host:port form Ollama itself uses
+    assert ollama_host() == "http://0.0.0.0:11435"
+    monkeypatch.setenv("QUINTACLE_OLLAMA_HOST", "http://box.local:11434/")
+    assert ollama_host() == "http://box.local:11434"
+
+
+def test_to_ollama_messages_text_model_degrades_attachments():
+    img = base64.b64encode(b"img-bytes").decode()
+    pdf = base64.b64encode(b"pdf-bytes").decode()
+    messages = [
+        {"role": "user", "content": "plain text"},
+        {"role": "assistant", "content": [{"type": "text", "text": "reply"}]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look at this"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img}},
+                {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf}},
+            ],
+        },
+    ]
+    out = chat._to_ollama_messages(messages, vision=False)
+    assert out[0] == {"role": "user", "content": "plain text"}
+    assert out[1] == {"role": "assistant", "content": "reply"}
+    # A text-only model never sees raw base64 — attachments become readable placeholders.
+    assert "images" not in out[2]
+    assert "image omitted" in out[2]["content"]
+    assert "document omitted" in out[2]["content"]
+
+
+def test_to_ollama_messages_vision_model_gets_image_bytes():
+    img = base64.b64encode(b"img-bytes").decode()
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look at this"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img}},
+            ],
+        }
+    ]
+    out = chat._to_ollama_messages(messages, vision=True)
+    assert out[0]["images"] == [img]
+    assert "omitted" not in out[0]["content"]
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict):
+        self._body = json.dumps(payload).encode()
+
+    def read(self, *a):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_run_local_happy_path_strips_inline_think_block(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(req, timeout=None):
+        seen["url"] = req.full_url
+        seen["payload"] = json.loads(req.data)
+        return _FakeResponse({"message": {"role": "assistant", "thinking": "hmm", "content": "<think>inline</think>  the answer"}})
+
+    monkeypatch.setattr(chat.urllib.request, "urlopen", fake_urlopen)
+    reply = chat._run_local("local:qwen3:4b", [{"role": "user", "content": "hi"}], "KB TEXT")
+    assert reply == "the answer"
+    assert seen["url"].endswith("/api/chat")
+    assert seen["payload"]["model"] == "qwen3:4b"  # the local: prefix is stripped before Ollama sees it
+    assert seen["payload"]["stream"] is False
+    assert seen["payload"]["messages"][0]["role"] == "system"
+    assert "KB TEXT" in seen["payload"]["messages"][0]["content"]
+
+
+def test_run_local_daemon_down_is_a_readable_error(monkeypatch):
+    def fake_urlopen(req, timeout=None):
+        raise urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+
+    monkeypatch.setattr(chat.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(OllamaError) as e:
+        chat._run_local("local:qwen3:4b", [{"role": "user", "content": "hi"}], None)
+    assert "ollama serve" in str(e.value)
+
+
+def test_run_local_unpulled_model_is_a_readable_error(monkeypatch):
+    def fake_urlopen(req, timeout=None):
+        body = json.dumps({"error": 'model "nope:1b" not found, try pulling it first'}).encode()
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, io.BytesIO(body))
+
+    monkeypatch.setattr(chat.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(OllamaError) as e:
+        chat._run_local("local:nope:1b", [{"role": "user", "content": "hi"}], None)
+    assert "ollama pull nope:1b" in str(e.value)
+
+
 # --- error degradation at the API layer ---
 
 
@@ -193,6 +332,17 @@ def test_bedrock_failure_is_a_readable_400_not_a_500(tmp_path, monkeypatch):
     res = client.post("/kb/chat", json={"messages": [{"role": "user", "content": "hi"}], "model": "bedrock:x.y-v1:0"})
     assert res.status_code == 400
     assert "AWS credentials" in res.json()["detail"]
+
+
+def test_ollama_failure_is_a_readable_400_not_a_500(tmp_path, monkeypatch):
+    def boom(*args, **kwargs):
+        raise OllamaError("Ollama isn't reachable at http://127.0.0.1:11434 — start it with `ollama serve` to use local models")
+
+    monkeypatch.setattr(kb_api, "run_kb_chat", boom)
+    client = make_client(tmp_path)
+    res = client.post("/kb/chat", json={"messages": [{"role": "user", "content": "hi"}], "model": "local:qwen3:4b"})
+    assert res.status_code == 400
+    assert "ollama serve" in res.json()["detail"]
 
 
 def test_unknown_model_is_a_readable_400(tmp_path):

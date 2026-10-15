@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -105,10 +106,13 @@ def _kb_context_for_folder(store: KBStore, folder: str) -> str:
 # (server-side web_search tool); OpenAI models go through the Responses API
 # (its own web_search tool); Bedrock models go through AWS (see _run_bedrock —
 # the anthropic SDK's Bedrock client for Claude-family IDs, boto3's Converse
-# API for everything else). All take the same Anthropic-shaped message list
-# from the frontend — the OpenAI/Converse paths convert it.
+# API for everything else); local models go through the Ollama daemon's HTTP
+# API on this machine (see _run_local — no tokens billed, no network). All
+# take the same Anthropic-shaped message list from the frontend — the
+# OpenAI/Converse/Ollama paths convert it.
 # `price` is $/1M tokens in/out, shown in the dropdown so the cost is visible;
-# Bedrock entries bill through AWS, so the dropdown just says so.
+# Bedrock entries bill through AWS, so the dropdown just says so; local
+# entries are free.
 CHAT_MODELS: list[dict] = [
     {"id": "claude-haiku-4-5", "label": "Claude Haiku 4.5", "provider": "anthropic", "price": "$1 / $5"},
     {"id": "claude-haiku-5-5", "label": "Claude Haiku 5.5", "provider": "anthropic", "price": "$0.10 / $0.50"},
@@ -121,6 +125,12 @@ CHAT_MODELS: list[dict] = [
     {"id": "gpt-5-mini", "label": "GPT-5 mini", "provider": "openai", "price": "$0.25 / $2"},
     {"id": "bedrock:anthropic.claude-sonnet-5-5", "label": "Claude Sonnet 5.5 (Bedrock)", "provider": "bedrock", "price": "AWS billing"},
     {"id": "bedrock:us.amazon.nova-lite-v1:0", "label": "Amazon Nova Lite (Bedrock)", "provider": "bedrock", "price": "AWS billing"},
+    # Local models via Ollama — curated to what's actually pulled on this
+    # machine. The 1.5B is the phone-class candidate (prove the 1-2B tier
+    # here, run it on-device later); the 8B is the comfortable desktop pick.
+    {"id": "local:qwen2.5:1.5b", "label": "Qwen2.5 1.5B (local)", "provider": "local", "price": "free"},
+    {"id": "local:qwen3:4b", "label": "Qwen3 4B (local)", "provider": "local", "price": "free"},
+    {"id": "local:qwen3:8b", "label": "Qwen3 8B (local)", "provider": "local", "price": "free"},
 ]
 _MODELS_BY_ID = {m["id"]: m for m in CHAT_MODELS}
 
@@ -128,6 +138,12 @@ _MODELS_BY_ID = {m["id"]: m for m in CHAT_MODELS}
 # string is the raw Bedrock model ID. The curated entries above use it too —
 # "custom" Bedrock models are the same convention, just typed in by hand.
 BEDROCK_PREFIX = "bedrock:"
+
+# Same convention for the local Ollama daemon: "local:<any ollama model>"
+# routes to _run_local with the rest of the string as the Ollama model name
+# (tags and all, e.g. "local:qwen2.5:1.5b" -> "qwen2.5:1.5b"). Ollama
+# validates the name at invoke time, exactly like Bedrock does its IDs.
+LOCAL_PREFIX = "local:"
 
 # The dynamic-filtering search variant needs Sonnet 5+; Haiku takes the basic one.
 _ANTHROPIC_SEARCH_TYPE = {
@@ -154,6 +170,12 @@ class BedrockError(RuntimeError):
     into a clear chat error instead of a 500 stack trace."""
 
 
+class OllamaError(RuntimeError):
+    """A readable, user-facing local-model failure (the Ollama daemon isn't
+    running, the model isn't pulled) — the API layer turns this into a clear
+    chat error instead of a 500 stack trace, same deal as BedrockError."""
+
+
 def resolve_model(model: str | None, research: bool) -> dict:
     """`model` (from the dropdown) wins; otherwise fall back to the old
     research flag so callers that never learned about the picker (the folder
@@ -166,6 +188,13 @@ def resolve_model(model: str | None, research: bool) -> dict:
         raw = wanted[len(BEDROCK_PREFIX):].strip()
         if raw:
             return {"id": wanted, "label": raw, "provider": "bedrock", "price": "AWS billing"}
+    if entry is None and wanted.startswith(LOCAL_PREFIX):
+        # Free-form "local:<ollama model>" — any model the daemon has (or can
+        # name an error about), not just the curated ones. Same shape as the
+        # bedrock: convention above.
+        raw = wanted[len(LOCAL_PREFIX):].strip()
+        if raw:
+            return {"id": wanted, "label": raw, "provider": "local", "price": "free"}
     if entry is None:
         raise UnknownModelError(f"unknown chat model: {wanted}")
     return entry
@@ -378,6 +407,109 @@ def _run_bedrock(picker_id: str, messages: list[dict], kb_text: str | None) -> s
         raise BedrockError(f"Bedrock error for \"{raw_id}\": {e}") from e
 
 
+def ollama_host() -> str:
+    """QUINTACLE_OLLAMA_HOST wins (a knob just for this), then the standard
+    OLLAMA_HOST, then Ollama's default localhost port. A bare host:port (the
+    form OLLAMA_HOST is usually set to) gets an http:// scheme added."""
+    host = os.environ.get("QUINTACLE_OLLAMA_HOST") or os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
+    if "://" not in host:
+        host = "http://" + host
+    return host.rstrip("/")
+
+
+# Model-name fragments that mark an Ollama model as vision-capable — only
+# these get image bytes passed through; everything else gets a placeholder
+# (a text-only model given raw base64 would just hallucinate over noise).
+_OLLAMA_VISION_HINTS = ("llava", "vision", "moondream", "minicpm-v", "gemma3", "qwen2.5vl", "qwen3-vl", "vl")
+
+
+def _ollama_model_is_vision(raw_model: str) -> bool:
+    name = raw_model.lower()
+    return any(h in name for h in _OLLAMA_VISION_HINTS)
+
+
+def _to_ollama_messages(messages: list[dict], vision: bool) -> list[dict]:
+    """Anthropic-shaped chat messages -> Ollama chat `messages`. Text stays
+    text; an attached image becomes Ollama's base64 `images` list when the
+    model is vision-capable, a readable placeholder otherwise (same care as
+    _to_converse_messages — never silently drop an attachment, and never feed
+    raw base64 to a text model). PDFs always degrade to a placeholder: Ollama
+    has no document input. Assistant turns are text-only, same as the
+    OpenAI/Converse conversions."""
+    out: list[dict] = []
+    for m in messages:
+        content = m["content"]
+        if isinstance(content, str):
+            out.append({"role": m["role"], "content": content})
+            continue
+        if m["role"] == "assistant":
+            out.append({"role": "assistant", "content": "\n".join(b["text"] for b in content if b.get("type") == "text")})
+            continue
+        texts: list[str] = []
+        images: list[str] = []
+        for b in content:
+            if b["type"] == "text":
+                texts.append(b["text"])
+            elif b["type"] == "image":
+                if vision:
+                    images.append(b["source"]["data"])
+                else:
+                    texts.append("[image omitted — local model can't see images]")
+            elif b["type"] == "document":
+                texts.append("[document omitted — local model can't read attached files]")
+        msg: dict = {"role": "user", "content": "\n".join(texts)}
+        if images:
+            msg["images"] = images
+        out.append(msg)
+    return out
+
+
+def _run_local(picker_id: str, messages: list[dict], kb_text: str | None) -> str:
+    """Runs a `local:<model>` picker value against the Ollama daemon's HTTP
+    API (non-streaming /api/chat) — stdlib urllib, no new dependency, no
+    tokens billed. A down daemon or an un-pulled model comes back as a
+    readable OllamaError, never a stack trace, mirroring _run_bedrock."""
+    raw_model = picker_id[len(LOCAL_PREFIX):].strip() if picker_id.startswith(LOCAL_PREFIX) else picker_id
+    host = ollama_host()
+    system_text = f"{kb_text}\n\n{_PHOTO_INSTRUCTION}" if kb_text else _PHOTO_INSTRUCTION
+    payload = {
+        "model": raw_model,
+        "messages": [{"role": "system", "content": system_text}] + _to_ollama_messages(messages, _ollama_model_is_vision(raw_model)),
+        "stream": False,
+        # Ollama's default context window is small (4k); the KB block alone
+        # can blow past that and get silently truncated — ask for more.
+        "options": {"num_ctx": 8192},
+    }
+    req = urllib.request.Request(
+        f"{host}/api/chat",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        # Generous timeout: a cold model load plus a long answer on CPU is slow.
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            data = json.load(resp)
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.load(e).get("error", "")
+        except Exception:
+            msg = ""
+        msg = msg or f"HTTP {e.code}"
+        if "not found" in msg:
+            raise OllamaError(f"Ollama doesn't have \"{raw_model}\": {msg} — pull it with `ollama pull {raw_model}`") from e
+        raise OllamaError(f"Ollama error for \"{raw_model}\": {msg}") from e
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        reason = getattr(e, "reason", e)
+        raise OllamaError(f"Ollama isn't reachable at {host} ({reason}) — start it with `ollama serve` to use local models") from e
+    reply = (data.get("message") or {}).get("content", "")
+    # Reasoning models (qwen3 et al.) put their thinking in a separate
+    # `thinking` field, which we simply ignore — but older templates can leak
+    # it inline as a <think> block, so strip that form too.
+    reply = re.sub(r"^\s*<think>.*?</think>\s*", "", reply, flags=re.DOTALL)
+    return reply.strip() or "(the model returned an empty reply)"
+
+
 def run_kb_chat(
     store: KBStore,
     messages: list[dict],
@@ -392,6 +524,8 @@ def run_kb_chat(
         reply = _run_openai(entry["id"], messages, kb_text)
     elif entry["provider"] == "bedrock":
         reply = _run_bedrock(entry["id"], messages, kb_text)
+    elif entry["provider"] == "local":
+        reply = _run_local(entry["id"], messages, kb_text)
     else:
         reply = _run_anthropic(entry["id"], messages, kb_text)
     return _resolve_photo_tags(reply)
