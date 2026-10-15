@@ -31,6 +31,16 @@ any module reads `os.environ` — this is where `ANTHROPIC_API_KEY`,
 live. Each LLM helper constructs `anthropic.Anthropic()` fresh per call and
 relies on the env var.
 
+Vision has its own provider switch, read per call (so it also works from
+`core/.env`): `QUINTACLE_VISION=cloud|local|auto` (default `cloud`,
+unchanged behavior) dispatches every `describe_images()` call — drop-time
+descriptions, `/kb/asset/describe`, the MCP `describe_photo` tool — between
+the metered Anthropic call and a local VLM served by Ollama on localhost
+(`core/quintacle_core/local_vlm/`; model `QUINTACLE_VISION_MODEL`, default
+`qwen2.5vl:3b`; daemon URL `QUINTACLE_OLLAMA_URL`, default
+`http://localhost:11434`). `auto` tries local and falls back to cloud with
+a warning log line; `local` raises rather than silently billing the cloud.
+
 ## Startup sequence — `create_app()` top to bottom
 
 Everything is wired once per process, in this exact order (ordering

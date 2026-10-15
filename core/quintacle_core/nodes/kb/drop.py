@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
+import os
 import tempfile
 import zipfile
 from datetime import date, datetime
@@ -11,7 +13,9 @@ from docx import Document
 from PIL import Image
 
 from ...llm_config import DEFAULT_MODEL
-from ..vision import image_content_blocks
+from ..vision import image_content_blocks, vision_prompt
+
+logger = logging.getLogger(__name__)
 
 _IMAGE_MIME = {
     "jpg": "image/jpeg",
@@ -53,21 +57,41 @@ def describe_images(photos: list[tuple[bytes, str]], question: str | None = None
     on-demand "look at this photo again, now" calls (/kb/asset/describe,
     the MCP describe_photo tool). With `question` given, the call answers
     that question about the photo(s) instead of generically describing
-    them. Costs a real metered Anthropic API call (DEFAULT_MODEL) every
-    time — callers decide when that spend is worth it."""
+    them.
+
+    Provider switch — QUINTACLE_VISION, read per call:
+      cloud (default)  metered Anthropic call on DEFAULT_MODEL, exactly the
+                       pre-switch behavior; callers decide when that spend
+                       is worth it.
+      local            a small VLM via Ollama on localhost (local_vlm/);
+                       raises RuntimeError rather than silently billing the
+                       cloud if local vision is unavailable.
+      auto             try local first, fall back to cloud with a log line.
+
+    The dispatch lives here, in the one shared function, so every call site
+    (drop-time description, /kb/asset/describe, MCP describe_photo)
+    inherits the switch without knowing it exists."""
+    mode = os.environ.get("QUINTACLE_VISION", "cloud").strip().lower()
+    if mode in ("local", "auto"):
+        from ...local_vlm import describe_images_local  # lazy: cloud path never touches it
+
+        description = describe_images_local(photos, question)
+        if description is not None:
+            return description
+        if mode == "local":
+            raise RuntimeError(
+                "QUINTACLE_VISION=local but local vision is unavailable — "
+                "is Ollama running with the vision model pulled? (see logs from quintacle_core.local_vlm)"
+            )
+        logger.warning("QUINTACLE_VISION=auto: local VLM unavailable, falling back to cloud (%s)", DEFAULT_MODEL)
+    return _describe_images_cloud(photos, question)
+
+
+def _describe_images_cloud(photos: list[tuple[bytes, str]], question: str | None = None) -> str:
+    """The original metered Anthropic vision call — one real API call on
+    DEFAULT_MODEL every time."""
     client = anthropic.Anthropic()
-    if question and question.strip():
-        prompt = (
-            f"Answer this question about the attached photo{'s' if len(photos) > 1 else ''}, "
-            f"based only on what's actually visible: {question.strip()}"
-        )
-    elif len(photos) > 1:
-        prompt = (
-            "These are two photos of the same thing (e.g. front and back, or a closer detail shot) "
-            "— describe them together in a few sentences, for filing into a personal knowledge base."
-        )
-    else:
-        prompt = "Describe what's in this image in a few sentences, for filing into a personal knowledge base."
+    prompt = vision_prompt(len(photos), question)
     response = client.messages.create(
         model=DEFAULT_MODEL,
         max_tokens=1024,

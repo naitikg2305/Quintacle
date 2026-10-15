@@ -13,3 +13,21 @@ def image_content_blocks(photos: list[tuple[bytes, str]]) -> list[dict]:
         {"type": "image", "source": {"type": "base64", "media_type": mime, "data": base64.standard_b64encode(data).decode()}}
         for data, mime in photos
     ]
+
+
+def vision_prompt(n_photos: int, question: str | None = None) -> str:
+    """The one photo-description prompt every vision backend uses — the cloud
+    path (describe_images) and the local path (describe_images_local) share
+    it, so flipping QUINTACLE_VISION changes WHO answers, never what is
+    being asked."""
+    if question and question.strip():
+        return (
+            f"Answer this question about the attached photo{'s' if n_photos > 1 else ''}, "
+            f"based only on what's actually visible: {question.strip()}"
+        )
+    if n_photos > 1:
+        return (
+            "These are two photos of the same thing (e.g. front and back, or a closer detail shot) "
+            "— describe them together in a few sentences, for filing into a personal knowledge base."
+        )
+    return "Describe what's in this image in a few sentences, for filing into a personal knowledge base."
