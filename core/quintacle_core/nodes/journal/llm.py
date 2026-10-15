@@ -9,6 +9,7 @@ from pydantic.json_schema import SkipJsonSchema
 
 from ... import clock
 from ...llm_dispatch import parse_structured
+from .normalize import expand_routine_mentions
 
 ACTIVITY_CATEGORIES = ("productivity", "social", "leisure", "yourself", "emotional")
 
@@ -339,4 +340,14 @@ def parse_journal_dump(
     if _DATE_SIGNAL_RE.search(raw_text):
         _resolve_entry_dates(raw_text, entries, ref, provider=provider)
     _resolve_finance_kinds(entries, provider=provider)
+    # Deterministic routine expansion — the prompt asks the model to expand a
+    # mentioned routine into its preset exercises; cloud obeys, small local
+    # models reliably don't. Whether "pull day" names a known preset is
+    # string matching, not judgment, so code guarantees it either way (and
+    # it's a no-op when the model already expanded).
+    work = [{"type": "exercise", "exercise_name": e.exercise_name} for e in entries if isinstance(e, ExerciseEntry)]
+    before = len(work)
+    expand_routine_mentions(work, raw_text, known_routines or [])
+    for added in work[before:]:
+        entries.append(ExerciseEntry(type="exercise", exercise_name=added["exercise_name"], sets=[], notes=added["notes"]))
     return entries
