@@ -6,6 +6,14 @@ end to end before it goes on the phone ("ready for prod"), and (2) a todo and
 wishlist of where it should go next. Builds on `usecases.md` (UC1–UC8) and
 `mcp-angle.md`. More is still incoming.
 
+> *2026-10-15: the capabilities this plan assumed were missing now exist —
+> the MCP server (read **and** write, with per-write confirmation + ledger +
+> undo, so the "here's the confirmation" requirement is designed in), the
+> graph engine, manual LAN sync, the secrets Vault, and `day_recall`
+> (`reference/`). Step 3 of "How to use this" ("build the MCP") is done for
+> journal/KB/expenses/todos; the test run itself is still not run — the
+> protocol below stands as written.*
+
 ## The direction, in his words
 
 > An MCP where, say, I'm in a lecture or a learning workshop. I have a chat

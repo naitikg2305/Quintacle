@@ -79,6 +79,12 @@ there's no device here) — current as of October 2026:
 
 ### If `opencv-python` won't install
 
+> *2026-10-15 update: the fix described below **was made** on 2026-10-13
+> (commit `e105b69`) — `import cv2` now lives inside the video-frame
+> function, so a missing `cv2` only disables video drops; the API boots
+> fine without it. The paragraph below is kept as the original analysis, but
+> "prevents the entire FastAPI app from starting" is no longer true.*
+
 `core/quintacle_core/nodes/kb/drop.py` does `import cv2` at **module load
 time**, and `api.py` imports that module unconditionally. This means a
 missing `cv2` doesn't just disable the one feature that actually needs it

@@ -1,5 +1,24 @@
 # The MCP angle
 
+> **Status update 2026-10-15: BUILT.** The MCP server exists and is live on
+> `redone-UI`: `core/quintacle_core/mcp_server/` (run
+> `python -m quintacle_core.mcp_server`, stdio), 16 tools over
+> journal/KB/expenses/todos plus `day_recall` and `describe_photo`,
+> **auto-write** with the staged-snapshot + combined ledger
+> (`~/.quintacle/mcp-log.md`) + 24h-undo design settled in the 2026-10-13
+> sections below, and every write auto-linking into the graph. The
+> code-derived reference is `reference/mcp-server.md` — read that for what's
+> actually there; this doc stays as the decision log. The per-section status
+> lines below ("idea, not started", "still not built") are **historical** and
+> no longer true.
+>
+> Genuinely still not built: tools for the remaining ~12 domains in the
+> inventory table at the bottom (meals, exercise, habits, finance cards,
+> people, wardrobe...), remote/HTTP transport (phone chat apps — still
+> stdio-only), binary asset transfer over MCP, and the in-app "recent writes"
+> ledger page / 24h-undo-window UI (undo works via the `undo_write` tool; the
+> UI surface for it doesn't exist yet).
+
 Status: **idea, not started.** No code written, no decision made. This is a
 parking note from a conversation on 2026-09-16 so the thinking isn't lost —
 nothing here is committed to.
@@ -309,6 +328,11 @@ The chat can't wait forever, so a write tool should:
 
 ## Update 2026-10-13 — superseded: auto-write everywhere, undo instead of approval
 
+> *2026-10-15: this design is now built exactly as described — staged
+> snapshots, one combined ledger, grouped multi-step undo (`undo.py`,
+> `ledger.py`). See `reference/mcp-server.md`. Only the in-app recent-writes
+> page is still missing.*
+
 Status: **design decision, still not built.** Settled 2026-10-13, over a
 longer conversation working through what undo would actually have to look
 like. This replaces the approval-first design directly above — kept in
@@ -389,6 +413,15 @@ if the owner's own instance stays auto-write.
 ---
 
 ## Update 2026-10-13 — structured writes, and the full tool surface
+
+> *2026-10-15: the structured-input rule is built and enforced (every write
+> tool takes the final decided shape; `kb_create_entry` takes
+> folder/title/content/links/fields). Of the table below, the Journal,
+> Schedule/todos, KB and Expenses rows exist, plus `day_recall` and the
+> billed `describe_photo` convenience tool. The other ~12 domains' tools are
+> still unbuilt, and the exclusions section is unchanged (kb chat untouched,
+> vault-shaped docs held back, binary assets unsolved). Inventory of what's
+> real: `reference/mcp-server.md`.*
 
 Status: **design decision + inventory, still not built.** Settled over the
 same 2026-10-13 conversation as the auto-write/undo reversal above. Two

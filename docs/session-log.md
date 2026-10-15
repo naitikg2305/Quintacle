@@ -3,6 +3,96 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-14/15 — Day recall, Bedrock models, desktop shell, graph view usability, docs/reference, docs truth-sweep
+
+Six commits on `redone-UI` after the 10-13 wave (`884d057..7694ffc`), built
+across parallel worktree agents on 10-14/15 and integrated by the main
+thread. The 10-13 entry below already covers the Vault + LAN sync builds and
+the real two-backend sync verification (journals converged both ways, vault
+entries unlocked on the peer) — this entry is what came after. Full detail:
+`~/work-logs/2026-10-14.md` and `~/work-logs/2026-10-15.md`.
+
+### Built this session
+
+- **Day recall chain** (`cc29b0a`): one shared, LLM-free bundle builder
+  (`core/quintacle_core/day_bundle.py`) behind both `GET /day/{date}` and the
+  new MCP `day_recall` tool — journal, logs, todos, and now **photos**,
+  resolved through an indexed `edges`-table query (`on_day` → that date's
+  journal node), each with its stored drop-time description. On-demand
+  (billed) vision: `POST /kb/asset/describe` re-looks at a stored image with
+  an optional question, and the MCP `describe_photo` tool wraps it (bytes
+  never cross MCP). Day page gets a photos strip with Browse deep links.
+  MCP tool count: 16. This closes `usecases.md` UC4 for external clients —
+  the in-app chat still can't see the journal.
+- **Chat model picker, current-gen + Bedrock** (`1fdd0d8`): the picker's
+  plumbing worked but the registry was a closed previous-gen list. Now:
+  current Anthropic models added, plus a **`bedrock:<any-id>` provider** —
+  Claude-family IDs via the anthropic SDK's Bedrock client, everything else
+  via boto3 Converse, so whatever the AWS account can invoke works. AWS
+  failures surface as readable 400s. Honesty note: provider runners are
+  test-stubbed; a **live Bedrock invoke hasn't been run yet** (pending
+  `aws sso login`).
+- **Completed todos land on the calendar** (`2de53e7`): marking a todo done
+  stamps `completed_at` (real ET) through one shared helper so REST and the
+  MCP tool can't drift; todos take an optional category; the Day view's
+  Action tab counts and lists completions on the day they *happened*, not
+  their due date.
+- **Graph view pan/zoom/fit** (`48449a9`): the view was a fixed 900x600
+  window zoomed into one corner of a real-sized layout. Now viewBox pan,
+  cursor-centered wheel zoom, auto-fit on settle, +/-/FIT controls, constant
+  label size at any zoom — the whole graph is reachable. Details panel's
+  open-note link now uses Browse's real `?path=&open=` params.
+- **Desktop shell** (`7694ffc`, `desktop/`): the pywebview shell from
+  `stack.md` is real — a wrapper FastAPI app serving the core API + the
+  static UI export on one origin (`127.0.0.1:8000`), opened in a native Qt
+  window; PyInstaller onedir bundle (cv2/numpy excluded, video descriptions
+  degrade gracefully). **Linux binary built and `--smoke` passed** (headless
+  — a GUI-on-a-real-display run is still pending). Windows build only exists
+  as `.github/workflows/desktop.yml` (ubuntu+windows matrix) —
+  syntax-checked, **never executed**, so the Windows binary is unverified.
+- **`docs/reference/`** (`83da764`): eleven docs derived from code at
+  `884d057` — statement of work, architecture, all 114 endpoints, data/DB
+  formats, graph engine, MCP server, vault, sync, drop pipeline, frontend,
+  Android status. The code-derived counterpart to these planning docs.
+- **`docs/seamless-mode.md`** (with `2de53e7`): Admin vs. Seamless two-mode
+  design + the friction-audit rule, explicitly sequenced after the
+  functionality test. Planning only.
+- **Docs truth-sweep** (this entry's session, 2026-10-15): dated status
+  updates across the planning docs — `mcp-angle.md` / `graph-model.md` /
+  `vault.md` / `deployment-and-privacy.md` / `stack.md` /
+  `android-apk-migration.md` and the index no longer claim "not started" for
+  things that shipped; historical sections kept intact per convention.
+
+### Gotchas and incidents
+
+- **The port-8000 / doc-extractor incident**: a separate side project
+  (`~/code/doc-extractor`, 10-13) left its own uvicorn squatting on
+  `127.0.0.1:8000`, breaking the assumption that whatever answers on :8000
+  is Quintacle. Fix lives in the desktop shell: it **fingerprints** the port
+  (probes `/kb/folders` for Quintacle's JSON shape) before reusing a running
+  backend, errors readably if a foreign server holds the port, and `--smoke`
+  always self-hosts on an ephemeral port so it verifies its own artifact
+  rather than whatever happens to be listening.
+- **Prod boot on real data**: the backend was booted against the real
+  `~/.quintacle` store (not test dirs) and came up clean on the
+  post-10-13 codebase — first real-data boot since the build wave.
+- The wave-1 worktree gotcha from 10-13 repeated: agent worktrees cut from
+  `main`'s stale snapshot (`c9cd583`) instead of `redone-UI`; standing rule
+  is `git reset --hard redone-UI` before starting.
+
+### Still planning / not built (so nothing reads as more done than it is)
+
+- Remaining ~12 MCP domains' tools, remote/HTTP transport, binary assets
+  over MCP, and the in-app recent-writes / undo-window UI (`mcp-angle.md`).
+- The APK itself (needs JDK/SDK or the phone) and any on-device run of the
+  Termux backend (`reference/android.md`).
+- Windows desktop binary (workflow unexecuted); packaged-app GUI run on a
+  real display.
+- Live Bedrock invoke (needs `aws sso login`); local-LLM tiers
+  (`deployment-and-privacy.md`) untouched.
+- The real-use test run (`test-plan-and-wishlist.md`) — next step, and
+  Naitik-driven by choice; `seamless-mode.md` comes after it.
+
 ## 2026-10-13 — The big one: MCP server, graph engine, Vault, LAN sync, Drop sessions, Android scaffolding
 
 One marathon session (plus its 10-07 prelude) took several of the oldest

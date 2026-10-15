@@ -19,6 +19,18 @@ in local mode — "my data is safe."
 
 ## Offline-first editing + LAN sync
 
+> *2026-10-15: LAN sync exists, built **differently** than this section and
+> the "Sync mechanic" section below describe — manual pull (a button on the
+> `/sync` page, no auto-handshake), whole-file last-write-wins with the
+> losing copy snapshotted, journal days union-merged by `### HH:MM` block,
+> additive (deletions do not propagate), derived indexes rebuilt after a
+> pull. Verified against two live backends over real HTTP. See
+> `reference/sync.md`. The live-handshake / line-diff design written here
+> stays as the aspirational version, not a description of the code. The LLM
+> routing tiers below are also still plans: the phone-local and
+> computer-local model tiers are **unbuilt** — today every model call is a
+> cloud API call.*
+
 - The phone works standalone anywhere. Changes/new info get written to markdown
   files locally on the phone as they happen.
 - Sync requires two things to be true **at the same time**: both the phone app
@@ -98,6 +110,11 @@ downstream queries stay deterministic lookups regardless of which tier
 produced the tags.
 
 ## Sync mechanic: line-level diff, not whole-file overwrite
+
+> *2026-10-15: superseded by what was actually built — see the note at the
+> top of the LAN sync section above and `reference/sync.md`. The shipped
+> mechanic is whole-file LWW + per-block journal union-merge, not line
+> diffs; this section is kept as the original design reasoning.*
 
 Sync (auto when both apps are live on the same network, or triggered manually via
 a sync button) works by diffing a shared file — e.g. `md1` existing on both phone

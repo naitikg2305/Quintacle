@@ -2,6 +2,11 @@
 
 Derived from code at commit `884d057` on 2026-10-15.
 
+> *Moved since the stamp: commit `cc29b0a` added two tools — `day_recall`
+> (the deterministic day bundle, shared with `GET /day/{date}`) and
+> `describe_photo` (billed on-demand vision, read-only, no ledger entry) —
+> so "14 tools" below is now 16.*
+
 Code: [core/quintacle_core/mcp_server/](../../core/quintacle_core/mcp_server/)
 — `server.py` (tools), `ledger.py` (the write log), `undo.py` (snapshots +
 reversal), `graph_link.py` (the graph adapter). Design history:

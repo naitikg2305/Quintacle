@@ -10,6 +10,16 @@ attached, so "should work per Termux's documented package manager and
 APIs" is the honest claim, not "tested on-device." The Capacitor/frontend
 half (steps 1-5, 7) is separate work, not covered here.
 
+> **Status update 2026-10-15: scaffolded, not yet an APK.** Both halves are
+> now committed: the Capacitor project exists (`frontend/android/`, a real
+> Gradle project, with the `CAPACITOR_BUILD=true` static export building all
+> pages) *and* the Termux scripts (`scripts/termux/`). What remains is
+> exactly the device-side tail: `gradlew assembleDebug` needs JDK17 + the
+> Android SDK (or the phone itself), and nothing has ever run on a real
+> device — Termux backend included. The exact remaining steps, in order, are
+> in `reference/android.md`. Also note the cv2 risk in step 6 below is
+> **stale** — see the dated correction there.
+
 ## Why
 
 The goal from the start of this build was a "no PC needed" architecture —
@@ -98,7 +108,9 @@ over-WiFi scenario).
      package on every Termux repo mirror — and notably, `cv2` is imported
      at module load time in `kb/drop.py`, so if it's missing the *whole*
      API fails to start, not just video-drop handling) as the two real
-     risk points.
+     risk points. *(2026-10-15 correction: the cv2 half of that is stale —
+     `cv2` is lazy-imported now, commit `e105b69` 2026-10-13, so a missing
+     `cv2` only disables video drops; the API boots without it.)*
    - `scripts/termux/migrate-export.sh` (desktop) /
      `migrate-import.sh` (Termux) — tarball-based one-time copy of the real
      `~/.quintacle` onto the phone (chosen over the LAN-sync mechanic in

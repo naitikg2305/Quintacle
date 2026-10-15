@@ -1,5 +1,19 @@
 # Quintacle — Vault (Node)
 
+> **Status update 2026-10-15 — a Vault exists, but it is not this doc's
+> vault.** What got built (2026-10-13, `core/quintacle_core/nodes/vault/`,
+> page at `/vault`) is a **passphrase-encrypted secrets store** — scrypt KDF
+> + Fernet, one `.enc` file per entry at `~/.quintacle/vault/`, a sibling of
+> `kb/` so search/graph/MCP/chat/drop structurally never see it, 5-minute
+> auto-lock, no recovery flow by design. See `reference/vault.md`. That
+> answers this doc's "credentials/passwords" cousin (quintacle-ideas.md
+> Pillar 5's digital sub-vault), **not** the encrypted-*documents* vision
+> below. Passport, license, visas, lease docs etc. still live **unencrypted
+> in the ordinary Documents node** — the security-first document storage this
+> doc describes remains unbuilt, and whether those documents move into (or
+> get a store like) the new Vault is still an open decision. They are also
+> deliberately held back from MCP exposure (`mcp-angle.md`, exclusions).
+
 ## What it covers
 
 Secure storage for critical personal documents:

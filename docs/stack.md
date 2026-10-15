@@ -31,6 +31,17 @@ views) get reused/ported in, served by the local FastAPI process. Each platform
 is just a window/webview pointed at `localhost`:
 - Windows/Linux: **pywebview** (pure Python — no Rust/Tauri toolchain, keeps
   desktop 100% Python outside the web layer itself).
+
+  > *2026-10-15: **built.** `desktop/` — a pywebview window over a one-port
+  > wrapper (core FastAPI + the static UI export on `127.0.0.1:8000`),
+  > packaged with PyInstaller. Linux uses the Qt backend (PyQt6 +
+  > QtWebEngine — pip-installable and bundleable, unlike GTK/WebKit); the
+  > Linux binary was built and smoke-passed here. Windows uses WebView2 via
+  > `.github/workflows/desktop.yml` — syntax-checked only, the workflow has
+  > never been executed, so the Windows binary is unverified. Lives at repo
+  > root `desktop/`, not the `shells/desktop/` path sketched in the layout
+  > below. This also settles the "pywebview vs. bare browser tab" open
+  > question at the bottom: pywebview, as chosen.*
 - Android: a thin Kotlin `WebView` Activity (~100 lines, write-once) pointed at
   the Chaquopy-hosted local server. This is the one unavoidable non-Python
   sliver — Android requires a Kotlin/Java host process to embed Chaquopy at all.

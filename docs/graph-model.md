@@ -72,6 +72,11 @@ and "the LLM" as separate ideas without a shared home.
 
 ## Shape vs. engine (2026-10-13)
 
+> *2026-10-15: the "Quintacle has none of this" below was true when written
+> and isn't anymore — the engine plan's Stages 1–3 were built on 2026-10-13
+> (`core/quintacle_core/graph.py`). See the status update under the plan
+> heading below, and `reference/graph-engine.md` for the as-built detail.*
+
 Worth being precise about what exists today, because "graph" overloads two
 different things:
 
@@ -109,6 +114,19 @@ recompute-on-read `/graph` is fine at current scale. This is the staged path
 to reach for *when* it stops being fine, written down now so there's
 somewhere to go instead of a rewrite under pressure later. Each stage is
 independently useful — none of them requires committing to the next.
+
+> **Status update 2026-10-15: Stages 1–3 are BUILT** (2026-10-13,
+> `core/quintacle_core/graph.py`): edge files under
+> `~/.quintacle/graph/edges/` as truth, the `edges` SQLite table as the
+> derived index with startup backfill, typed edges, and
+> `neighborhood()`/`reverse_lookup()` via recursive SQL — `/graph` reads the
+> table now. The two deterministic MCP↔graph rules below are wired on the
+> write side: every MCP write auto-links via `mcp_server/graph_link.py`, and
+> undoing a push removes its edges. The graph *view* also got pan /
+> wheel-zoom / auto-fit (2026-10-15), so a real-sized graph is actually
+> navigable. Stage 4 (a dedicated graph database) remains correctly not
+> built — no trigger condition has been hit. As-built reference:
+> `reference/graph-engine.md`.
 
 ### Stage 1 — materialize edges as a folder, mirrored into SQLite
 

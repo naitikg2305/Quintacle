@@ -4,6 +4,18 @@ Status: **idea, discussion only, not started.** Conversation on 2026-10-13.
 Naitik is going to expand on this — treat what's below as the opening frame,
 not the final shape.
 
+> *2026-10-15: the prerequisites this doc names now exist — the graph engine
+> is built (`reference/graph-engine.md`) and MCP is built with structured
+> writes: `kb_create_entry` already takes an open `fields` dict (step 5
+> below is real, except writes auto-commit with undo rather than going
+> through the approval queue mentioned below — that design was superseded,
+> see `mcp-angle.md`). The core missing piece is unchanged and still NOT
+> built: **step 1, structured-field extraction in the drop classifier**
+> (`suggest_kb_entry` still never proposes `fields`), along with
+> canonicalization (2), the cover-photo convention (3) and the what's-due
+> computation (4). So an MCP client can author a car page's fields by hand
+> today, but a drop still lands as prose.*
+
 ## The problem this is answering
 
 From `usecases.md`'s generic-vs-bespoke question, pushed further: Naitik

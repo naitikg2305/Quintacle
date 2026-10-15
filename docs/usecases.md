@@ -15,6 +15,12 @@ Don't decide before running these. Fill in the **Observed** blocks as you
 go; the **Wanted** blocks are the bar it's being held to — edit them if the
 bar was wrong.
 
+> *2026-10-15, before the run: several capabilities this protocol assumed
+> missing now exist — MCP read+write server, graph engine, LAN sync, Vault,
+> `day_recall` (see `reference/`). UC4 in particular has an update inline.
+> The protocol and the Observed blocks are still unfilled — the test has not
+> been run.*
+
 ## How to run
 
 ```bash
@@ -140,6 +146,11 @@ the LLM's only real job.
   probably **can't** work today — the KB chat is grounded on KB markdown, not
   on the SQLite logs. Write down whether it answers, hallucinates, or says
   it doesn't know. This is the case that most directly motivates MCP.
+
+  *2026-10-15 update: this now works via MCP — the `day_recall` tool returns
+  the deterministic day bundle (journal, logs, photos) to any MCP client, so
+  an external chat can answer it. The in-app KB chat still can't see the
+  journal/logs — that half is still true as written.*
 
 **Observed.**
 - Day page completeness:

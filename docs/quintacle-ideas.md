@@ -139,7 +139,7 @@ One Knowledge Base, with subfolders/categories underneath it (not many separate 
 - **Device setup & recovery** — how to rebuild a laptop or phone from scratch: OS setup steps, app inventories per device, backup process, home-screen/layout setup. This is the concrete version of the disaster-recovery principle for a lost/wiped device.
 - **Per-service account/setup notes** — setup notes per website/service (GitHub, LinkedIn, Instagram, dating apps, etc.) — the configuration/process notes, not the login itself.
 - **Network config** — home wifi/network setup, so it's reconstructible without asking a roommate/landlord to remind you.
-- **Credentials/passwords** — required for full device/account recovery, but too sensitive for the plain markdown tree. Lives in a **separate encrypted vault** (e.g. an age/gpg-encrypted file, or a dedicated tool) just for this one category — outside the regular markdown KB, not synced/read the same way as everything else.
+- **Credentials/passwords** — required for full device/account recovery, but too sensitive for the plain markdown tree. Lives in a **separate encrypted vault** (e.g. an age/gpg-encrypted file, or a dedicated tool) just for this one category — outside the regular markdown KB, not synced/read the same way as everything else. *(2026-10-15: this one is built — the Vault node, scrypt+Fernet at `~/.quintacle/vault/`, structurally invisible to search/graph/MCP/chat; it does travel over LAN sync, but only as opaque encrypted bytes. See `reference/vault.md`. The physical-documents half of this pillar is still unbuilt — see `vault.md`'s status note.)*
 
 ---
 

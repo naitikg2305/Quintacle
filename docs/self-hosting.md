@@ -5,6 +5,12 @@ on 2026-09-29. Prompted by the MCP direction (`mcp-angle.md`): once Quintacle
 is a thing models reach into, "reach into it from anywhere" becomes the
 obvious next want.
 
+> *2026-10-15: still parked, but context moved — the MCP server, manual LAN
+> sync, the secrets Vault and the desktop shell all exist now
+> (`reference/`). The hard prerequisite below is unchanged: the API still
+> has no auth of any kind, so nothing here gets safer to expose; the
+> Tailscale-not-public conclusion stands.*
+
 Prices below are rough 2026 ballparks from memory, not quotes — re-check
 before deciding. The shape of the comparison matters more than the digits.
 
