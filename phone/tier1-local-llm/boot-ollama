@@ -1,0 +1,40 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Quintacle — Termux:Boot entry point for the Tier 1 Ollama daemon.
+#
+# Companion to scripts/termux/boot-autostart.sh (which boots uvicorn): with
+# both installed under ~/.termux/boot/, BOTH the backend and ollama come up
+# on every phone reboot. Same contract as that script: Termux:Boot runs
+# every file in ~/.termux/boot/ in sorted order and won't babysit a
+# long-running foreground process, so the serve loop is launched detached
+# (nohup + disown) and this script returns immediately. Order between the
+# two boot files doesn't matter: the backend tolerates a not-yet-up ollama
+# (local chat returns a readable 400 naming the fix; QUINTACLE_VISION=auto
+# falls back to cloud).
+#
+# Install (inside Termux, from the repo root — fills in the placeholder):
+#   mkdir -p ~/.termux/boot
+#   sed "s|__QUINTACLE_REPO_ROOT__|$PWD|" phone/tier1-local-llm/boot-ollama \
+#     > ~/.termux/boot/start-quintacle-ollama
+#   chmod +x ~/.termux/boot/start-quintacle-ollama
+# Full instructions + the manual Termux:Boot app steps:
+# phone/tier1-local-llm/README.md and docs/termux-backend-setup.md.
+
+REPO_ROOT="__QUINTACLE_REPO_ROOT__"   # replaced by the sed above
+LOG_DIR="$HOME/.quintacle-logs"
+mkdir -p "$LOG_DIR"
+
+if [ "$REPO_ROOT" = "__QUINTACLE_REPO_ROOT__" ]; then
+  echo "!! boot-ollama was copied without filling in REPO_ROOT." \
+    >> "$LOG_DIR/boot.log"
+  echo "!! Edit ~/.termux/boot/start-quintacle-ollama and replace __QUINTACLE_REPO_ROOT__" \
+    >> "$LOG_DIR/boot.log"
+  echo "!! with the absolute path to your quintacle checkout (e.g. \$HOME/quintacle)." \
+    >> "$LOG_DIR/boot.log"
+  exit 1
+fi
+
+nohup bash "$REPO_ROOT/phone/tier1-local-llm/install-ollama-termux.sh" --serve \
+  >> "$LOG_DIR/ollama.log" 2>&1 &
+disown
+
+echo "$(date -Iseconds) launched install-ollama-termux.sh --serve (pid $!)" >> "$LOG_DIR/boot.log"

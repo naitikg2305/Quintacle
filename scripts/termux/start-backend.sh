@@ -35,6 +35,10 @@ VENV_DIR="$CORE_DIR/.venv"
 export QUINTACLE_DATA_DIR="${QUINTACLE_DATA_DIR:-$HOME/.quintacle}"
 PORT="${QUINTACLE_PORT:-8000}"
 
+# Tier 1 phone profile (local-LLM env knobs), if installed — see phone/tier1-local-llm/README.md.
+# shellcheck disable=SC1091
+[ -f "$REPO_ROOT/phone/tier1-local-llm/quintacle-phone-env.sh" ] && source "$REPO_ROOT/phone/tier1-local-llm/quintacle-phone-env.sh"
+
 if [ ! -f "$CORE_DIR/.env" ]; then
   echo "!! $CORE_DIR/.env is missing (ANTHROPIC_API_KEY etc. won't be set)."
   echo "!! Copy it from .env.example and fill in your key:"
