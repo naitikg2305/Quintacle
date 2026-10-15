@@ -348,6 +348,16 @@ def parse_journal_dump(
     work = [{"type": "exercise", "exercise_name": e.exercise_name} for e in entries if isinstance(e, ExerciseEntry)]
     before = len(work)
     expand_routine_mentions(work, raw_text, known_routines or [])
+    if len(work) > before:
+        # Expansion fired — drop the model's redundant header entry named
+        # after the routine itself ("pull day" with no sets), which would
+        # otherwise sit beside the real preset exercises it stands for.
+        expanded_routines = {(r.get("name") or "").strip().lower() for r in known_routines or []}
+        entries[:] = [
+            e
+            for e in entries
+            if not (isinstance(e, ExerciseEntry) and not e.sets and e.exercise_name.strip().lower() in expanded_routines)
+        ]
     for added in work[before:]:
         entries.append(ExerciseEntry(type="exercise", exercise_name=added["exercise_name"], sets=[], notes=added["notes"]))
     return entries
