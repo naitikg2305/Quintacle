@@ -42,13 +42,22 @@ class PersonStore:
         frontmatter `links` field — e.g. an experience this person was
         mentioned alongside (see graph.py's sync_frontmatter_links)."""
         person_dir = self._dir(name)
+        profile_path = person_dir / "profile.md"
+        existing = frontmatter.loads(profile_path.read_text(encoding="utf-8")) if profile_path.exists() else None
         post = frontmatter.Post(notes)
         post["name"] = name
         post["category"] = category
         post["how_met"] = how_met
         post["met_date"] = met_date
         post["links"] = links or []
-        (person_dir / "profile.md").write_text(frontmatter.dumps(post), encoding="utf-8")
+        # The profile is the person's identity hub: it carries opaque POINTERS
+        # to their face enrollments (never the vectors — frontmatter is
+        # model-visible through every KB surface; biometrics stay sealed in
+        # ~/.quintacle/perception/). A plain profile rewrite must never wipe
+        # them, same merge-safe rule KBStore.write applies to links/fields.
+        if existing is not None and existing.metadata.get("face_embeddings"):
+            post["face_embeddings"] = existing.metadata["face_embeddings"]
+        profile_path.write_text(frontmatter.dumps(post), encoding="utf-8")
         folder = str(person_dir.relative_to(self.kb_root)).replace("\\", "/")
         return folder, slugify(name)
 
@@ -68,6 +77,21 @@ class PersonStore:
             metadata = safe_metadata(post, person_dir.name, {"category": "", "how_met": ""})
             results.append({**metadata, "notes": post.content, "folder": folder})
         return results
+
+    def add_face_embedding(self, name: str, embedding_id: str) -> list[str]:
+        """Records one enrolled-face observation id on the person's profile —
+        the deterministic join between this markdown hub and the lens store,
+        replacing the fragile name-string-only association. Idempotent."""
+        profile_path = self._dir(name) / "profile.md"
+        if not profile_path.exists():
+            raise FileNotFoundError(f"no profile for {name!r}")
+        post = frontmatter.loads(profile_path.read_text(encoding="utf-8"))
+        ids = list(post.metadata.get("face_embeddings") or [])
+        if embedding_id not in ids:
+            ids.append(embedding_id)
+            post["face_embeddings"] = ids
+            profile_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        return ids
 
     def find(self, name: str) -> dict | None:
         matches = [p for p in self.all() if p["name"].lower() == name.lower()]

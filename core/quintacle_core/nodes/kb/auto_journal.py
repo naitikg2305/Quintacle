@@ -422,6 +422,14 @@ def tag_unknown_face(embedding_id: str, person_name: str, folder: str, slug: str
         person_folder = person["folder"]
 
     enrolled = enroll_face_safe(embedding_id, resolved_name)
+    # The person's profile.md is the identity hub: record the opaque
+    # observation id there (pointer only — vectors stay sealed in
+    # ~/.quintacle/perception/), so the markdown deterministically owns its
+    # lens references instead of a name-string-only join.
+    try:
+        people.add_face_embedding(resolved_name, embedding_id)
+    except FileNotFoundError:
+        pass
 
     # The photo's own EXIF (re-read from the stored asset — deterministic)
     # dates the journal line and the day edge, same as at commit time.

@@ -371,3 +371,25 @@ def test_person_appearances_computed_from_graph(tmp_path, monkeypatch):
     assert "Lake hike" not in profile and "📷" not in profile
 
     assert client.get("/people/Nobody/appearances").status_code == 404
+
+
+def test_tagging_records_embedding_pointer_on_the_person_profile(tmp_path, monkeypatch):
+    stub_perception(monkeypatch, result=UNKNOWN)
+    client = make_client(tmp_path, monkeypatch)
+    photo = commit_photo(client, jpeg_with_exif())
+
+    def tag():
+        return client.post(
+            "/perception/tag",
+            json={"embedding_id": "emb-9", "person_name": "Alex", "photo": {"folder": photo["folder"], "slug": photo["slug"]}},
+        ).json()
+
+    assert tag()["person_name"] == "Alex"
+    profile = next(p for p in client.get("/people").json() if p["name"] == "Alex")
+    assert profile["face_embeddings"] == ["emb-9"]
+
+    # idempotent re-tag + merge-safe survive of a profile rewrite
+    tag()
+    client.post("/people", json={"name": "Alex", "category": "friend", "notes": "updated bio"})
+    profile = next(p for p in client.get("/people").json() if p["name"] == "Alex")
+    assert profile["face_embeddings"] == ["emb-9"]
