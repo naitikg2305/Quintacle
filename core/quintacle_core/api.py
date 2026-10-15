@@ -15,6 +15,7 @@ from . import clock
 from . import db
 from .day_bundle import build_day_bundle
 from .graph import get_graph_store, init_graph_store, sync_frontmatter_links
+from .graph_capture import run_graph_capture_backfill
 from .nodes.drop_router import (
     IMAGE_MIME_TYPES,
     classify_image_type,
@@ -174,6 +175,17 @@ def create_app() -> FastAPI:
         exp_id = f"experience:{e['folder']}/{e['slug']}"
         resolved = [canonicalize_name(t, title_lookup) for t in (e.get("links") or [])]
         sync_frontmatter_links(exp_id, resolved, link_target_by_title)
+
+    # Second half of the catch-up (graph_capture): frontmatter links above
+    # were only ever the STATED connections — existing journal days, notes,
+    # experiences and item descriptions were never content-scanned for
+    # person/experience mentions, so content written before the write-rule
+    # retrofits carries none of the edges the same text would get today.
+    # One idempotent pass runs the same deterministic matcher over all of it
+    # (edges tagged source_of_edge="mention_backfill") plus the full
+    # place-emergence scan ("emergent_place"). Candidates/sources are built
+    # once per pass, so this stays one cheap startup sweep, not per-entry.
+    run_graph_capture_backfill()
 
     @app.get("/day/counts")
     def day_counts(start: date, end: date) -> dict[str, int]:
@@ -578,10 +590,28 @@ def create_app() -> FastAPI:
             iso_date = d.isoformat()
             nodes.append({"id": f"journal:{iso_date}", "type": "journal_day", "label": iso_date})
 
+        # Note-shaped entries that are really something more specific get the
+        # type the frontend already has a hub/color for: a person's profile
+        # note is a `person` (labelled with their real name, not the profile
+        # body's first line), an emergent Places/ note is a `place`, and an
+        # experience's own file (ExperienceStore writes into the KB tree) is
+        # skipped here — it's emitted below under its experience: id, so it
+        # doesn't ALSO appear as an untyped duplicate note.
+        experiences = get_travel_store().all()
+        experience_paths = {(e["folder"], e["slug"]) for e in experiences}
+        person_name_by_folder = {p["folder"]: p["name"] for p in get_people_store().all()}
+
         notes = get_kb_store().graph_entries()
         for n in notes:
+            if (n["folder"], n["slug"]) in experience_paths:
+                continue
             note_id = f"note:{n['folder']}/{n['slug']}"
             node = {"id": note_id, "type": "note", "label": n["title"], "folder": n["folder"], "slug": n["slug"]}
+            if n["slug"] == "profile" and n["folder"] in person_name_by_folder:
+                node["type"] = "person"
+                node["label"] = person_name_by_folder[n["folder"]]
+            elif n["folder"] == "places" or n["folder"].startswith("places/"):
+                node["type"] = "place"
             if n.get("location"):
                 node["location"] = n["location"]
             nodes.append(node)
@@ -590,7 +620,7 @@ def create_app() -> FastAPI:
                 nodes.append({"id": asset_id, "type": "asset", "label": n["asset"], "folder": n["folder"], "path": n["asset"]})
                 edges.append({"source": note_id, "target": asset_id, "kind": "has_asset"})
 
-        for e in get_travel_store().all():
+        for e in experiences:
             exp_id = f"experience:{e['folder']}/{e['slug']}"
             nodes.append(
                 {
@@ -603,9 +633,6 @@ def create_app() -> FastAPI:
                     "kind": e.get("kind"),
                 }
             )
-
-        for edge in get_graph_store().all():
-            edges.append({"source": edge["source_id"], "target": edge["target_id"], "kind": edge["kind"]})
 
         repo = get_logs_repo()
         ingredients_by_id = {i["id"]: i for i in repo.list_ingredients()}
@@ -642,6 +669,16 @@ def create_app() -> FastAPI:
                     item_ids.add(item_id)
                     nodes.append({"id": item_id, "type": "wardrobe_item", "label": item_name})
                 edges.append({"source": outfit_id, "target": item_id, "kind": "includes"})
+
+        # Stored edges last, clamped to ids actually emitted above: the edges
+        # table legitimately holds endpoints this view has no node for (an MCP
+        # todo:/expense: write whose text matched a person, say) and the
+        # frontend's d3 forceLink throws on an id it can't resolve — one stray
+        # edge must degrade to "not drawn", never to a blank graph page.
+        node_ids = {node["id"] for node in nodes}
+        for edge in get_graph_store().all():
+            if edge["source_id"] in node_ids and edge["target_id"] in node_ids:
+                edges.append({"source": edge["source_id"], "target": edge["target_id"], "kind": edge["kind"]})
 
         return {"nodes": nodes, "edges": edges}
 

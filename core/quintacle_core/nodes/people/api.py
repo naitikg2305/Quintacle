@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ...graph import link_new_entry
+from ...graph_capture import mention_candidates
 from ..journal.normalize import canonicalize_name
 from ..travel.store import ExperienceStore
 from .store import PersonStore
@@ -43,10 +44,10 @@ def create_person(body: PersonCreate) -> dict:
     # it: an experience mentioned alongside this person (e.g. propose_drop's
     # `links` hint) gets a real typed edge instead of being lost once this
     # person is saved independently of the experience.
-    experiences = ExperienceStore(get_store().kb_root).all()
-    candidates = [
-        {"id": f"experience:{e['folder']}/{e['slug']}", "type": "experience", "title": e["name"]} for e in experiences
-    ]
+    # Shared candidate list (graph_capture): experiences this person was met
+    # at AND other tracked people their notes mention ("Laura's brother") —
+    # the self-candidate is skipped by link_new_entry's own id check.
+    candidates = mention_candidates(get_store().all(), ExperienceStore(get_store().kb_root).all())
     text = f"{resolved_name}\n{body.notes}\n{' '.join(body.links)}"
     link_new_entry(person_id, "person", text, candidates, source_of_edge="structural")
 

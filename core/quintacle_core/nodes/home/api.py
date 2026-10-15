@@ -5,6 +5,7 @@ import mimetypes
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 
+from ...graph_capture import emerge_places_for_text, home_item_note_id, safe_entry_graph_links
 from ..journal.normalize import canonicalize_name
 from .store import HomeItemStore, ResidenceStore
 
@@ -63,6 +64,13 @@ def create_residence(body: ResidenceCreate) -> dict:
     known_names = [r["name"] for r in get_residence_store().all()]
     name = canonicalize_name(body.name, known_names)
     folder, slug = get_residence_store().write(name, body.city, body.address, body.moved_in, body.moved_out, body.notes)
+    # A new residence adds its city to the place LEXICON (graph_capture) —
+    # that city may already be mentioned in enough journal days/notes to
+    # emerge as a place node right now. Additive, never blocking.
+    try:
+        emerge_places_for_text(body.city)
+    except Exception:
+        pass
     return {"name": name, "slug": slug, "folder": folder}
 
 
@@ -101,6 +109,10 @@ async def create_item(
         notes,
         asset_paths,
     )
+    # Write rule (graph_capture): a home item's notes are prose ("desk Alex
+    # helped me carry up from Ikea") — keyword-link them to known people/
+    # experiences. Purchase price/date stay plain fields, never matched.
+    safe_entry_graph_links(home_item_note_id(residence["folder"], slug), "note", f"{name}\n{notes}")
     return {"name": name, "slug": slug, "residence": residence["name"], "assets": asset_paths}
 
 

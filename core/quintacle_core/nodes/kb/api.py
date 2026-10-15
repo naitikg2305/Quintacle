@@ -11,10 +11,10 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, Response, Upload
 from openai import OpenAIError
 from pydantic import BaseModel
 
-from ...graph import get_graph_store, link_new_entry, sync_frontmatter_links
+from ...graph import get_graph_store, sync_frontmatter_links
+from ...graph_capture import safe_entry_graph_links
 from ..journal.api import get_store as get_journal_store
 from ..journal.normalize import canonicalize_name
-from ..people.api import get_store as get_people_store
 from ..profile.api import get_store as get_profile_store
 from ..travel.api import get_store as get_travel_store
 from .chat import CHAT_MODELS, BedrockError, UnknownModelError, run_kb_chat
@@ -186,8 +186,8 @@ def _sync_note_graph_links(note_id: str, title: str, content: str, link_titles: 
     experience pool `/graph` always fuzzy-matched against — just done once,
     here, instead of on every read.
 
-    Also runs the write-rule keyword linker (graph.link_new_entry) against
-    known people/experiences — this is what fixes the concrete gap flagged
+    Also runs the shared write-rule linker (graph_capture.entry_graph_links)
+    against known people/experiences — this is what fixes the gap flagged
     in graph-model.md: a kb_entry filed under People/<Name>/Mentions (the
     additive person-mention path in api.py's propose_drop and journal/api.py's
     parse_journal) now actually gets a typed `mentions_person`/`at_location`
@@ -202,11 +202,12 @@ def _sync_note_graph_links(note_id: str, title: str, content: str, link_titles: 
     resolved_titles = [canonicalize_name(t, list(title_lookup)) for t in link_titles]
     sync_frontmatter_links(note_id, resolved_titles, title_lookup)
 
-    candidates = [
-        {"id": f"note:{p['folder']}/profile", "type": "person", "title": p["name"]} for p in get_people_store().all()
-    ] + [{"id": f"experience:{e['folder']}/{e['slug']}", "type": "experience", "title": e["name"]} for e in experiences]
+    # Shared write-rule call (graph_capture): keyword-links against every
+    # known person/experience AND runs the incremental place-emergence check,
+    # so a note that pushes a city over PLACE_EMERGENCE_THRESHOLD emerges the
+    # place right now rather than at the next restart.
     text = f"{title}\n{content}\n{' '.join(link_titles)}"
-    link_new_entry(note_id, "note", text, candidates, source_of_edge="ai_link")
+    safe_entry_graph_links(note_id, "note", text)
 
 
 class EntryCreate(BaseModel):

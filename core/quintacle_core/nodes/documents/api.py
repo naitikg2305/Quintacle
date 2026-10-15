@@ -6,6 +6,7 @@ from typing import Callable
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 import mimetypes
 
+from ...graph_capture import document_note_id, safe_entry_graph_links
 from ..journal.normalize import canonicalize_name
 from ..schedule.models import Todo
 from ..schedule.store import TodoStore
@@ -79,6 +80,11 @@ async def create_document(
         notes=notes,
         assets=asset_paths,
     )
+
+    # Write rule (graph_capture): a document's notes can name a person ("lease
+    # cosigned with Sam") or an experience — keyword-link them. Dates/status
+    # are structured fields and deliberately never keyword-matched.
+    safe_entry_graph_links(document_note_id(resolved_name), "note", f"{resolved_name}\n{notes}")
 
     todo_created = False
     if is_new and expiry_date:

@@ -155,3 +155,45 @@ SQLite from already-written edge files.
 - **MCP**: every write tool calls the `graph_link.py` adapter; created edge
   files are staged on the write's undo session so undoing a push removes
   its edges ([mcp-server.md](mcp-server.md)).
+
+## The capture layer (graph_capture.py) — 2026-10-15
+
+`core/quintacle_core/graph_capture.py` is the shared half of the write rule:
+one module that turns "something was just persisted" into edges, used by
+REST handlers, MCP tools, and the startup backfill alike.
+
+**Coverage per write path**
+
+| write path | links | id used |
+|---|---|---|
+| `POST /journal/{date}` and MCP `journal_append` | `journal_graph_links` — mentions_person/at_location FROM the day, + place emergence | `journal:<date>` |
+| `/kb/entries`, `/kb/entries/with-asset`, MCP `kb_create_entry` | `entry_graph_links` (people + experiences + place emergence) alongside the existing frontmatter sync | `note:<folder>/<slug>` |
+| `/travel/experiences`, `/people` | shared `mention_candidates` (people AND experiences both ways), + city emergence trigger on experience create | `experience:…` / `note:people/<name>/profile` |
+| `/wardrobe/items`, `/grooming/items`, `/home/items`, `/documents` | description/notes prose keyword-linked | their KB-note id (`note:<store folder>/<slug>`) |
+| `/home/residences` | no text link; city joins the place lexicon + emergence trigger | — |
+| `/logs/activities` | description is narrative — linked from the day via the journal helper | `journal:<date>` |
+| `/logs/{food,exercise,substances,body-stats,expenses}`, outfit/routine compositions | deliberately NO keyword linking (numeric/structural; day-association lives in SQLite; includes/made_of stay synthesized) | — |
+
+**Backfill** — `run_graph_capture_backfill()` runs in `create_app()` after
+the frontmatter-links pass: one idempotent sweep over journal days (narrative
++ that day's activity descriptions), KB notes (title+body), experiences
+(name+city+notes), and item descriptions, with the same matcher
+(`graph.title_mentioned`) and candidates built once. Edges carry
+`source_of_edge="mention_backfill"`.
+
+**Emergent places** — lexicon = city names from experiences + residences
+(`city` fields only; addresses are never parsed). A lexicon name mentioned in
+`PLACE_EMERGENCE_THRESHOLD` (= 3) distinct sources becomes a real KB entry at
+`Places/<Name>.md` (`fields: {kind: place, city: <name>}`) with
+`at_location` edges (`source_of_edge="emergent_place"`) from every mentioning
+source. Runs in the backfill AND incrementally: a journal/note/activity write
+that mentions a lexicon place re-counts that place right then; an
+experience/residence create re-checks its own city. Re-runs top up edges but
+never rewrite the note. An experience counts as a mention of its own city.
+
+**/graph typing** — person profile notes are emitted as type `person`
+(labelled with the person's name), `places/` notes as `place`, and an
+experience's own KB file is no longer duplicated as an untyped note. Stored
+edges are clamped to emitted node ids so a stale/structural-id edge degrades
+to "not drawn" instead of crashing the d3 layout. The REST safe wrappers log
+(never raise) linking failures so a write can't be lost to the capture step.

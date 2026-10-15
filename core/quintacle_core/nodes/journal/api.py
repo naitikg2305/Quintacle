@@ -4,6 +4,7 @@ from datetime import date
 
 from fastapi import APIRouter, Body
 
+from ...graph_capture import safe_journal_graph_links
 from ..logs.api import get_log_store, get_repo as get_logs_repo
 from ..people.api import get_store as get_people_store
 from ..people.llm import maybe_structure_person_mention
@@ -30,6 +31,12 @@ def get_store() -> JournalStore:
 @router.post("/{for_date}")
 def save_journal(for_date: date, content: str = Body(..., media_type="text/plain")) -> dict:
     get_store().save(for_date, content)
+    # The write rule (docs/graph-model.md), previously missing here entirely:
+    # journal text saved through the app (or Drop's "save to journal") now
+    # creates the same mentions_person/at_location edges — and the same
+    # place-emergence check — as MCP journal_append, via the one shared
+    # helper. Additive, never blocking: a linking failure can't lose the save.
+    safe_journal_graph_links(for_date, content)
     return {"date": for_date.isoformat(), "saved": True}
 
 

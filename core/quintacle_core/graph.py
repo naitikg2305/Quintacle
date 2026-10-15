@@ -67,6 +67,18 @@ def _split_id(node_id: str) -> tuple[str, str]:
     return node_type, rest
 
 
+def title_mentioned(title: str, text: str) -> bool:
+    """THE matcher — a candidate's title/name appears in `text` as a whole
+    word, case-insensitive, nothing fuzzier. Exposed as its own function so
+    every deterministic mention decision in the app (link_new_entry here,
+    the mention backfill and place-emergence scans in graph_capture.py)
+    shares exactly one definition of "mentioned"."""
+    title = (title or "").strip()
+    if not title:
+        return False
+    return re.search(r"\b" + re.escape(title) + r"\b", text or "", re.IGNORECASE) is not None
+
+
 class GraphEdgeStore:
     """Owns both halves of Stage 1: the edges/ folder (real data) and the
     SQLite mirror (fast-query cache). Construct one per (data_dir, conn)
@@ -337,7 +349,7 @@ def link_new_entry(
         title = (candidate.get("title") or "").strip()
         if not target_id or not title or target_id == entry_id:
             continue
-        if not re.search(r"\b" + re.escape(title) + r"\b", haystack, re.IGNORECASE):
+        if not title_mentioned(title, haystack):
             continue
         kind = candidate.get("kind") or EDGE_KIND_BY_CANDIDATE_TYPE.get(candidate.get("type"), DEFAULT_EDGE_KIND)
         created.append(store.create_edge(entry_id, target_id, kind, source_of_edge))

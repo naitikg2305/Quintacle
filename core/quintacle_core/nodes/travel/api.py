@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ...graph import link_new_entry, sync_frontmatter_links
+from ...graph_capture import emerge_places_for_text, mention_candidates
 from ..journal.api import get_store as get_journal_store
 from ..journal.normalize import canonicalize_name
 from ..kb.store import KBStore
@@ -63,11 +64,18 @@ def create_experience(body: ExperienceCreate) -> dict:
     # created side by side with no connection at all. Now that the person's
     # name is a stated `links` hint (see propose_drop), this deterministic
     # keyword match reliably finds it and creates a real typed edge.
-    person_candidates = [
-        {"id": f"note:{p['folder']}/profile", "type": "person", "title": p["name"]} for p in get_people_store().all()
-    ]
+    candidates = mention_candidates(get_people_store().all(), get_store().all())
     text = f"{name}\n{body.notes}\n{' '.join(body.links)}"
-    link_new_entry(exp_id, "experience", text, person_candidates, source_of_edge="structural")
+    link_new_entry(exp_id, "experience", text, candidates, source_of_edge="structural")
+
+    # This experience's city just joined (or reinforced) the place lexicon
+    # (graph_capture) — and the experience itself counts as a mention of its
+    # own city, so this may be the write that pushes the city over
+    # PLACE_EMERGENCE_THRESHOLD. Additive, never blocking.
+    try:
+        emerge_places_for_text(body.city)
+    except Exception:
+        pass
 
     return {"name": name, "slug": slug, "folder": folder}
 

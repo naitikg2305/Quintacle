@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..graph import init_graph_store, link_new_entry as _engine_link, sync_frontmatter_links
+from ..graph_capture import entry_graph_links, mention_candidates
 from ..nodes.journal.normalize import canonicalize_name
 from ..nodes.journal.store import JournalStore
 from ..nodes.kb.store import KBStore
@@ -82,11 +83,20 @@ def link_new_entry(
         before = {p.name for p in edges_dir.glob("*.md")} if edges_dir.exists() else set()
 
         experiences = _travel_store.all() if _travel_store else []
-        candidates = [
-            {"id": f"note:{p['folder']}/profile", "type": "person", "title": p["name"]}
-            for p in (_people_store.all() if _people_store else [])
-        ] + [{"id": f"experience:{e['folder']}/{e['slug']}", "type": "experience", "title": e["name"]} for e in experiences]
-        created = _engine_link(entry_id, entry_type, text, candidates, source_of_edge="ai_link")
+        if entry_type in ("journal_day", "kb_note", "note"):
+            # Note-shaped writes go through the SAME shared helper the REST
+            # handlers use (graph_capture.entry_graph_links): identical
+            # candidates, identical place-emergence behavior — journal text
+            # pushed via MCP and via POST /journal/{date} can never diverge.
+            # The emergent place KB note (if one appears) is deliberately NOT
+            # staged for undo: a place that crossed the threshold exists
+            # because of ≥3 sources, not because of this one write.
+            created = entry_graph_links(entry_id, entry_type, text, source_of_edge="ai_link")
+        else:
+            # Structural ids (todo:, expense:) — keyword-link only; their
+            # text never counts toward place emergence (not a mention source).
+            candidates = mention_candidates(_people_store.all() if _people_store else [], experiences)
+            created = _engine_link(entry_id, entry_type, text, candidates, source_of_edge="ai_link")
 
         # A note's declared links (titles the client already decided on) get
         # materialized exactly like /kb/entries' own commit path does.

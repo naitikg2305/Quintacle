@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body
 from pydantic import BaseModel
 
 from ... import clock
+from ...graph_capture import safe_journal_graph_links
 from ..profile.store import ProfileStore
 from ..profile.targets import age_years
 from .log_store import LogFileStore, rebuild_sqlite_index
@@ -16,6 +17,17 @@ from .quotas import habit_history, habit_progress
 from .repository import LogsRepository
 from .routine_llm import resolve_workout_routine, suggest_workout_routine
 
+# Graph write-rule coverage decision (docs/graph-model.md, graph_capture.py):
+# the NUMERIC log endpoints here — food, exercise, substances, body stats,
+# expenses — deliberately do NOT run the keyword linker. Their day-association
+# already lives in SQLite rows keyed by date (that's the whole point of this
+# module), and their text fields are names of things ("bench press", a
+# merchant string), not prose about people/places — matching those against
+# person names would manufacture edges, not capture them. ACTIVITIES are the
+# one exception: their description is real narrative ("Went to Mia Italina
+# Kitchen in Alexandria with Sam"), so log_activity links it from the day it
+# happened — the same journal: day anchor and shared helper the journal
+# write paths use.
 router = APIRouter(prefix="/logs", tags=["logs"])
 _repo: LogsRepository | None = None
 _log_store: LogFileStore | None = None
@@ -333,6 +345,10 @@ def expenses_between(start: date, end: date) -> list[dict]:
 @router.post("/activities")
 def log_activity(body: ActivityLogCreate) -> dict:
     entry_id = get_repo().log_activity(body.date, body.category, body.description, body.hours)
+    # See the module-top coverage note: activity descriptions are narrative,
+    # so they link (people/experiences/place emergence) from their day's
+    # journal: node — additive, never blocking the log write itself.
+    safe_journal_graph_links(body.date, body.description)
     return {"id": entry_id, **body.model_dump(mode="json")}
 
 

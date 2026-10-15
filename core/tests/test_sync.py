@@ -217,8 +217,11 @@ def test_end_to_end_pull_rebuilds_sqlite_and_graph(tmp_path, monkeypatch):
     local_dir.mkdir()
 
     # Seed the "phone": a journal day, a markdown activity log (the SQLite
-    # activity_log index is rebuilt from these), and a graph edge file.
+    # activity_log index is rebuilt from these), a note, and a graph edge
+    # file between the note and the day (/graph only surfaces edges whose
+    # endpoints exist as nodes — a stale edge degrades to "not drawn").
     write(peer_dir, "journal/2026-10-10.md", "### 09:00\nphone-only day")
+    write(peer_dir, "kb/a/a.md", "# A note\n\nphone-only note")
     write(
         peer_dir,
         "kb/daily-log/productivity/logs/2026-10-10-001.md",

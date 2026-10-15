@@ -5,6 +5,7 @@ import mimetypes
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 
+from ...graph_capture import grooming_item_note_id, safe_entry_graph_links
 from ..journal.normalize import canonicalize_name
 from .llm import resolve_grooming_routine, suggest_grooming_routine
 from .store import GroomingItemStore, GroomingRoutineStore
@@ -46,6 +47,10 @@ async def create_item(
         data = await f.read()
         asset_paths.append(get_item_store().save_asset(f.filename or "item", data))
     slug = get_item_store().write(resolved_name, category, description, asset_paths)
+    # Write rule (graph_capture): same deal as wardrobe items — the
+    # description is prose that can genuinely name a person/experience, so it
+    # gets the keyword linker; routine->item steps stay structural.
+    safe_entry_graph_links(grooming_item_note_id(resolved_name), "note", f"{resolved_name}\n{description}")
     return {
         "name": resolved_name,
         "slug": slug,

@@ -6,6 +6,7 @@ import mimetypes
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 
+from ...graph_capture import safe_entry_graph_links, wardrobe_item_note_id
 from ..journal.normalize import canonicalize_name
 from .llm import resolve_outfit, suggest_outfit
 from .store import OutfitStore, WardrobeItemStore
@@ -47,6 +48,12 @@ async def create_item(
         data = await f.read()
         asset_paths.append(get_item_store().save_asset(f.filename or "item", data))
     slug = get_item_store().write(resolved_name, category, description, asset_paths)
+    # Write rule (graph_capture): an item's description is real prose ("the
+    # jacket Laura got me in Lisbon") — keyword-link it to known people/
+    # experiences from the item's KB-note identity, which /graph already
+    # renders. The outfit->item `includes` edges stay structural (synthesized
+    # per request in /graph), so nothing numeric is keyword-matched here.
+    safe_entry_graph_links(wardrobe_item_note_id(resolved_name), "note", f"{resolved_name}\n{description}")
     return {
         "name": resolved_name,
         "slug": slug,
