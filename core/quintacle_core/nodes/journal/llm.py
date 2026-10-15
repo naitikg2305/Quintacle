@@ -348,16 +348,35 @@ def parse_journal_dump(
     work = [{"type": "exercise", "exercise_name": e.exercise_name} for e in entries if isinstance(e, ExerciseEntry)]
     before = len(work)
     expand_routine_mentions(work, raw_text, known_routines or [])
+    carried_kcal: float | None = None
     if len(work) > before:
         # Expansion fired — drop the model's redundant header entry named
-        # after the routine itself ("pull day" with no sets), which would
-        # otherwise sit beside the real preset exercises it stands for.
+        # after the routine itself ("pull day"), which would otherwise sit
+        # beside the real preset exercises it stands for and fragment trend
+        # tracking. A header counts as redundant when its sets carry no real
+        # performance data (reps/weight/duration/distance) — models often
+        # attach a lone calories_burned estimate there, which IS worth
+        # keeping: it moves onto the first expanded entry below so energy
+        # balance survives the drop.
         expanded_routines = {(r.get("name") or "").strip().lower() for r in known_routines or []}
-        entries[:] = [
-            e
-            for e in entries
-            if not (isinstance(e, ExerciseEntry) and not e.sets and e.exercise_name.strip().lower() in expanded_routines)
-        ]
-    for added in work[before:]:
-        entries.append(ExerciseEntry(type="exercise", exercise_name=added["exercise_name"], sets=[], notes=added["notes"]))
+
+        def _redundant_header(e) -> bool:
+            nonlocal carried_kcal
+            if not (isinstance(e, ExerciseEntry) and e.exercise_name.strip().lower() in expanded_routines):
+                return False
+            for s in e.sets:
+                if s.reps or s.weight or s.duration_min or s.distance:
+                    return False  # real logged performance — never drop data
+                if s.calories_burned:
+                    carried_kcal = max(carried_kcal or 0.0, s.calories_burned)
+            return True
+
+        entries[:] = [e for e in entries if not _redundant_header(e)]
+    for i, added in enumerate(work[before:]):
+        sets = (
+            [ExerciseSetRecord(calories_burned=carried_kcal)]
+            if i == 0 and carried_kcal
+            else []
+        )
+        entries.append(ExerciseEntry(type="exercise", exercise_name=added["exercise_name"], sets=sets, notes=added["notes"]))
     return entries
