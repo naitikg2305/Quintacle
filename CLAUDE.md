@@ -31,6 +31,12 @@ memory/docs go stale; code is truth.
 
 ## Working conventions
 
+- **Model-quality tests MUST run on preset-seeded data.** Quintacle's
+  accuracy is entity-grounded: routine/meal/person/place matching keys off
+  the registries, and an empty scratch dir forces models to freelance —
+  mis-measuring them. Seed meals, routines, people, experiences (and face
+  enrollments where relevant) before judging any parse/classification
+  quality; an unseeded comparison is invalid evidence.
 - Heavy/optional deps (perception, desktop) get their own requirements
   files + lazy imports; `core/requirements.txt` stays phone/Termux-safe,
   and the full test suite must pass WITHOUT optional deps installed.
