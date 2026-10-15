@@ -13,8 +13,9 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, Response, Upload
 from openai import OpenAIError
 from pydantic import BaseModel
 
-from ...graph import get_graph_store, sync_frontmatter_links
+from ...graph import get_graph_store, link_new_entry, sync_frontmatter_links
 from ...graph_capture import safe_entry_graph_links
+from ...perception import perceive_photo
 from ..journal.api import get_store as get_journal_store
 from ..journal.normalize import canonicalize_name
 from ..profile.api import get_store as get_profile_store
@@ -265,6 +266,38 @@ def describe_asset(body: AssetDescribeRequest) -> dict:
     if data is None:
         raise HTTPException(404, "asset not found")
     return {"folder": body.folder, "path": body.path, "description": describe_images([(data, mime)], body.question)}
+
+
+class AssetPerceiveRequest(BaseModel):
+    folder: str
+    path: str  # relative to `folder`, e.g. "assets/lake-hike.jpg"
+
+
+@router.post("/asset/perceive")
+def perceive_asset(body: AssetPerceiveRequest) -> dict:
+    """Re-run LOCAL perception (YOLO object tags + face observations + scene
+    attributes) over an already-stored image asset — the free, on-device
+    counterpart of /asset/describe (which bills a vision call). Face
+    embeddings persist under <data dir>/perception/ at observation time, so
+    the returned embedding_ids are enrollable later without re-processing.
+
+    Bytes are read through the store's clamped read_asset — a path that
+    escapes the KB root reads as a plain 404, never a traversal. 503 when the
+    optional perception deps aren't installed."""
+    ext = body.path.rsplit(".", 1)[-1].lower() if "." in body.path else ""
+    mime = _IMAGE_MIME.get(ext)
+    if mime is None:
+        raise HTTPException(400, f"not an image asset: {body.path}")
+    data = get_store().read_asset(body.folder, body.path)
+    if data is None:
+        raise HTTPException(404, "asset not found")
+    try:
+        result = perceive_photo(data, mime)
+    except ValueError:
+        raise HTTPException(400, f"couldn't decode {body.path} as an image")
+    if result is None:
+        raise HTTPException(503, "perception deps not installed — pip install -r core/perception-requirements.txt")
+    return {"folder": body.folder, "path": body.path, "perception": result.model_dump()}
 
 
 @router.post("/entry/asset")

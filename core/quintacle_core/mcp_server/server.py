@@ -359,6 +359,48 @@ def describe_photo(folder: str, slug_or_path: str, question: str | None = None) 
     return {"folder": folder, "path": asset_path, "description": describe_images([(data, mime)], question)}
 
 
+# --- Local perception (free, on-device) ---
+
+
+@mcp.tool()
+def perceive_photo(folder: str, slug_or_path: str) -> dict:
+    """LOCAL & FREE (no AI call, no API spend, fully on-device): run
+    Quintacle's perception models over a stored KB photo — YOLO object tags,
+    face observations (box + persisted embedding_id + enrolled-person match
+    by NAME or null for unknown) and deterministic scene attributes
+    (daylight/outdoor hint/brightness). The free counterpart to
+    describe_photo (which bills a vision call). Pass a note's slug to
+    perceive its first image asset, or a direct "assets/..." path within
+    `folder`. Image bytes and face embedding vectors never cross MCP — only
+    tags, names and ids come back. It's a read plus local embedding storage:
+    no ledger entry, nothing to undo."""
+    from ..perception import perceive_photo as run_perception
+
+    if slug_or_path.startswith("assets/"):
+        asset_path = slug_or_path
+    else:
+        entry = kb_store.read_full(folder, slug_or_path)
+        if entry is None:
+            raise ValueError(f"no such entry: {folder}/{slug_or_path}")
+        asset_path = next(
+            (a for a in entry_assets(entry) if a.rsplit(".", 1)[-1].lower() in _IMAGE_MIME),
+            None,
+        )
+        if asset_path is None:
+            raise ValueError(f"entry {folder}/{slug_or_path} has no image asset to perceive")
+    ext = asset_path.rsplit(".", 1)[-1].lower() if "." in asset_path else ""
+    mime = _IMAGE_MIME.get(ext)
+    if mime is None:
+        raise ValueError(f"not an image asset: {asset_path}")
+    data = kb_store.read_asset(folder, asset_path)
+    if data is None:
+        raise ValueError(f"asset not found: {folder}/{asset_path}")
+    result = run_perception(data, mime)
+    if result is None:
+        raise ValueError("perception deps not installed — pip install -r core/perception-requirements.txt")
+    return {"folder": folder, "path": asset_path, "perception": result.model_dump()}
+
+
 # --- Ledger / undo ---
 
 

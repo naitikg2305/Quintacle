@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import date
 from pathlib import Path
@@ -81,9 +82,17 @@ from .nodes.people.llm import maybe_structure_person_mention, structure_person
 from .nodes.finance.api import init_store as init_credit_card_store, router as credit_card_router, investments_router, get_investment_store
 from .nodes.finance.llm import structure_credit_card, structure_investment
 from .nodes.vault.api import init_store as init_vault_store, router as vault_router
+from .perception import perceive_photo
 from .sync import init_sync, router as sync_router
 
+logger = logging.getLogger(__name__)
+
 DATA_DIR = Path(os.environ.get("QUINTACLE_DATA_DIR", Path.home() / ".quintacle"))
+
+# The proposal entry types the frontend actually attaches the dropped photo to
+# (see docs/reference/drop-pipeline.md "Multi-attachment commits") — the ones
+# where a `perception` field means "about this entry's own photo".
+_PHOTO_BEARING_ENTRY_TYPES = {"kb_entry", "document_entry", "wardrobe_item", "grooming_item", "home_item", "outfit_photo"}
 
 
 def create_app() -> FastAPI:
@@ -565,6 +574,25 @@ def create_app() -> FastAPI:
                         )
 
         canonicalize_entries(entries, get_log_store())
+
+        # Local perception (free, no LLM): YOLO tags + faces + scene attributes
+        # over the dropped photo, attached to the photo-bearing proposal dicts
+        # so the review UI / auto-journal consumer sees it alongside the AI
+        # suggestion. Returns None (and is skipped) when the optional
+        # perception deps aren't installed; any failure degrades to "no
+        # perception field", never a failed drop.
+        if is_image:
+            try:
+                perception = perceive_photo(data, mime)
+            except Exception:
+                logger.warning("perception pass failed for dropped photo %r", filename, exc_info=True)
+                perception = None
+            if perception is not None:
+                payload = perception.model_dump()
+                for entry in entries:
+                    if entry.get("type") in _PHOTO_BEARING_ENTRY_TYPES:
+                        entry["perception"] = payload
+
         return {"entries": entries}
 
     @app.get("/graph")

@@ -1,0 +1,16 @@
+# Optional local-perception deps (quintacle_core/perception) — YOLO object
+# tags + face detection/recognition, all on-device via onnxruntime CPU.
+#
+# Deliberately NOT in requirements.txt: these are the only heavy wheels in the
+# stack (~75 MB installed) and the core app must run without them —
+# perceive_photo() degrades to None when they're missing. Install with:
+#
+#     pip install -r core/perception-requirements.txt
+#
+# Model weights (another ~19 MB) download separately on first use into
+# <data dir>/perception/models/ — see quintacle_core/perception/download.py.
+# No torch anywhere: torch-family wheels are GB-scale and facenet-pytorch's
+# pins don't resolve on Python 3.14; the ONNX route runs on 3.14 today and is
+# the same stack a phone port can carry.
+onnxruntime>=1.24
+numpy>=1.26
