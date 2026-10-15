@@ -21,6 +21,8 @@ export type Todo = {
   start_time: string | null;
   end_time: string | null;
   done: boolean;
+  category: string;
+  completed_at: string | null;
   created_at: string;
   notes: string;
 };
@@ -28,6 +30,7 @@ export type Todo = {
 export const listTodos = () => request<Todo[]>("/schedule/todos");
 export const createTodo = (body: {
   title: string;
+  category?: string;
   priority?: number;
   due_date?: string | null;
   start_time?: string | null;
@@ -776,6 +779,7 @@ export type DayDetail = {
   date: string;
   journal: string | null;
   todos_due: Todo[];
+  todos_completed: Todo[];
   activities: { id: number; date: string; category: string; description: string; hours: number }[];
   exercise: { id: number; date: string; exercise_name: string; performance_text: string; sets: ExerciseSet[]; notes: string }[];
   food: { entries: unknown[]; totals: Record<string, number> };

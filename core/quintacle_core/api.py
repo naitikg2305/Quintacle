@@ -190,6 +190,12 @@ def create_app() -> FastAPI:
         ):
             for row in rows:
                 counts[row["date"]] = counts.get(row["date"], 0) + 1
+        # Completed todos count as actions on the day they were finished —
+        # the whole point of completed_at (see schedule/models.py).
+        for t in get_schedule_store().list():
+            if t.done and t.completed_at and start <= t.completed_at.date() <= end:
+                key = t.completed_at.date().isoformat()
+                counts[key] = counts.get(key, 0) + 1
         return counts
 
     @app.get("/day/{for_date}")
@@ -197,11 +203,17 @@ def create_app() -> FastAPI:
         """Calendar B: what actually happened on a given date, pulled deterministically
         from every node that touches it — architecture.md's March-13 example, generalized."""
         repo = get_logs_repo()
-        todos_due = [t for t in get_schedule_store().list() if t.due_date == for_date]
+        todos = get_schedule_store().list()
+        todos_due = [t for t in todos if t.due_date == for_date]
+        todos_completed = sorted(
+            (t for t in todos if t.done and t.completed_at and t.completed_at.date() == for_date),
+            key=lambda t: t.completed_at,
+        )
         return {
             "date": for_date.isoformat(),
             "journal": get_journal_store().load(for_date),
             "todos_due": [t.model_dump(mode="json") for t in todos_due],
+            "todos_completed": [t.model_dump(mode="json") for t in todos_completed],
             "activities": [dict(row) for row in repo.activities_for_date(for_date)],
             "exercise": [
                 {**dict(row), "sets": json.loads(row["sets_json"] or "[]")}

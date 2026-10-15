@@ -14,7 +14,7 @@ from ..nodes.journal.store import JournalStore
 from ..nodes.kb.store import KBStore
 from ..nodes.logs.log_store import LogFileStore, home_for
 from ..nodes.logs.repository import LogsRepository
-from ..nodes.schedule.models import Priority, Todo
+from ..nodes.schedule.models import Priority, Todo, apply_todo_updates
 from ..nodes.schedule.ranking import rank_todos
 from ..nodes.schedule.store import TodoStore
 from .graph_link import configure as configure_graph_link, link_new_entry
@@ -207,6 +207,7 @@ def expenses_in_range(start: str, end: str) -> list[dict]:
 @mcp.tool()
 def todo_create(
     title: str,
+    category: str = "",
     priority: int = 2,
     due_date: str | None = None,
     start_time: str | None = None,
@@ -218,6 +219,7 @@ def todo_create(
     Commits immediately, independently undoable."""
     todo = Todo(
         title=title,
+        category=category,
         priority=Priority(priority),
         due_date=date.fromisoformat(due_date) if due_date else None,
         start_time=start_time,
@@ -241,6 +243,7 @@ def todo_update(
     start_time: str | None = None,
     end_time: str | None = None,
     done: bool | None = None,
+    category: str | None = None,
     notes: str | None = None,
 ) -> dict:
     """Update any subset of a todo's fields — only the ones passed change.
@@ -261,11 +264,12 @@ def todo_update(
             "start_time": start_time,
             "end_time": end_time,
             "done": done,
+            "category": category,
             "notes": notes,
         }.items()
         if v is not None
     }
-    todo = todo.model_copy(update=updates)
+    todo = apply_todo_updates(todo, updates)
     todo_store.save(todo)
     link_new_entry("todo", todo.id, f"{todo.title} {todo.notes}".strip(), session=session)
     ledger_id = session.commit(result={"todo": todo.model_dump(mode="json")})

@@ -32,6 +32,8 @@ class TodoStore:
         post["start_time"] = todo.start_time
         post["end_time"] = todo.end_time
         post["done"] = todo.done
+        post["category"] = todo.category
+        post["completed_at"] = todo.completed_at.isoformat() if todo.completed_at else None
         post["created_at"] = todo.created_at.isoformat()
         self._path(todo.id).write_text(frontmatter.dumps(post), encoding="utf-8")
 
@@ -60,6 +62,8 @@ class TodoStore:
             start_time=meta.get("start_time"),
             end_time=meta.get("end_time"),
             done=meta.get("done", False),
+            category=meta.get("category") or "",
+            completed_at=datetime.fromisoformat(meta["completed_at"]) if meta.get("completed_at") else None,
             created_at=datetime.fromisoformat(meta["created_at"]),
             notes=post.content,
         )

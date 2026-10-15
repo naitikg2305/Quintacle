@@ -124,6 +124,30 @@ export default function DayViewPage() {
               </div>
             )}
 
+            {expandedDetail.todos_completed.length > 0 && (
+              <div>
+                <h3 className="mb-1 font-mono text-[11px] font-normal uppercase tracking-[0.14em] text-accent">Completed</h3>
+                <ul className="text-sm space-y-0.5 text-foreground/80">
+                  {expandedDetail.todos_completed.map((t) => (
+                    <li key={t.id} className="flex items-center gap-2">
+                      <span className="text-accent">✓</span>
+                      <span>{t.title}</span>
+                      {t.category && (
+                        <span className="rounded border border-line px-1.5 py-px font-mono text-[10px] uppercase tracking-wider text-muted">
+                          {t.category}
+                        </span>
+                      )}
+                      {t.completed_at && (
+                        <span className="ml-auto font-mono text-[11px] text-muted">
+                          {new Date(t.completed_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {Object.entries(expandedActivitiesByCategory).map(([category, entries]) => (
               <div key={category}>
                 <h3 className="mb-1 font-mono text-[11px] font-normal uppercase tracking-[0.14em] text-accent">
@@ -274,6 +298,7 @@ export default function DayViewPage() {
               expandedDetail.exercise.length === 0 &&
               expandedDetail.substances.length === 0 &&
               expandedDetail.body_stats.length === 0 &&
+              expandedDetail.todos_completed.length === 0 &&
               !expandedDetail.journal && <p className="text-sm text-muted">Nothing logged.</p>}
           </>
         )}

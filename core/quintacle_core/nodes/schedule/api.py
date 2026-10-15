@@ -5,7 +5,7 @@ from datetime import date
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .models import Priority, Todo
+from .models import Priority, Todo, apply_todo_updates
 from .ranking import build_calendar, rank_todos
 from .store import TodoStore
 
@@ -26,6 +26,7 @@ def get_store() -> TodoStore:
 
 class TodoCreate(BaseModel):
     title: str
+    category: str = ""
     priority: Priority = Priority.MEDIUM
     due_date: date | None = None
     start_time: str | None = None
@@ -35,6 +36,7 @@ class TodoCreate(BaseModel):
 
 class TodoUpdate(BaseModel):
     title: str | None = None
+    category: str | None = None
     priority: Priority | None = None
     due_date: date | None = None
     start_time: str | None = None
@@ -63,7 +65,7 @@ def update_todo(todo_id: str, body: TodoUpdate) -> Todo:
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="todo not found")
     updates = body.model_dump(exclude_unset=True)
-    todo = todo.model_copy(update=updates)
+    todo = apply_todo_updates(todo, updates)
     store.save(todo)
     return todo
 

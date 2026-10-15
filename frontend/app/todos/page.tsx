@@ -8,6 +8,7 @@ export default function TodosPage() {
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [priority, setPriority] = useState("2");
+  const [category, setCategory] = useState("");
 
   async function refresh() {
     setTodos(await listTodos());
@@ -19,8 +20,9 @@ export default function TodosPage() {
 
   async function submit() {
     if (!title) return;
-    await createTodo({ title, priority: Number(priority), due_date: dueDate || null });
+    await createTodo({ title, category, priority: Number(priority), due_date: dueDate || null });
     setTitle("");
+    setCategory("");
     setDueDate("");
     await refresh();
   }
@@ -56,6 +58,12 @@ export default function TodosPage() {
           placeholder="title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
+        />
+        <input
+          className="border rounded px-2 py-1 w-full text-sm"
+          placeholder="category (productivity, fitness, social...) — where it lands on the calendar when done"
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
         />
         <div className="flex gap-3">
           <input
