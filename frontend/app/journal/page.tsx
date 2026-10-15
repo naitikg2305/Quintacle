@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import EntryCard from "@/components/EntryCard";
 import { ExerciseSet, getJournal, listExerciseNames, listMeals, Meal, ParsedEntry, parseJournal, ProviderUsed, saveJournal } from "@/lib/api";
-import { commitEntry } from "@/lib/entries";
+import { commitEntry, graphIdFor, linkBatchAsEvent } from "@/lib/entries";
 import { todayIso } from "@/lib/date";
 
 // The nightly dump — its own page again, distinct from Drop (quick,
@@ -132,10 +132,15 @@ export default function JournalPage() {
   async function saveEntries() {
     setBusy(true);
     setStatus("saving entries...");
+    // One parse = one real-world capture: collect each commit's graph id and
+    // link the batch as a single event afterwards (never blocking the saves).
+    const eventMembers: (string | null)[] = [];
     for (const entry of entries) {
-      await commitEntry(date, entry);
+      const result = await commitEntry(date, entry);
+      eventMembers.push(graphIdFor(entry, result));
     }
-    setStatus(`saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
+    const eventWarning = await linkBatchAsEvent(eventMembers, date);
+    setStatus(eventWarning ?? `saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
     setEntries([]);
     setProviderUsed(null);
     setLastParsed(null);

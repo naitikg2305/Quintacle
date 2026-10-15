@@ -1056,7 +1056,10 @@ export async function proposeBatchDrop(
 
 export type GraphNode = {
   id: string;
-  type: "note" | "asset" | "journal_day" | "ingredient" | "meal" | "routine" | "exercise" | "wardrobe_item" | "outfit";
+  // The backend emits more types than any fixed list here stays honest about
+  // (person/place/experience/event + lazily-emitted log rows); the graph page
+  // colors by lookup-with-fallback, so an open string is the accurate type.
+  type: string;
   label: string;
   folder?: string;
   slug?: string;
@@ -1066,6 +1069,16 @@ export type GraphNode = {
 export type GraphEdge = { source: string; target: string; kind: string };
 
 export const getGraph = () => request<{ nodes: GraphNode[]; edges: GraphEdge[] }>("/graph");
+
+// Same-event provenance: after a batch Save commits its entries, this links
+// the ids those commits returned as ONE event node in the graph (plus an
+// on_day edge when the journal day exists). Deterministic event id server-side
+// (hash of sorted members + date), so retrying a Save never double-mints.
+export const linkEvent = (members: string[], date: string | null) =>
+  request<{ event_id: string | null; edges_created: number; skipped: string[] }>("/graph/event", {
+    method: "POST",
+    body: JSON.stringify({ members, date }),
+  });
 
 export type ChatContentBlock =
   | { type: "text"; text: string }

@@ -59,7 +59,7 @@ import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
 import { EmptyState, PageHeader, Panel } from "@/components/ui/Panel";
 import { cn } from "@/lib/cn";
-import { BLANK, commitEntry } from "@/lib/entries";
+import { BLANK, commitEntry, graphIdFor, linkBatchAsEvent } from "@/lib/entries";
 import { todayIso } from "@/lib/date";
 
 const IMAGE_EXT = ["jpg", "jpeg", "png", "gif", "webp"];
@@ -331,9 +331,14 @@ export default function DropPage() {
     const singleNote = entries.length === 1 && entries[0].type === "kb_entry" ? entries[0] : null;
     let newSession: typeof activeSession = null;
     const newFaces: PendingFace[] = [];
+    // This batch came from ONE capture, so its committed records are one
+    // real-world event — collect each commit's graph id (incl. a committed
+    // photo note's) and link them after the saves (see linkBatchAsEvent).
+    const eventMembers: (string | null)[] = [];
     for (const entry of entries) {
       const assets = ASSET_TYPES.has(entry.type) && file ? [file, ...extraPhotos] : [];
       const result = await commitEntry(date, entry, assets);
+      eventMembers.push(graphIdFor(entry, result));
       if (singleNote && result && typeof result === "object" && "slug" in result) {
         const r = result as { folder: string; slug: string };
         newSession = { folder: r.folder, slug: r.slug, title: singleNote.title };
@@ -354,7 +359,10 @@ export default function DropPage() {
         }
       }
     }
-    setStatus(`saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
+    // Never blocking: the saves above already happened; a failed event link
+    // only downgrades the status line to a warning.
+    const eventWarning = await linkBatchAsEvent(eventMembers, date);
+    setStatus(eventWarning ?? `saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
     setEntries([]);
     setProviderUsed(null);
     setLastSort(null);

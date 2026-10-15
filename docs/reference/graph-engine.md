@@ -48,6 +48,8 @@ it stores whatever callers use. In use today:
 | `experience:<folder>/<slug>` | a travel experience |
 | `asset:<folder>/<slug>` | an entry's representative asset (synthesized in `/graph` only, never stored as an edge endpoint) |
 | `todo:<id>`, `expense:<id>` | used by MCP write tools as `link_new_entry` entry ids (edges only materialize if the keyword matcher fires) |
+| `food:<id>`, `exercise:<id>`, `activity:<id>`, `substance:<id>`, `body_stat:<id>` | numeric log rows (one SQLite table each) — same-event members; a log row's `<rest>` is always an integer, distinguishing it from `/graph`'s name-keyed `exercise:<name>` routine nodes |
+| `event:<12-hex>` | a same-event grouping minted by `graph_capture.link_event` — deterministic hash of sorted member ids + date, so re-linking the same batch never double-mints |
 | `ingredient:<id>`, `meal:<id>`, `routine:<name>`, `exercise:<name>`, `item:<name>`, `outfit:<name>` | structural nodes synthesized by `/graph` from SQLite/stores; their edges (`made_of`, `includes`) are computed per request, not stored |
 
 ## Edge kinds, and where each is created
@@ -58,12 +60,15 @@ it stores whatever callers use. In use today:
 | `on_day` | links to a `journal:` day | `sync_frontmatter_links`' default `kind_for_target` |
 | `mentions_person` | entry text names a tracked person | `link_new_entry` via `EDGE_KIND_BY_CANDIDATE_TYPE["person"]` — called from `/kb/entries` + `/kb/entries/with-asset` (`_sync_note_graph_links`), `/travel/experiences` (create_experience), and every MCP write via `mcp_server/graph_link.py` |
 | `at_location` | entry text names a tracked experience | same mechanism, candidate type `experience` — notably `/people` (create_person) linking a new person to the experience they were met at |
+| `part_of` | member record → its `event:` node (same-event provenance, by construction — never keyword inference) | `graph_capture.link_event`, via `POST /graph/event` (both batch Saves call it after their commits) and the MCP `link_event` tool |
 | `has_asset` | note → its asset | synthesized in `/graph` per request (not a stored edge) |
 | `made_of`, `includes` | meal→ingredient, routine→exercise, outfit→item | synthesized in `/graph` from `meal_ingredients`, routine files, outfit files |
 
 `source_of_edge` provenance values in use: `frontmatter_links` (stated
-links), `ai_link` (keyword-matched from entry text — the default), and
-`structural` (the create_experience/create_person retrofit links). The
+links), `ai_link` (keyword-matched from entry text — the default),
+`structural` (the create_experience/create_person retrofit links), and
+`same_event` (every edge `link_event` writes: the `part_of` edges plus the
+event's `on_day` edge to its journal day when that day exists). The
 `exif_day_match` value is named in the docstring as an example but photos'
 journal-day links actually travel as `links` hints → `frontmatter_links`.
 
@@ -208,3 +213,26 @@ to "not drawn" instead of crashing the d3 layout. The REST safe wrappers log
 > `GET /people/{name}/appearances` is a new consumer: it derives a person's
 > photo/day appearances purely from `reverse_lookup` over `pictured_with`
 > edges. See `reference/perception-and-autojournal.md`.*
+
+## Same-event provenance (link_event) — 2026-10-15
+
+Every batch committed from ONE capture (one Drop sort, one journal parse,
+one photo commit) is one real-world event — "chipotle 14.50" is correctly
+both a food row and an expense row, and those twins must know each other.
+`graph_capture.link_event(members, for_date)` is the single implementation
+behind two doors: `POST /graph/event` (called by both batch Saves in the
+frontend via `lib/entries.ts`'s `graphIdFor`/`linkBatchAsEvent` once their
+commits return ids) and the MCP `link_event` tool (a write — its edges stage
+on a WriteSession via the dir-snapshot pattern, so undo removes them).
+
+Mechanics: mints `event:<sha256(sorted members + date)[:12]>`, creates
+`part_of` edges member→event and an `on_day` edge event→`journal:<date>`
+when that journal day exists; `source_of_edge="same_event"` on all of them.
+Guards: <2 valid members is a no-op; malformed ids come back in `skipped`;
+the deterministic id + `create_edge`'s dedupe make a retried Save create 0
+edges. Surfacing: `/graph` lazily emits `event` nodes (labelled
+"event · <date>" or by member count) plus any log-row members they
+reference, labelled from their real SQLite rows via
+`graph_capture.log_row_label` ("$14.50 Chipotle"); the day bundle gains
+`events` — each day-linked event with its member ids + labels, so
+`day_recall` hands the day's records pre-grouped.

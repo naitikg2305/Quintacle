@@ -14,13 +14,32 @@ Two things working together, neither a second source of truth for the other:
   rebuilt incrementally (one row per edge file) and recoverable from scratch
   via `rebuild_from_folder()`.
 
-Node ids reuse the exact scheme `/graph` (`api.py`) already produces:
-"note:<folder>/<slug>", "journal:<iso-date>", "experience:<folder>/<slug>".
-A person has no dedicated prefix — PersonStore shares the KB's root, so a
-person's profile is itself a KBStore entry at "note:people/<slug>/profile",
-same id a generic note would get. Any string of the form "<type>:<rest>"
-works; this module never invents or validates types, it just stores/queries
-them.
+Node ids reuse the exact scheme `/graph` (`api.py`) already produces. Any
+string of the form "<type>:<rest>" works; this module never invents or
+validates types, it just stores/queries them. The full scheme in use:
+
+- "note:<folder>/<slug>" — any KB entry. A person has no dedicated prefix —
+  PersonStore shares the KB's root, so a person's profile is itself a
+  KBStore entry at "note:people/<slug>/profile", same id a generic note
+  would get. Item-shaped stores (wardrobe/grooming/documents/home items)
+  also live here, under their fixed folders (see graph_capture.py).
+- "journal:<iso-date>" — a journal day.
+- "experience:<folder>/<slug>" — a travel experience.
+- "todo:<id>" — a schedule todo (ids are already strings, uuid4-hex[:12]).
+- Numeric log rows, "<kind>:<int sqlite id>" each in its own table:
+  "expense:<id>" (expense_log), "food:<id>" (food_log), "exercise:<id>"
+  (exercise_sets), "activity:<id>" (activity_log), "substance:<id>"
+  (substance_log), "body_stat:<id>" (body_stats). Note /graph ALSO
+  synthesizes name-keyed "exercise:<name>" nodes for routine members —
+  a log row's rest is always an integer, a routine member's never is.
+- "event:<12-hex hash>" — a same-event grouping minted by
+  graph_capture.link_event: every record committed from ONE capture (one
+  Drop sort, one journal parse) gets a `part_of` edge to its event node.
+  The id is a deterministic hash of the sorted member ids + date, so
+  re-linking the same batch never mints a duplicate event.
+- Synthesized by /graph per request, never stored as edge endpoints:
+  "asset:<folder>/<slug>", "ingredient:<id>", "meal:<id>",
+  "routine:<name>", "exercise:<name>", "item:<name>", "outfit:<name>".
 
 ## Wiring this in (for MCP or any other write path)
 

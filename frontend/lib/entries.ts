@@ -16,6 +16,7 @@ import {
   createTodo,
   createWardrobeItem,
   KBSuggestion,
+  linkEvent,
   logActivity,
   logBodyStat,
   logExercise,
@@ -122,6 +123,70 @@ export const BLANK: Record<ParsedEntry["type"], ParsedEntry> = {
     notes: "",
   },
 };
+
+const has = <K extends string>(r: unknown, key: K): r is Record<K, unknown> =>
+  typeof r === "object" && r !== null && key in r;
+
+// The graph id a just-committed entry now answers to, built from the commit
+// endpoint's own response — the id scheme documented in core's graph.py
+// (note:<folder>/<slug>, journal:<date>, expense:<int>, food:<int>, ...).
+// Null for types that have no stable graph id; same-event linking simply
+// skips those members. Verified against each endpoint's real return shape:
+// logs endpoints return {id}, todos return the Todo, kb/experience commits
+// return {folder, slug}, person returns {folder} (its profile IS a KB note).
+export function graphIdFor(entry: ParsedEntry, result: unknown): string | null {
+  switch (entry.type) {
+    case "activity":
+    case "food":
+    case "exercise":
+    case "substance":
+    case "body_stat":
+      return has(result, "id") ? `${entry.type}:${result.id}` : null;
+    case "finance":
+      return has(result, "id") ? `expense:${result.id}` : null;
+    case "todo":
+      return has(result, "id") ? `todo:${result.id}` : null;
+    case "kb_entry":
+      return has(result, "folder") && has(result, "slug") ? `note:${result.folder}/${result.slug}` : null;
+    case "experience_entry":
+      return has(result, "folder") && has(result, "slug") ? `experience:${result.folder}/${result.slug}` : null;
+    case "person_entry":
+      return has(result, "folder") ? `note:${result.folder}/profile` : null;
+    // Structural nodes /graph already synthesizes from SQLite/stores:
+    case "ingredient_preset":
+      return has(result, "id") ? `ingredient:${result.id}` : null;
+    case "meal_composition":
+      return has(result, "id") ? `meal:${result.id}` : null;
+    case "workout_routine":
+      return has(result, "name") ? `routine:${result.name}` : null;
+    case "wardrobe_item":
+      return has(result, "name") ? `item:${result.name}` : null;
+    case "outfit_composition":
+    case "outfit_photo":
+      return has(result, "name") ? `outfit:${result.name}` : null;
+    default:
+      // grooming/document/home/residence/credit card/investment commits don't
+      // return a graph-addressable id today — no member, no noise.
+      return null;
+  }
+}
+
+// The same-event call both batch Saves make once their commits are done: a
+// batch with 2+ graph-addressable members is ONE real-world capture, so its
+// records get interlinked by construction (they share this Save as a birth
+// certificate — never keyword inference). Additive and never blocking: the
+// entries are already saved, so a failed link comes back as a status warning
+// for the caller to show, not a thrown error.
+export async function linkBatchAsEvent(members: (string | null)[], date: string): Promise<string | null> {
+  const real = members.filter((m): m is string => m !== null);
+  if (real.length < 2) return null;
+  try {
+    await linkEvent(real, date);
+    return null;
+  } catch (e) {
+    return `saved, but event linking failed: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
 
 // Shared by the Journal page's nightly dump and the general Drop page — both
 // ultimately produce the same ParsedEntry union (parse_journal_dump now

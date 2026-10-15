@@ -53,7 +53,9 @@ the source set identical between the backfill and the incremental checks.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import sqlite3
 from datetime import date
 from typing import Iterable
 
@@ -77,6 +79,7 @@ PLACE_EMERGENCE_THRESHOLD = 3
 # `grep graph/edges` always answers "which pass created this edge":
 MENTION_BACKFILL = "mention_backfill"  # startup scan of pre-existing content
 EMERGENT_PLACE = "emergent_place"  # the place-emergence rule, any trigger
+SAME_EVENT = "same_event"  # link_event: records born from one capture/Save
 
 PLACES_FOLDER = "Places"  # KB folder emergent place notes live in ("places" slug)
 
@@ -320,3 +323,127 @@ def run_graph_capture_backfill() -> dict:
 
     place_edges, emerged = _emerge_places(stores, sources, experiences, residences)
     return {"mention_edges": mention_edges, "place_edges": len(place_edges), "places_emerged": emerged}
+
+
+# --- Same-event provenance (link_event) ---
+#
+# A batch of entries committed from ONE capture — one Drop sort, one journal
+# parse, one photo commit — is one real-world event ("chipotle 14.50" is
+# correctly both a food row and an expense row; those twins must know each
+# other). The connection is by CONSTRUCTION (they share the same Save), never
+# by keyword inference, so this deliberately bypasses the mention matcher:
+# the caller hands over the member ids its commits just returned, and every
+# member gets a `part_of` edge to one freshly-derived event:<hash> node.
+
+
+def event_id_for(members: list[str], for_date: date | None) -> str:
+    """Deterministic event id: a hash of the sorted member ids + date. The
+    dedupe mechanism — re-posting the same batch (a retried Save, a re-run
+    client) derives the SAME id, and create_edge's (source, target, kind)
+    idempotence then makes the whole call a no-op instead of double-minting
+    a second event over identical members."""
+    basis = "\n".join(sorted(members)) + "\n" + (for_date.isoformat() if for_date else "")
+    return "event:" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:12]
+
+
+def _valid_member_id(member: object) -> str | None:
+    """A member must already be a full "<type>:<rest>" graph id (graph.py's
+    module docstring is the scheme) — non-strings and malformed ids are the
+    caller's bug, reported back in `skipped` rather than silently linked."""
+    if not isinstance(member, str):
+        return None
+    candidate = member.strip()
+    node_type, sep, rest = candidate.partition(":")
+    if not sep or not node_type or not rest.strip() or any(c.isspace() for c in node_type):
+        return None
+    return candidate
+
+
+def link_event(members: list[str], for_date: date | None = None) -> dict:
+    """THE one implementation behind both doors (REST POST /graph/event and
+    the MCP link_event tool): mints `event:<hash>` and creates `part_of`
+    edges member→event (source_of_edge "same_event") for every valid member,
+    plus an `on_day` edge event→journal:<date> when a date is given AND that
+    journal day actually exists (same existence gate the photo-drop journal
+    links use). Guards:
+
+    - fewer than 2 valid members → no-op (a single entry isn't an "event
+      grouping", it's noise) — returns event_id None, creates nothing.
+    - malformed/duplicate ids are skipped and reported in `skipped`; member
+      EXISTENCE is deliberately not checked, same as every other edge write
+      (graph.py never validates ids).
+    - idempotent: the deterministic event id (see event_id_for) plus
+      create_edge's dedupe mean a re-save creates 0 new edges.
+
+    Returns {"event_id", "edges_created", "skipped"} — edges_created counts
+    only genuinely NEW edges, so callers/tests can see a re-save was a no-op.
+    """
+    store = get_graph_store()
+    valid: list[str] = []
+    skipped: list[str] = []
+    for member in members:
+        candidate = _valid_member_id(member)
+        if candidate is None:
+            skipped.append(str(member))
+        elif candidate not in valid:
+            valid.append(candidate)
+    if len(valid) < 2:
+        return {"event_id": None, "edges_created": 0, "skipped": skipped}
+
+    event_id = event_id_for(valid, for_date)
+    before = {
+        row["id"]
+        for row in store.conn.execute(
+            "SELECT id FROM edges WHERE source_id = ? OR target_id = ?", (event_id, event_id)
+        )
+    }
+    for member in valid:
+        create_edge(member, event_id, "part_of", SAME_EVENT)
+    if for_date is not None and JournalStore(store.data_dir / "journal").load(for_date) is not None:
+        create_edge(event_id, f"journal:{for_date.isoformat()}", "on_day", SAME_EVENT)
+    after = {
+        row["id"]
+        for row in store.conn.execute(
+            "SELECT id FROM edges WHERE source_id = ? OR target_id = ?", (event_id, event_id)
+        )
+    }
+    return {"event_id": event_id, "edges_created": len(after - before), "skipped": skipped}
+
+
+# How to label a numeric log row when the graph/day views must emit it as a
+# node: (table, row -> label). One definition so /graph and the day bundle
+# can never drift apart on what an "expense:12" is called.
+_LOG_ROW_LABELS: dict[str, tuple[str, object]] = {
+    "expense": ("expense_log", lambda r: f"${r['amount']:.2f} {r['merchant']}".strip()),
+    "food": (
+        "food_log",
+        lambda r: r["notes"] or r["meal_name"] or r["meal_type"],
+    ),
+    "exercise": ("exercise_sets", lambda r: r["exercise_name"]),
+    "activity": ("activity_log", lambda r: r["description"]),
+    "substance": ("substance_log", lambda r: r["substance"]),
+    "body_stat": ("body_stats", lambda r: f"{r['metric']} {r['value']:g} {r['unit']}".strip()),
+}
+
+
+def log_row_label(conn: sqlite3.Connection, member_id: str) -> str | None:
+    """Label for a "<kind>:<int>" log-row id, straight from its SQLite row —
+    expense → "$14.50 Chipotle", food → its description (notes, else the
+    meal preset's name), exercise → its name. None when the id isn't a known
+    log kind, isn't numeric, or the row is gone (stale edge) — callers emit
+    nothing rather than a blank node."""
+    node_type, _, rest = member_id.partition(":")
+    spec = _LOG_ROW_LABELS.get(node_type)
+    if spec is None or not rest.isdigit():
+        return None
+    table, labeler = spec
+    if node_type == "food":
+        row = conn.execute(
+            "SELECT f.*, m.name AS meal_name FROM food_log f LEFT JOIN meals m ON f.meal_id = m.id WHERE f.id = ?",
+            (int(rest),),
+        ).fetchone()
+    else:
+        row = conn.execute(f"SELECT * FROM {table} WHERE id = ?", (int(rest),)).fetchone()  # noqa: S608 — table from the fixed map above
+    if row is None:
+        return None
+    return str(labeler(row))

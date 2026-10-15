@@ -20,6 +20,7 @@ const COLORS: Record<string, string> = {
   experience: "#e056a5",
   person: "#1abc9c",
   place: "#f1c40f",
+  event: "#95a5a6",
 };
 
 // Hub display names — one anchor node per type present in the data, purely a
@@ -39,6 +40,7 @@ const HUB_LABELS: Record<string, string> = {
   experience: "Travel",
   person: "People",
   place: "Places",
+  event: "Events",
 };
 const MEMBER_KIND = "__member";
 

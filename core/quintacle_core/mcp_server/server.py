@@ -11,6 +11,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .. import db
 from ..day_bundle import build_day_bundle, entry_assets
+from ..graph_capture import link_event as capture_link_event
 from ..markdown_paths import resolve_nested, slugify
 from ..nodes.journal.store import JournalStore
 from ..nodes.kb.drop import _IMAGE_MIME, describe_images
@@ -234,7 +235,7 @@ def todo_create(
     session = _session("schedule.todo_create", f"Created todo '{title}'")
     session.stage_file(todo_store.path_for(todo.id))
     todo_store.save(todo)
-    link_new_entry("todo", todo.id, f"{title} {notes}".strip(), session=session, due_date=due_date)
+    link_new_entry("todo", f"todo:{todo.id}", f"{title} {notes}".strip(), session=session, due_date=due_date)
     ledger_id = session.commit(result={"todo": todo.model_dump(mode="json")})
     return {**todo.model_dump(mode="json"), "ledger_id": ledger_id}
 
@@ -276,7 +277,7 @@ def todo_update(
     }
     todo = apply_todo_updates(todo, updates)
     todo_store.save(todo)
-    link_new_entry("todo", todo.id, f"{todo.title} {todo.notes}".strip(), session=session)
+    link_new_entry("todo", f"todo:{todo.id}", f"{todo.title} {todo.notes}".strip(), session=session)
     ledger_id = session.commit(result={"todo": todo.model_dump(mode="json")})
     return {**todo.model_dump(mode="json"), "ledger_id": ledger_id}
 
@@ -302,6 +303,39 @@ def todo_list(include_done: bool = False) -> list[dict]:
     return [t.model_dump(mode="json") for t in ranked]
 
 
+# --- Graph: same-event provenance ---
+
+
+@mcp.tool()
+def link_event(members: list[str], for_date: str | None = None) -> dict:
+    """Mark a batch of records as ONE real-world event: every member id
+    (full graph ids like "expense:12", "food:7", "note:planning/x" — use the
+    ids your own writes just returned) gets a `part_of` edge to a shared
+    event node, plus an `on_day` edge to for_date's journal day when it
+    exists. By construction, never keyword inference — call it right after
+    committing records that came from one capture ("chipotle 14.50" is both
+    a food row and an expense row; this is how those twins know each other).
+    Deterministic event id (hash of sorted members + date), so re-linking
+    the same batch is a no-op, not a duplicate event. Fewer than 2 valid
+    members is a no-op; malformed ids come back in `skipped`. Commits
+    immediately, independently undoable (undo removes the event's edges)."""
+    entry_date = date.fromisoformat(for_date) if for_date else None
+    session = _session("graph.link_event", f"Linked {len(members)} records as one event")
+    # Dir snapshot, not the return value, decides what gets staged for undo —
+    # same reasoning as graph_link.link_new_entry: create_edge is idempotent
+    # and re-returns a pre-existing edge, which must NOT be deleted on undo.
+    edges_dir = DATA_DIR / "graph" / "edges"
+    before = {p.name for p in edges_dir.glob("*.md")} if edges_dir.exists() else set()
+    result = capture_link_event(members, entry_date)
+    new_names = sorted(({p.name for p in edges_dir.glob("*.md")} if edges_dir.exists() else set()) - before)
+    for name in new_names:
+        session.stage_new_file(edges_dir / name)
+        session.stage_sqlite_insert(_db_path, "edges", "id", name.removesuffix(".md"))
+    if new_names:
+        result["ledger_id"] = session.commit(result=result)
+    return result
+
+
 # --- Day recall / photos ---
 
 
@@ -309,9 +343,11 @@ def todo_list(include_done: bool = False) -> list[dict]:
 def day_recall(for_date: str) -> dict:
     """Everything recorded on a given day (YYYY-MM-DD), in one bundle: the
     journal text, todos due, activities, exercise, food (entries + totals),
-    body stats, substances, expenses, and `photos` — every KB note linked to
+    body stats, substances, expenses, `photos` — every KB note linked to
     that day (a photo's EXIF date links it at drop time), each with its
-    stored drop-time description and asset paths. Deterministic and
+    stored drop-time description and asset paths — and `events`: records
+    born from one capture, pre-grouped with labels (see link_event), so you
+    never have to re-infer which rows belong together. Deterministic and
     read-only: no AI call, no ledger entry — YOU do the narrating. Same
     assembly the app's own GET /day/{date} uses. Pair with describe_photo
     for a fresh (billed) look at any listed photo."""

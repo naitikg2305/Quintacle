@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as _datetime
 import logging
 import os
 from datetime import date
@@ -8,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 # Loads core/.env (ANTHROPIC_API_KEY, etc.) before anything reads os.environ.
 load_dotenv()
@@ -18,7 +20,7 @@ from . import llm_dispatch
 from .day_bundle import build_day_bundle
 from .nodes.kb.chat import OllamaError
 from .graph import get_graph_store, init_graph_store, sync_frontmatter_links
-from .graph_capture import run_graph_capture_backfill
+from .graph_capture import link_event, log_row_label, run_graph_capture_backfill
 from .nodes.drop_router import (
     IMAGE_MIME_TYPES,
     classify_image_type,
@@ -95,6 +97,17 @@ DATA_DIR = Path(os.environ.get("QUINTACLE_DATA_DIR", Path.home() / ".quintacle")
 # (see docs/reference/drop-pipeline.md "Multi-attachment commits") — the ones
 # where a `perception` field means "about this entry's own photo".
 _PHOTO_BEARING_ENTRY_TYPES = {"kb_entry", "document_entry", "wardrobe_item", "grooming_item", "home_item", "outfit_photo"}
+
+
+class EventLinkRequest(BaseModel):
+    """POST /graph/event body — the member graph ids one batch Save just
+    committed, plus the day they belong to (null when the batch has no date)."""
+
+    members: list[str]
+    # Annotated via the module, not the bare `date` name: the field itself is
+    # called `date`, and the assignment above it would shadow the type when
+    # the deferred annotation gets evaluated in the class namespace.
+    date: _datetime.date | None = None
 
 
 def create_app() -> FastAPI:
@@ -618,6 +631,17 @@ def create_app() -> FastAPI:
 
         return {"entries": entries, "provider_used": llm_dispatch.summarize_providers(used)}
 
+    @app.post("/graph/event")
+    def graph_event(body: EventLinkRequest) -> dict:
+        """Same-event provenance: every record the frontend just committed
+        from ONE batch Save (one Drop sort, one journal parse) shares a birth
+        certificate — this links them all, across types, to one event node.
+        By construction, never by keyword inference; see
+        graph_capture.link_event (the same implementation the MCP link_event
+        tool uses) for the guards, the deterministic event id, and the
+        response shape {event_id, edges_created, skipped}."""
+        return link_event(body.members, body.date)
+
     @app.get("/graph")
     def graph() -> dict:
         """Everything connected to everything else, for the graph view:
@@ -723,13 +747,53 @@ def create_app() -> FastAPI:
                     nodes.append({"id": item_id, "type": "wardrobe_item", "label": item_name})
                 edges.append({"source": outfit_id, "target": item_id, "kind": "includes"})
 
+        # Event nodes, lazily: an event:<hash> exists only as edge endpoints
+        # (minted by /graph/event — see graph_capture.link_event), so emit a
+        # node for each event id the edges table actually references, labelled
+        # by its linked day when it has one, else by member count.
+        stored_edges = get_graph_store().all()
+        event_members: dict[str, list[str]] = {}
+        event_date_by_id: dict[str, str] = {}
+        for edge in stored_edges:
+            if edge["kind"] == "part_of" and edge["target_id"].startswith("event:"):
+                event_members.setdefault(edge["target_id"], []).append(edge["source_id"])
+            elif edge["kind"] == "on_day" and edge["source_id"].startswith("event:"):
+                event_date_by_id[edge["source_id"]] = edge["target_id"].partition(":")[2]
+        for event_id in sorted(set(event_members) | set(event_date_by_id)):
+            label = (
+                f"event · {event_date_by_id[event_id]}"
+                if event_id in event_date_by_id
+                else f"event · {len(event_members.get(event_id, []))} entries"
+            )
+            nodes.append({"id": event_id, "type": "event", "label": label})
+
+        # Log-row members those events reference (expense:12, food:7, ...) get
+        # emitted too — lazily, only the referenced ids, each one an indexed
+        # PK lookup on its own SQLite table for a real label ("$14.50
+        # Chipotle"). A todo member resolves against the todo store the same
+        # way. Anything unresolvable (stale id, unknown type) is skipped and
+        # the clamp below keeps its edges from drawing.
+        node_ids = {node["id"] for node in nodes}
+        todo_title_by_id: dict[str, str] | None = None
+        for member_id in sorted({m for members in event_members.values() for m in members} - node_ids):
+            if member_id.startswith("todo:"):
+                if todo_title_by_id is None:
+                    todo_title_by_id = {t.id: t.title for t in get_schedule_store().list()}
+                label = todo_title_by_id.get(member_id.partition(":")[2])
+                node_type = "todo"
+            else:
+                label = log_row_label(repo.conn, member_id)
+                node_type = member_id.partition(":")[0]
+            if label is not None:
+                nodes.append({"id": member_id, "type": node_type, "label": label})
+                node_ids.add(member_id)
+
         # Stored edges last, clamped to ids actually emitted above: the edges
         # table legitimately holds endpoints this view has no node for (an MCP
         # todo:/expense: write whose text matched a person, say) and the
         # frontend's d3 forceLink throws on an id it can't resolve — one stray
         # edge must degrade to "not drawn", never to a blank graph page.
-        node_ids = {node["id"] for node in nodes}
-        for edge in get_graph_store().all():
+        for edge in stored_edges:
             if edge["source_id"] in node_ids and edge["target_id"] in node_ids:
                 edges.append({"source": edge["source_id"], "target": edge["target_id"], "kind": edge["kind"]})
 
