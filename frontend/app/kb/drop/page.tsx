@@ -13,6 +13,7 @@ import {
   ParsedEntry,
   PerceptionSummary,
   proposeDrop,
+  ProviderUsed,
   pushKBEntry,
   saveJournal,
   sortKBEntry,
@@ -128,6 +129,12 @@ export default function DropPage() {
   // Auto-ticks for long text until the user decides either way.
   const [saveToJournal, setSaveToJournal] = useState(false);
   const [journalTouched, setJournalTouched] = useState(false);
+  // Local-first ingest: who actually sorted the last proposal round, plus a
+  // snapshot of the ORIGINAL input it was sorted from — "Redo with cloud"
+  // re-submits that snapshot (a step back, never re-prompting over the local
+  // output) and REPLACES the current proposals.
+  const [providerUsed, setProviderUsed] = useState<ProviderUsed>(null);
+  const [lastSort, setLastSort] = useState<{ text: string; file: File | null; keepAsIs: boolean; extra: File | null; date: string } | null>(null);
 
   // After a single-note drop commits, keep the entry open for more rounds —
   // a lecture, a live-evolving trip record — instead of forcing a fresh drop
@@ -209,9 +216,36 @@ export default function DropPage() {
       // vision call needs just enough to recognize what this is, not every
       // page) — extraPhotos beyond the first are still attached in full at
       // save time below, they just aren't part of what AI looks at here.
-      const { entries: proposed } = await proposeDrop(text, file, keepAsIs, extraPhotos[0] ?? null, date);
+      const { entries: proposed, provider_used } = await proposeDrop(text, file, keepAsIs, extraPhotos[0] ?? null, date);
       setEntries((prev) => [...prev, ...proposed]);
+      setProviderUsed(provider_used);
+      setLastSort({ text, file, keepAsIs, extra: extraPhotos[0] ?? null, date });
       setStatus(`${proposed.length} entr${proposed.length === 1 ? "y" : "ies"} proposed — review below`);
+    } catch (e) {
+      setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setBusy(false);
+  }
+
+  // The step-back redo: re-runs the classification from the ORIGINAL input
+  // snapshot with provider=cloud, replacing (not appending to) the current
+  // proposals. Nothing commits until Save, same as always.
+  async function redoWithCloud() {
+    if (!lastSort) return;
+    setBusy(true);
+    setStatus("redoing with cloud...");
+    try {
+      const { entries: proposed, provider_used } = await proposeDrop(
+        lastSort.text,
+        lastSort.file,
+        lastSort.keepAsIs,
+        lastSort.extra,
+        lastSort.date,
+        "cloud"
+      );
+      setEntries(proposed);
+      setProviderUsed(provider_used);
+      setStatus(`${proposed.length} entr${proposed.length === 1 ? "y" : "ies"} re-proposed via cloud — review below`);
     } catch (e) {
       setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -322,6 +356,8 @@ export default function DropPage() {
     }
     setStatus(`saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
     setEntries([]);
+    setProviderUsed(null);
+    setLastSort(null);
     setText("");
     setJournalTouched(false);
     onFileChosen(null);
@@ -612,7 +648,26 @@ export default function DropPage() {
         <EmptyState icon={Inbox}>Nothing queued. Type, drop a file, or add an entry by hand — nothing is saved until you review it.</EmptyState>
       )}
 
-      {status && <p className="text-sm text-muted">{status}</p>}
+      {status && (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
+          <span>{status}</span>
+          {providerUsed && entries.length > 0 && (
+            <span className="rounded-full border border-line px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em]">
+              {providerUsed === "local" ? "sorted locally" : providerUsed === "cloud" ? "sorted via cloud" : "sorted locally + cloud"}
+            </span>
+          )}
+          {providerUsed === "local" && entries.length > 0 && (
+            <button
+              onClick={redoWithCloud}
+              disabled={busy}
+              title="Not happy with the local sort? Re-run from the original input on the cloud API — replaces these proposals."
+              className="text-xs text-accent hover:underline disabled:opacity-40"
+            >
+              Redo with cloud ↻
+            </button>
+          )}
+        </div>
+      )}
 
       {pendingFaces.length > 0 && (
         <Panel title={`Unknown faces (${pendingFaces.length})`} className={cn("border-accent/40")}>

@@ -68,6 +68,8 @@ type TargetFile = { folder: string; slug: string; title: string };
 const CUSTOM_BEDROCK = "__custom_bedrock__";
 // Same for "type your own local Ollama model" — sent as `local:<id>`.
 const CUSTOM_LOCAL = "__custom_local__";
+// The picker's default when no choice is stored yet — local-first.
+const DEFAULT_LOCAL_MODEL = "local:qwen3:8b";
 
 export default function KBPage() {
   return (
@@ -131,7 +133,11 @@ function KBPageInner() {
       } catch {}
       if (savedCustom) setCustomBedrockId(savedCustom);
       if (savedCustomLocal) setCustomLocalId(savedCustomLocal);
-      setModel(saved === CUSTOM_BEDROCK || saved === CUSTOM_LOCAL || list.some((m) => m.id === saved) ? (saved as string) : list[0]?.id);
+      // Local-first chat: with no stored choice, default to the free local
+      // 8B — cloud is an escalation the user chooses (per answer, via
+      // Escalate ↗, or by picking a cloud model here), never the default.
+      const fallback = list.find((m) => m.id === DEFAULT_LOCAL_MODEL)?.id ?? list[0]?.id;
+      setModel(saved === CUSTOM_BEDROCK || saved === CUSTOM_LOCAL || list.some((m) => m.id === saved) ? (saved as string) : fallback);
     });
   }, []);
 
@@ -454,13 +460,36 @@ function KBPageInner() {
     let finalLog = next;
     try {
       const { reply } = await chatWithKB(next, useKB, false, undefined, effectiveModel);
-      finalLog = [...next, { role: "assistant" as const, content: reply }];
+      // `model` is client-side bookkeeping: it labels the answer and, for a
+      // `local:` model, enables the per-answer Escalate ↗ affordance.
+      finalLog = [...next, { role: "assistant" as const, content: reply, model: effectiveModel }];
     } catch (e) {
       finalLog = [...next, { role: "assistant" as const, content: `(error: ${e instanceof Error ? e.message : String(e)})` }];
     }
     setChatLog(finalLog);
     await saveChatSession(id, title, finalLog);
     await refreshSessions();
+    setChatBusy(false);
+  }
+
+  // Choose-to-escalate with context transfer: re-sends the SAME conversation
+  // that produced a local answer (everything before it — the messages array
+  // already in state IS the context, nothing is retyped) to a cloud model,
+  // appending the cloud answer labeled with its model. The local answer is
+  // never deleted — the user compares the two.
+  async function escalate(messageIndex: number, cloudModel: string) {
+    setChatError(null);
+    setChatBusy(true);
+    let finalLog = chatLog;
+    try {
+      const context = chatLog.slice(0, messageIndex);
+      const { reply } = await chatWithKB(context, useKB, false, undefined, cloudModel);
+      finalLog = [...chatLog, { role: "assistant" as const, content: reply, model: cloudModel }];
+      setChatLog(finalLog);
+      if (sessionId) await saveChatSession(sessionId, sessionTitle, finalLog);
+    } catch (e) {
+      setChatError(e instanceof Error ? e.message : String(e));
+    }
     setChatBusy(false);
   }
 
@@ -598,7 +627,13 @@ function KBPageInner() {
                 {useKB ? "Ask about anything already in your knowledge base." : "Just banter — nothing here is saved."}
               </div>
             )}
-            <ChatLog messages={chatLog} busy={chatBusy} onAddToScratchpad={addToScratchpad} />
+            <ChatLog
+              messages={chatLog}
+              busy={chatBusy}
+              onAddToScratchpad={addToScratchpad}
+              onEscalate={escalate}
+              escalateModels={models.filter((m) => m.provider !== "local").map((m) => ({ id: m.id, label: m.label }))}
+            />
           </div>
 
           {chatFile && (

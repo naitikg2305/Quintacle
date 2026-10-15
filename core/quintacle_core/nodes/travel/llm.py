@@ -3,10 +3,9 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-import anthropic
 from pydantic import BaseModel
 
-from ...llm_config import DEFAULT_MODEL
+from ...llm_dispatch import parse_structured
 
 EXPERIENCE_KINDS = ("restaurant", "bar", "club", "activity", "historic", "other")
 ExperienceKind = Literal["restaurant", "bar", "club", "activity", "historic", "other"]
@@ -62,19 +61,11 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _call_experience_model(description: str) -> ExperienceEstimate:
-    client = anthropic.Anthropic()
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=512,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": description}],
-        output_format=ExperienceEstimate,
-    )
-    return response.parsed_output
+def _call_experience_model(description: str, provider: str | None = None) -> ExperienceEstimate:
+    return parse_structured(_SYSTEM_PROMPT, description, ExperienceEstimate, provider=provider, max_tokens=512).parsed
 
 
-def maybe_structure_experience(description: str) -> ExperienceEstimate | None:
+def maybe_structure_experience(description: str, provider: str | None = None) -> ExperienceEstimate | None:
     """Two-tier gate: a free regex pre-filter first, then — only if that
     matches — one cheap AI call that both decides relevance AND extracts
     fields in a single pass (cheaper than a separate gate-then-extract pair
@@ -84,14 +75,14 @@ def maybe_structure_experience(description: str) -> ExperienceEstimate | None:
     classified as something else."""
     if not _EXPERIENCE_SIGNAL_RE.search(description):
         return None
-    result = _call_experience_model(description)
+    result = _call_experience_model(description, provider=provider)
     return result if result.is_experience else None
 
 
-def structure_experience(description: str) -> ExperienceEstimate:
+def structure_experience(description: str, provider: str | None = None) -> ExperienceEstimate:
     """For the explicit "experience:"/"visit:" prefix — intent is already
     stated deterministically, so no gate, no regex pre-filter: always
     extracts fields."""
-    result = _call_experience_model(description)
+    result = _call_experience_model(description, provider=provider)
     result.is_experience = True
     return result

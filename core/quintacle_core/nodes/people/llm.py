@@ -3,11 +3,10 @@ from __future__ import annotations
 import re
 from datetime import date
 
-import anthropic
 from pydantic import BaseModel
 
 from ... import clock
-from ...llm_config import DEFAULT_MODEL
+from ...llm_dispatch import parse_structured
 
 PERSON_CATEGORIES = ("friend", "dating", "family", "coworker", "acquaintance", "other")
 
@@ -29,20 +28,19 @@ _STRUCTURE_SYSTEM_PROMPT = (
 )
 
 
-def structure_person(description: str, reference_date: date | None = None) -> PersonEstimate:
+def structure_person(description: str, reference_date: date | None = None, provider: str | None = None) -> PersonEstimate:
     """For the explicit "person:"/"friend:" prefix — intent already stated,
     so no relevance gate, always extracts fields."""
     ref = reference_date or clock.today()
-    client = anthropic.Anthropic()
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=1024,
-        system=_STRUCTURE_SYSTEM_PROMPT
+    result = parse_structured(
+        _STRUCTURE_SYSTEM_PROMPT
         + f"\n\nReference date (resolve relative dates like \"today\"/\"last week\" against this): {ref.isoformat()}",
-        messages=[{"role": "user", "content": description}],
-        output_format=PersonEstimate,
+        description,
+        PersonEstimate,
+        provider=provider,
+        max_tokens=1024,
     )
-    return response.parsed_output
+    return result.parsed
 
 
 # Deterministic, local, no API call — same two-signal shape as travel/llm.py's
@@ -95,7 +93,7 @@ _MENTION_SYSTEM_PROMPT = (
 
 
 def maybe_structure_person_mention(
-    description: str, known_names: list[str], reference_date: date | None = None
+    description: str, known_names: list[str], reference_date: date | None = None, provider: str | None = None
 ) -> PersonMentionEstimate | None:
     """Two-tier gate, same shape as travel's maybe_structure_experience(): a
     free local pre-filter first (either signal), then — only if that
@@ -106,19 +104,16 @@ def maybe_structure_person_mention(
     if not (_NEW_PERSON_SIGNAL_RE.search(description) or (known_re and known_re.search(description))):
         return None
     ref = reference_date or clock.today()
-    client = anthropic.Anthropic()
     library = "Known people: " + ", ".join(known_names) if known_names else "Known people: (none tracked yet)"
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
+    result = parse_structured(
+        _MENTION_SYSTEM_PROMPT
+        + f"\n\nReference date (resolve relative dates like \"today\"/\"last week\" against this): {ref.isoformat()}"
+        + "\n\n"
+        + library,
+        description,
+        PersonMentionEstimate,
+        provider=provider,
         max_tokens=1024,
-        system=(
-            _MENTION_SYSTEM_PROMPT
-            + f"\n\nReference date (resolve relative dates like \"today\"/\"last week\" against this): {ref.isoformat()}"
-            + "\n\n"
-            + library
-        ),
-        messages=[{"role": "user", "content": description}],
-        output_format=PersonMentionEstimate,
     )
-    result = response.parsed_output
-    return result if result.is_person_mention else None
+    estimate = result.parsed
+    return estimate if estimate.is_person_mention else None

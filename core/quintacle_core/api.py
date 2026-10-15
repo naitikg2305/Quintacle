@@ -14,7 +14,9 @@ load_dotenv()
 
 from . import clock
 from . import db
+from . import llm_dispatch
 from .day_bundle import build_day_bundle
+from .nodes.kb.chat import OllamaError
 from .graph import get_graph_store, init_graph_store, sync_frontmatter_links
 from .graph_capture import run_graph_capture_backfill
 from .nodes.drop_router import (
@@ -104,6 +106,16 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(OllamaError)
+    async def _ollama_error_handler(request, exc: OllamaError):
+        # A local-parse failure (daemon down, model missing, schema-invalid
+        # output under provider=local) anywhere in a request is user-fixable,
+        # not a server bug — surface it readable instead of a 500 stack trace,
+        # same contract as /kb/chat's inline OllamaError handling.
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     init_schedule_store(DATA_DIR / "schedule" / "todos")
     app.include_router(schedule_router)
@@ -244,6 +256,7 @@ def create_app() -> FastAPI:
         file2: UploadFile | None = File(None),
         keep_as_is: bool = Form(False),
         reference_date: str = Form(""),
+        provider: str | None = Form(None),
     ) -> dict:
         """The one general drop, covering schedule/journal/finance/KB entries.
         Deterministic keyword-prefix routing first (parse_prefix — no AI call);
@@ -254,9 +267,19 @@ def create_app() -> FastAPI:
         an already-finished document (an itinerary, a report) — AI only
         suggests where it goes, never rewrites the content. file2 is an
         optional second photo — the back of something, a label, another
-        angle — read together with file as ONE thing, not a second entry."""
+        angle — read together with file as ONE thing, not a second entry.
+        `provider` (local|cloud|auto) overrides the ingest default for the
+        TEXT-parse calls in this request — "redo with cloud" re-sends the
+        SAME original drop with provider=cloud (a step back, never
+        re-prompting over local output). Vision calls stay on their own
+        QUINTACLE_VISION switch. `provider_used` in the response is who
+        actually answered the routed calls ("mixed" when auto fell back
+        mid-request, null when handling was fully deterministic/vision)."""
         if not text.strip() and file is None:
             raise HTTPException(400, "nothing to drop — provide text and/or a file")
+        if provider is not None and provider.strip().lower() not in llm_dispatch.VALID_PROVIDERS:
+            raise HTTPException(400, f"provider must be one of {', '.join(llm_dispatch.VALID_PROVIDERS)}")
+        used = llm_dispatch.collect_providers()
 
         data = await file.read() if file is not None else None
         filename = file.filename if (file is not None and file.filename) else ""
@@ -295,7 +318,7 @@ def create_app() -> FastAPI:
                 # the extracted text instead: a formal document (ID, visa,
                 # lease...) routes into the real Document Vault (structured
                 # fields, auto-renewal-todo); anything else stays a KB note.
-                entry_type = classify_text_file_type(get_description())
+                entry_type = classify_text_file_type(get_description(), provider=provider)
 
         # The date "yesterday"/"last Tuesday" resolve against — the day the
         # user picked in the UI (backfilling an older day), else today. Same
@@ -363,7 +386,7 @@ def create_app() -> FastAPI:
             experience_check_text = get_description()
         elif entry_type == "home_item":
             known_residence_names = [r["name"] for r in get_residence_store().all()]
-            estimate = structure_home_item(get_description(), known_residence_names)
+            estimate = structure_home_item(get_description(), known_residence_names, provider=provider)
             fields = estimate.model_dump()
             # Deterministic resolution, no AI: an explicitly-named residence
             # fuzzy-matches the real list; otherwise falls back to whichever
@@ -373,13 +396,13 @@ def create_app() -> FastAPI:
             entries = [{"type": "home_item", **fields}]
             experience_check_text = get_description()
         elif entry_type == "residence_entry":
-            estimate = structure_residence(get_description())
+            estimate = structure_residence(get_description(), provider=provider)
             entries = [{"type": "residence_entry", **estimate.model_dump()}]
             experience_check_text = None  # a residence record itself isn't a visit-worthy "experience"
         elif entry_type == "experience_entry":
             # Explicit "experience:"/"visit:" prefix — intent already stated,
             # so no relevance gate, always extract fields.
-            estimate = structure_experience(get_description())
+            estimate = structure_experience(get_description(), provider=provider)
             entries = [{"type": "experience_entry", **estimate.model_dump(exclude={"is_experience"})}]
             experience_check_text = None  # already is one, don't also run the additive check on itself
         elif entry_type == "person_entry":
@@ -387,7 +410,7 @@ def create_app() -> FastAPI:
             # no relevance gate, always extract fields. experience_check_text
             # stays populated (not nulled) — "first date with Sarah at a wine
             # bar" is BOTH a new person AND a venue worth its own Experience.
-            estimate = structure_person(get_description(), reference_date)
+            estimate = structure_person(get_description(), reference_date, provider=provider)
             known_people = [p["name"] for p in get_people_store().all()]
             fields = estimate.model_dump()
             fields["suggested_name"] = canonicalize_name(fields["suggested_name"], known_people)
@@ -396,13 +419,13 @@ def create_app() -> FastAPI:
         elif entry_type == "credit_card_entry":
             # Explicit "creditcard:"/"card:" prefix — a card isn't a place or
             # a person, so no additive Experience/Person check needed.
-            estimate = structure_credit_card(get_description())
+            estimate = structure_credit_card(get_description(), provider=provider)
             entries = [{"type": "credit_card_entry", **estimate.model_dump()}]
             experience_check_text = None
         elif entry_type == "investment_entry":
             # Explicit "invest:"/"stock:" prefix — a holding isn't a place or
             # a person, so no additive Experience/Person check needed.
-            estimate = structure_investment(get_description())
+            estimate = structure_investment(get_description(), provider=provider)
             entries = [{"type": "investment_entry", **estimate.model_dump()}]
             experience_check_text = None
         elif entry_type == "ingredient_preset":
@@ -442,7 +465,7 @@ def create_app() -> FastAPI:
             )
             home_countries = profile_store.load().home_countries
             if keep_as_is:
-                placement = suggest_kb_placement(description, get_kb_store().list_folders(), existing_notes)
+                placement = suggest_kb_placement(description, get_kb_store().list_folders(), existing_notes, provider=provider)
                 entries = [
                     {
                         "type": "kb_entry",
@@ -457,7 +480,7 @@ def create_app() -> FastAPI:
                     }
                 ]
             else:
-                suggestion = suggest_kb_entry(description, get_kb_store().list_folders(), existing_notes)
+                suggestion = suggest_kb_entry(description, get_kb_store().list_folders(), existing_notes, provider=provider)
                 folder = (
                     compute_photo_folder(photo_date, photo_location, None, home_countries)
                     if photo_date
@@ -469,12 +492,12 @@ def create_app() -> FastAPI:
         elif entry_type is not None:
             # todo / food / exercise / substance / activity / body_stat / finance(text)
             # — type already fixed deterministically; AI only extracts fields.
-            parsed = parse_journal_dump(rest, known_meals, reference_date, forced_type=entry_type, known_routines=known_routines)
+            parsed = parse_journal_dump(rest, known_meals, reference_date, forced_type=entry_type, known_routines=known_routines, provider=provider)
             entries = [e.model_dump() for e in parsed]
         else:
             # No prefix, no file — plain text with no deterministic signal at
             # all. Only path that hits full multi-type AI classification.
-            parsed = parse_journal_dump(rest, known_meals, reference_date, known_routines=known_routines)
+            parsed = parse_journal_dump(rest, known_meals, reference_date, known_routines=known_routines, provider=provider)
             entries = [e.model_dump() for e in parsed]
 
         # Propose-everything-plausible, prune-what-you-don't-want: independent
@@ -488,7 +511,7 @@ def create_app() -> FastAPI:
         # didn't (experience_check_text falsy, or not experience-worthy).
         exp_estimate = None
         if experience_check_text:
-            exp_estimate = maybe_structure_experience(experience_check_text)
+            exp_estimate = maybe_structure_experience(experience_check_text, provider=provider)
             if exp_estimate is not None:
                 exp_links: list[str] = []
                 if is_image and entry_type == "kb_entry":
@@ -505,7 +528,7 @@ def create_app() -> FastAPI:
                     if photo_date is not None:
                         photo_location = extract_photo_location(data)
                         existing_notes = get_kb_store().notes_index()
-                        suggestion = suggest_kb_entry(get_description(), get_kb_store().list_folders(), existing_notes)
+                        suggestion = suggest_kb_entry(get_description(), get_kb_store().list_folders(), existing_notes, provider=provider)
                         folder = compute_photo_folder(photo_date, photo_location, None, profile_store.load().home_countries)
                         journal_link = (
                             [photo_date.isoformat()] if get_journal_store().load(photo_date) is not None else []
@@ -534,7 +557,7 @@ def create_app() -> FastAPI:
         person_check_text = experience_check_text if experience_check_text is not None else rest
         if person_check_text and entry_type != "person_entry":
             known_people = [p["name"] for p in get_people_store().all()]
-            person_estimate = maybe_structure_person_mention(person_check_text, known_people, reference_date)
+            person_estimate = maybe_structure_person_mention(person_check_text, known_people, reference_date, provider=provider)
             if person_estimate is not None:
                 if person_estimate.is_new_person:
                     entries.append(
@@ -593,7 +616,7 @@ def create_app() -> FastAPI:
                     if entry.get("type") in _PHOTO_BEARING_ENTRY_TYPES:
                         entry["perception"] = payload
 
-        return {"entries": entries}
+        return {"entries": entries, "provider_used": llm_dispatch.summarize_providers(used)}
 
     @app.get("/graph")
     def graph() -> dict:

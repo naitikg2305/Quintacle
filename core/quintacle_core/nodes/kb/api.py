@@ -13,6 +13,7 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, Response, Upload
 from openai import OpenAIError
 from pydantic import BaseModel
 
+from ... import llm_dispatch
 from ...graph import get_graph_store, link_new_entry, sync_frontmatter_links
 from ...graph_capture import safe_entry_graph_links
 from ...perception import perceive_photo
@@ -156,6 +157,7 @@ def sort_entry(
     content: str = Body(..., media_type="text/plain"),
     target_folder: str | None = None,
     target_slug: str | None = None,
+    provider: str | None = None,
 ) -> dict:
     """Proposes a folder/title/content — never writes anything.
     - No target: proposes a brand new entry anywhere, folder AI-guessed.
@@ -165,22 +167,31 @@ def sort_entry(
       guessed), only title/content get proposed. Used by the per-folder chat
       so everything it creates stays under the folder it's scoped to.
     Either way, POST /kb/entries is the separate, explicit commit step (see
-    Approval before write)."""
-    if target_folder and target_slug:
-        existing = get_store().read(target_folder, target_slug)
-        if existing is None:
-            raise HTTPException(404, "target entry not found")
-        first_line, _, rest = existing.partition("\n")
-        title = first_line.lstrip("# ").strip() or target_slug
-        merged_body = suggest_kb_update(rest.lstrip("\n"), content)
-        return {"folder": target_folder, "title": title, "content": merged_body}
-
-    if target_folder:
-        scoped = suggest_kb_entry_for_folder(content, get_store().notes_index())
-        return {"folder": target_folder, **scoped.model_dump()}
-
-    suggestion = suggest_kb_entry(content, get_store().list_folders(), get_store().notes_index())
-    return suggestion.model_dump()
+    Approval before write).
+    `provider` (local|cloud|auto) overrides the ingest default for this one
+    sort — "redo with cloud" re-sends the SAME content with provider=cloud.
+    `provider_used` in the response is who actually answered."""
+    used = llm_dispatch.collect_providers()
+    try:
+        if target_folder and target_slug:
+            existing = get_store().read(target_folder, target_slug)
+            if existing is None:
+                raise HTTPException(404, "target entry not found")
+            first_line, _, rest = existing.partition("\n")
+            title = first_line.lstrip("# ").strip() or target_slug
+            merged_body = suggest_kb_update(rest.lstrip("\n"), content, provider=provider)
+            result = {"folder": target_folder, "title": title, "content": merged_body}
+        elif target_folder:
+            scoped = suggest_kb_entry_for_folder(content, get_store().notes_index(), provider=provider)
+            result = {"folder": target_folder, **scoped.model_dump()}
+        else:
+            suggestion = suggest_kb_entry(content, get_store().list_folders(), get_store().notes_index(), provider=provider)
+            result = suggestion.model_dump()
+    except (OllamaError, ValueError) as e:
+        # provider=local with the daemon down / model missing / schema-invalid
+        # output, or a bogus provider value — readable, not a 500.
+        raise HTTPException(400, str(e))
+    return {**result, "provider_used": llm_dispatch.summarize_providers(used)}
 
 
 def _sync_note_graph_links(note_id: str, title: str, content: str, link_titles: list[str] | None) -> None:

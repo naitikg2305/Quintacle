@@ -721,12 +721,23 @@ export const createInvestment = (fields: {
   notes?: string;
 }) => request<{ name: string; slug: string }>("/investments", { method: "POST", body: JSON.stringify(fields) });
 
-export const parseJournal = (date: string, content: string) =>
-  request<ParsedEntry[]>(`/journal/${date}/parse`, {
-    method: "POST",
-    headers: { "content-type": "text/plain" },
-    body: content,
-  });
+// Who actually served a parse: "local" (free, on-machine), "cloud" (metered
+// Anthropic), "mixed" (auto fell back mid-request), or null (fully
+// deterministic — no model was consulted at all).
+export type ProviderUsed = "local" | "cloud" | "mixed" | null;
+// What the caller may ask for — "redo with cloud" re-sends the SAME original
+// input with "cloud" (a step back, never re-prompting over local output).
+export type IngestProvider = "local" | "cloud" | "auto";
+
+export const parseJournal = (date: string, content: string, provider?: IngestProvider) =>
+  request<{ entries: ParsedEntry[]; provider_used: ProviderUsed }>(
+    `/journal/${date}/parse${provider ? `?provider=${provider}` : ""}`,
+    {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: content,
+    }
+  );
 
 export const logExpense = (body: {
   date: string;
@@ -770,14 +781,16 @@ export async function proposeDrop(
   file: File | null,
   keepAsIs = false,
   file2: File | null = null,
-  referenceDate = ""
-): Promise<{ entries: ParsedEntry[] }> {
+  referenceDate = "",
+  provider?: IngestProvider
+): Promise<{ entries: ParsedEntry[]; provider_used: ProviderUsed }> {
   const form = new FormData();
   form.append("text", text);
   if (file) form.append("file", file);
   if (file2) form.append("file2", file2);
   form.append("keep_as_is", String(keepAsIs));
   if (referenceDate) form.append("reference_date", referenceDate);
+  if (provider) form.append("provider", provider);
   const res = await fetch(`${API_BASE}/drop`, { method: "POST", body: form });
   if (!res.ok) throw new Error(`drop failed: ${res.status} ${await res.text()}`);
   return res.json();
@@ -1059,7 +1072,11 @@ export type ChatContentBlock =
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
   | { type: "document"; source: { type: "base64"; media_type: "application/pdf"; data: string } };
 
-export type ChatMessage = { role: "user" | "assistant"; content: string | ChatContentBlock[] };
+// `model` is client-side bookkeeping only (which picker entry produced an
+// assistant reply — drives the "Escalate" affordance and the per-answer model
+// label); the backend's pydantic validation strips it before the API call and
+// the chat store never persists it.
+export type ChatMessage = { role: "user" | "assistant"; content: string | ChatContentBlock[]; model?: string };
 
 const CHAT_IMAGE_MIME: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp" };
 

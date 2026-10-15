@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import anthropic
 from pydantic import BaseModel
 
-from ...llm_config import DEFAULT_MODEL
+from ...llm_dispatch import parse_structured
 
 # The domains named in the planning doc (quintacle-ideas.md, Pillar 3), nested
 # under the real Notebook's own top-level buckets — offered even before any
@@ -65,18 +64,12 @@ class KBSuggestion(BaseModel):
     links: list[str] = []
 
 
-def suggest_kb_entry(raw_text: str, existing_folders: list[str], existing_notes: list[dict] | None = None) -> KBSuggestion:
-    client = anthropic.Anthropic()
+def suggest_kb_entry(
+    raw_text: str, existing_folders: list[str], existing_notes: list[dict] | None = None, provider: str | None = None
+) -> KBSuggestion:
     offered = sorted(set(existing_folders) | set(SEED_FOLDERS))
     system = _SYSTEM_PROMPT + "\n\nFolders: " + ", ".join(offered) + "\n\n" + _format_notes_index(existing_notes or [])
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=4096,
-        system=system,
-        messages=[{"role": "user", "content": raw_text}],
-        output_format=KBSuggestion,
-    )
-    return response.parsed_output
+    return parse_structured(system, raw_text, KBSuggestion, provider=provider, max_tokens=4096).parsed
 
 
 _SCOPED_SYSTEM_PROMPT = """You help write a note that's going into a folder the user has \
@@ -95,22 +88,16 @@ class ScopedKBSuggestion(BaseModel):
     links: list[str] = []
 
 
-def suggest_kb_entry_for_folder(raw_text: str, existing_notes: list[dict] | None = None) -> ScopedKBSuggestion:
+def suggest_kb_entry_for_folder(
+    raw_text: str, existing_notes: list[dict] | None = None, provider: str | None = None
+) -> ScopedKBSuggestion:
     """Like suggest_kb_entry(), but the folder is already fixed by the caller
     (a folder-scoped chat) — no folder guessing, deterministic destination.
     Links can still point anywhere in the KB — a note about someone can
     genuinely relate to a note filed elsewhere, scoping the chat's context
     doesn't mean the graph has to be scoped too."""
-    client = anthropic.Anthropic()
     system = _SCOPED_SYSTEM_PROMPT + "\n\n" + _format_notes_index(existing_notes or [])
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=4096,
-        system=system,
-        messages=[{"role": "user", "content": raw_text}],
-        output_format=ScopedKBSuggestion,
-    )
-    return response.parsed_output
+    return parse_structured(system, raw_text, ScopedKBSuggestion, provider=provider, max_tokens=4096).parsed
 
 
 _PLACEMENT_SYSTEM_PROMPT = """You help file an already-finished document into the right folder \
@@ -130,24 +117,16 @@ class KBPlacement(BaseModel):
 
 
 def suggest_kb_placement(
-    raw_text: str, existing_folders: list[str], existing_notes: list[dict] | None = None
+    raw_text: str, existing_folders: list[str], existing_notes: list[dict] | None = None, provider: str | None = None
 ) -> KBPlacement:
     """Like suggest_kb_entry(), but never touches the content — for a document
     the user considers already finished (an itinerary, a report) and doesn't
     want AI rewording. Ask before letting AI edit finished work. Links still
     get suggested — they live in frontmatter, not the body, so the document
     stays byte-for-byte untouched but still gains graph connectivity."""
-    client = anthropic.Anthropic()
     offered = sorted(set(existing_folders) | set(SEED_FOLDERS))
     system = _PLACEMENT_SYSTEM_PROMPT + "\n\nFolders: " + ", ".join(offered) + "\n\n" + _format_notes_index(existing_notes or [])
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=1024,
-        system=system,
-        messages=[{"role": "user", "content": raw_text}],
-        output_format=KBPlacement,
-    )
-    return response.parsed_output
+    return parse_structured(system, raw_text, KBPlacement, provider=provider, max_tokens=1024).parsed
 
 
 _BATCH_SYSTEM_PROMPT = """You help file a BATCH of files into a personal knowledge base at once. \
@@ -188,7 +167,7 @@ class BatchDropSuggestion(BaseModel):
 
 
 def suggest_kb_batch(
-    file_entries: list[dict], existing_folders: list[str], existing_notes: list[dict] | None = None
+    file_entries: list[dict], existing_folders: list[str], existing_notes: list[dict] | None = None, provider: str | None = None
 ) -> BatchDropSuggestion:
     """file_entries: [{"file_id": ..., "description": ...}, ...]. One call
     covering every file so related files consistently land in the same
@@ -198,20 +177,12 @@ def suggest_kb_batch(
     (not the real filename) — models reliably echo an opaque id back
     unchanged, but will happily "improve" something that looks like a name,
     which broke the original design (real filenames came back renamed)."""
-    client = anthropic.Anthropic()
     offered = sorted(set(existing_folders) | set(SEED_FOLDERS))
     system = (
         _BATCH_SYSTEM_PROMPT + "\n\nFolders: " + ", ".join(offered) + "\n\n" + _format_notes_index(existing_notes or [])
     )
     user_content = "\n\n".join(f"### {e['file_id']}\n{e['description']}" for e in file_entries)
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=16000,
-        system=system,
-        messages=[{"role": "user", "content": user_content}],
-        output_format=BatchDropSuggestion,
-    )
-    return response.parsed_output
+    return parse_structured(system, user_content, BatchDropSuggestion, provider=provider, max_tokens=16000).parsed
 
 
 _UPDATE_SYSTEM_PROMPT = (
@@ -228,18 +199,12 @@ class KBBodyUpdate(BaseModel):
     body: str
 
 
-def suggest_kb_update(existing_body: str, new_text: str) -> str:
-    client = anthropic.Anthropic()
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
+def suggest_kb_update(existing_body: str, new_text: str, provider: str | None = None) -> str:
+    result = parse_structured(
+        _UPDATE_SYSTEM_PROMPT,
+        f"CURRENT NOTE BODY:\n{existing_body}\n\nNEW INFORMATION TO FOLD IN:\n{new_text}",
+        KBBodyUpdate,
+        provider=provider,
         max_tokens=4096,
-        system=_UPDATE_SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": f"CURRENT NOTE BODY:\n{existing_body}\n\nNEW INFORMATION TO FOLD IN:\n{new_text}",
-            }
-        ],
-        output_format=KBBodyUpdate,
     )
-    return response.parsed_output.body
+    return result.parsed.body

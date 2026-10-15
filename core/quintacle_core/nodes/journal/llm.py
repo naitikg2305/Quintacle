@@ -4,12 +4,11 @@ import re
 from datetime import date
 from typing import Annotated, Literal, Union
 
-import anthropic
 from pydantic import BaseModel, Field
 from pydantic.json_schema import SkipJsonSchema
 
 from ... import clock
-from ...llm_config import DEFAULT_MODEL
+from ...llm_dispatch import parse_structured
 
 ACTIVITY_CATEGORIES = ("productivity", "social", "leisure", "yourself", "emotional")
 
@@ -230,7 +229,7 @@ def _entry_label(entry: BaseModel) -> str:
     return ""
 
 
-def _resolve_entry_dates(raw_text: str, entries: list, reference_date: date) -> None:
+def _resolve_entry_dates(raw_text: str, entries: list, reference_date: date, provider: str | None = None) -> None:
     """Second, deliberately tiny pass that mutates `entries` in place. Why
     this is separate from the main classification call above: ParsedJournal's
     schema is already right at Anthropic's structured-output grammar-size
@@ -244,23 +243,15 @@ def _resolve_entry_dates(raw_text: str, entries: list, reference_date: date) -> 
     if not dateable:
         return
     lines = [f"{i}: {e.type} — {_entry_label(e)}" for i, e in dateable]
-    client = anthropic.Anthropic()
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
+    result = parse_structured(
+        _DATE_RESOLVE_SYSTEM_PROMPT
+        + f"\n\nReference date: {reference_date.isoformat()} ({reference_date.strftime('%A')})",
+        f"Original text:\n{raw_text}\n\nExtracted items:\n" + "\n".join(lines),
+        _DateResolutions,
+        provider=provider,
         max_tokens=2048,
-        system=(
-            _DATE_RESOLVE_SYSTEM_PROMPT
-            + f"\n\nReference date: {reference_date.isoformat()} ({reference_date.strftime('%A')})"
-        ),
-        messages=[
-            {
-                "role": "user",
-                "content": f"Original text:\n{raw_text}\n\nExtracted items:\n" + "\n".join(lines),
-            }
-        ],
-        output_format=_DateResolutions,
     )
-    by_index = {r.index: r.entry_date for r in response.parsed_output.resolutions}
+    by_index = {r.index: r.entry_date for r in result.parsed.resolutions}
     for i, entry in dateable:
         if i in by_index:
             entry.entry_date = by_index[i]
@@ -289,22 +280,21 @@ _FINANCE_KIND_SYSTEM_PROMPT = (
 )
 
 
-def _resolve_finance_kinds(entries: list) -> None:
+def _resolve_finance_kinds(entries: list, provider: str | None = None) -> None:
     """Mirrors _resolve_entry_dates' shape exactly (separate small call,
     mutates in place) but for FinanceEntry.kind instead of entry_date."""
     finance_entries = [(i, e) for i, e in enumerate(entries) if getattr(e, "type", None) == "finance"]
     if not finance_entries:
         return
     lines = [f"{i}: merchant={e.merchant!r} category={e.category!r} amount={e.amount} notes={e.notes!r}" for i, e in finance_entries]
-    client = anthropic.Anthropic()
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
+    result = parse_structured(
+        _FINANCE_KIND_SYSTEM_PROMPT,
+        "\n".join(lines),
+        _FinanceKindResolutions,
+        provider=provider,
         max_tokens=2048,
-        system=_FINANCE_KIND_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": "\n".join(lines)}],
-        output_format=_FinanceKindResolutions,
     )
-    by_index = {r.index: r.kind for r in response.parsed_output.resolutions}
+    by_index = {r.index: r.kind for r in result.parsed.resolutions}
     for i, entry in finance_entries:
         if i in by_index:
             entry.kind = by_index[i]
@@ -316,6 +306,7 @@ def parse_journal_dump(
     reference_date: date | None = None,
     forced_type: str | None = None,
     known_routines: list[dict] | None = None,
+    provider: str | None = None,
 ) -> list[
     ActivityEntry
     | FoodEntry
@@ -326,7 +317,6 @@ def parse_journal_dump(
     | FinanceEntry
     | KBEntryProposal
 ]:
-    client = anthropic.Anthropic()
     ref = reference_date or clock.today()
     system = (
         _SYSTEM_PROMPT
@@ -344,15 +334,9 @@ def parse_journal_dump(
             f"'{forced_type}' — return exactly one entry of that type, extracting every "
             f"relevant field from the text."
         )
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=16000,
-        system=system,
-        messages=[{"role": "user", "content": raw_text}],
-        output_format=ParsedJournal,
-    )
-    entries = response.parsed_output.entries
+    result = parse_structured(system, raw_text, ParsedJournal, provider=provider, max_tokens=16000)
+    entries = result.parsed.entries
     if _DATE_SIGNAL_RE.search(raw_text):
-        _resolve_entry_dates(raw_text, entries, ref)
-    _resolve_finance_kinds(entries)
+        _resolve_entry_dates(raw_text, entries, ref, provider=provider)
+    _resolve_finance_kinds(entries, provider=provider)
     return entries

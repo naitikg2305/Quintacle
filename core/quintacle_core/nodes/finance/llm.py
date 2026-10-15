@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import anthropic
 from pydantic import BaseModel
 
-from ...llm_config import DEFAULT_MODEL
+from ...llm_dispatch import parse_structured
 
 
 class CreditCardEstimate(BaseModel):
@@ -26,18 +25,10 @@ _SYSTEM_PROMPT = (
 )
 
 
-def structure_credit_card(description: str) -> CreditCardEstimate:
+def structure_credit_card(description: str, provider: str | None = None) -> CreditCardEstimate:
     """For the explicit "creditcard:"/"card:" prefix — intent already
     stated, so no relevance gate, always extracts fields."""
-    client = anthropic.Anthropic()
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=1024,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": description}],
-        output_format=CreditCardEstimate,
-    )
-    return response.parsed_output
+    return parse_structured(_SYSTEM_PROMPT, description, CreditCardEstimate, provider=provider, max_tokens=1024).parsed
 
 
 class InvestmentEstimate(BaseModel):
@@ -62,15 +53,7 @@ _INVESTMENT_SYSTEM_PROMPT = (
 )
 
 
-def structure_investment(description: str) -> InvestmentEstimate:
+def structure_investment(description: str, provider: str | None = None) -> InvestmentEstimate:
     """For the explicit "invest:"/"stock:" prefix — intent already stated,
     so no relevance gate, always extracts fields."""
-    client = anthropic.Anthropic()
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=1024,
-        system=_INVESTMENT_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": description}],
-        output_format=InvestmentEstimate,
-    )
-    return response.parsed_output
+    return parse_structured(_INVESTMENT_SYSTEM_PROMPT, description, InvestmentEstimate, provider=provider, max_tokens=1024).parsed

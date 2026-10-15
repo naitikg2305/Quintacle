@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, HTTPException
 
+from ... import llm_dispatch
 from ...graph_capture import safe_journal_graph_links
+from ...nodes.kb.chat import OllamaError
 from ..logs.api import get_log_store, get_repo as get_logs_repo
 from ..people.api import get_store as get_people_store
 from ..people.llm import maybe_structure_person_mention
@@ -46,35 +48,55 @@ def get_journal(for_date: date) -> dict:
 
 
 @router.post("/{for_date}/parse")
-def parse_journal(for_date: date, content: str = Body(..., media_type="text/plain")) -> list[dict]:
+def parse_journal(for_date: date, content: str = Body(..., media_type="text/plain"), provider: str | None = None) -> dict:
     """Proposes activity-log entries from a raw dump — never writes them.
     The frontend shows these for review/edit; committing them is a separate
-    call to POST /logs/activities per entry (see Approval before write)."""
+    call to POST /logs/activities per entry (see Approval before write).
+    `provider` (local|cloud|auto) overrides the ingest default for this one
+    parse — the frontend's "redo with cloud" re-sends the SAME raw text with
+    provider=cloud (a step back, never re-prompting over local output).
+    `provider_used` in the response is who actually answered ("mixed" when
+    auto fell back mid-request)."""
+    used = llm_dispatch.collect_providers()
     known_meals = [dict(row) for row in get_logs_repo().list_meals()]
     known_routines = get_logs_repo().list_routines()
-    entries = [
-        e.model_dump()
-        for e in parse_journal_dump(content, known_meals, reference_date=for_date, known_routines=known_routines)
-    ]
+    try:
+        entries = [
+            e.model_dump()
+            for e in parse_journal_dump(
+                content, known_meals, reference_date=for_date, known_routines=known_routines, provider=provider
+            )
+        ]
+    except (OllamaError, ValueError) as e:
+        # provider=local with the daemon down / model missing / schema-invalid
+        # output, or a bogus provider value — readable, not a 500.
+        raise HTTPException(400, str(e))
 
     # Deterministic pass, not AI: correct case/hyphen/spacing drift against
     # names already established in the logs, so "pull-ups" and "Pull Ups"
     # don't fragment into separate things trend tracking can't reconcile.
     canonicalize_entries(entries, get_log_store())
 
+    try:
+        return {"entries": _additive_checks(entries, content, for_date, provider), "provider_used": llm_dispatch.summarize_providers(used)}
+    except OllamaError as e:
+        raise HTTPException(400, str(e))
+
+
+def _additive_checks(entries: list[dict], content: str, for_date: date, provider: str | None) -> list[dict]:
     # Same "propose everything plausible" additive checks /drop runs — a
     # journal entry is free text, never a file, so this is the lean
     # text-only version (no photo-archival branch, that's Drop-specific).
     # A journal dump is exactly where "dinner with Laura, she's got a big
     # trip coming up" naturally gets written, so this can't be dropped just
     # because Journal is its own page again.
-    exp_estimate = maybe_structure_experience(content)
+    exp_estimate = maybe_structure_experience(content, provider=provider)
     exp_links: list[str] = []
     if exp_estimate is not None:
         entries.append({"type": "experience_entry", **exp_estimate.model_dump(exclude={"is_experience"}), "links": exp_links})
 
     known_people = [p["name"] for p in get_people_store().all()]
-    person_estimate = maybe_structure_person_mention(content, known_people, for_date)
+    person_estimate = maybe_structure_person_mention(content, known_people, for_date, provider=provider)
     if person_estimate is not None:
         if person_estimate.is_new_person:
             entries.append(

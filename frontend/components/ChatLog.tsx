@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -27,11 +28,21 @@ export default function ChatLog({
   messages,
   busy,
   onAddToScratchpad,
+  onEscalate,
+  escalateModels,
 }: {
   messages: ChatMessage[];
   busy?: boolean;
   onAddToScratchpad?: (text: string) => void;
+  // Local-first chat: a reply that came from a `local:` model (known
+  // client-side via message.model) gets an "Escalate ↗" affordance — pick a
+  // cloud model and the SAME conversation up to that reply is re-sent to it,
+  // appending the cloud answer alongside (never deleting) the local one.
+  onEscalate?: (messageIndex: number, cloudModel: string) => void;
+  escalateModels?: { id: string; label: string }[];
 }) {
+  // Which message's tiny cloud-model chooser is open (one at a time).
+  const [escalatingIndex, setEscalatingIndex] = useState<number | null>(null);
   return (
     <>
       {messages.map((m, i) => {
@@ -56,10 +67,44 @@ export default function ChatLog({
               ) : (
                 <p className="whitespace-pre-wrap">{text}</p>
               )}
-              {m.role === "assistant" && onAddToScratchpad && (
-                <button onClick={() => onAddToScratchpad(text)} className="mt-1 text-xs text-accent/80 hover:text-accent hover:underline">
-                  → add to scratchpad
-                </button>
+              {m.role === "assistant" && (m.model || onAddToScratchpad) && (
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {m.model && (
+                    <span className="font-mono text-[10px] uppercase tracking-wider text-muted" title="Which model wrote this answer">
+                      {m.model}
+                    </span>
+                  )}
+                  {onAddToScratchpad && (
+                    <button onClick={() => onAddToScratchpad(text)} className="text-xs text-accent/80 hover:text-accent hover:underline">
+                      → add to scratchpad
+                    </button>
+                  )}
+                  {onEscalate && !!escalateModels?.length && m.model?.startsWith("local:") && (
+                    <button
+                      onClick={() => setEscalatingIndex(escalatingIndex === i ? null : i)}
+                      title="Not good enough? Re-ask this same conversation on a cloud model — the cloud answer is added alongside this one for comparison."
+                      className="text-xs text-accent/80 hover:text-accent hover:underline"
+                    >
+                      Escalate ↗
+                    </button>
+                  )}
+                </div>
+              )}
+              {escalatingIndex === i && onEscalate && !!escalateModels?.length && (
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  {escalateModels.map((em) => (
+                    <button
+                      key={em.id}
+                      onClick={() => {
+                        setEscalatingIndex(null);
+                        onEscalate(i, em.id);
+                      }}
+                      className="rounded-md border border-line px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-accent/50 hover:text-accent"
+                    >
+                      {em.label}
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           </div>

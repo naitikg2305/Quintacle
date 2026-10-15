@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import EntryCard from "@/components/EntryCard";
-import { ExerciseSet, getJournal, listExerciseNames, listMeals, Meal, ParsedEntry, parseJournal, saveJournal } from "@/lib/api";
+import { ExerciseSet, getJournal, listExerciseNames, listMeals, Meal, ParsedEntry, parseJournal, ProviderUsed, saveJournal } from "@/lib/api";
 import { commitEntry } from "@/lib/entries";
 import { todayIso } from "@/lib/date";
 
@@ -25,6 +25,12 @@ export default function JournalPage() {
   const [exerciseNames, setExerciseNames] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  // Local-first ingest: who parsed the last proposal round, plus a snapshot
+  // of the ORIGINAL dump it parsed — "Redo with cloud" re-sends that snapshot
+  // (a step back, never re-prompting over the local output) and REPLACES the
+  // current proposals.
+  const [providerUsed, setProviderUsed] = useState<ProviderUsed>(null);
+  const [lastParsed, setLastParsed] = useState<string | null>(null);
 
   useEffect(() => {
     listMeals().then(setMeals);
@@ -35,6 +41,8 @@ export default function JournalPage() {
     setEntries([]);
     setStatus(null);
     setContent("");
+    setProviderUsed(null);
+    setLastParsed(null);
     getJournal(date).then((j) => setExisting(j.content));
   }, [date]);
 
@@ -57,9 +65,29 @@ export default function JournalPage() {
     setBusy(true);
     setStatus("parsing...");
     try {
-      const parsed = await parseJournal(date, content);
+      const { entries: parsed, provider_used } = await parseJournal(date, content);
       setEntries((prev) => [...prev, ...parsed]);
+      setProviderUsed(provider_used);
+      setLastParsed(content);
       setStatus(`${parsed.length} entr${parsed.length === 1 ? "y" : "ies"} proposed — review below`);
+    } catch (e) {
+      setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setBusy(false);
+  }
+
+  // The step-back redo: re-parses the ORIGINAL dump snapshot with
+  // provider=cloud, replacing (not appending to) the current proposals.
+  // Nothing commits until Save, same as always.
+  async function redoWithCloud() {
+    if (!lastParsed) return;
+    setBusy(true);
+    setStatus("redoing with cloud...");
+    try {
+      const { entries: parsed, provider_used } = await parseJournal(date, lastParsed, "cloud");
+      setEntries(parsed);
+      setProviderUsed(provider_used);
+      setStatus(`${parsed.length} entr${parsed.length === 1 ? "y" : "ies"} re-proposed via cloud — review below`);
     } catch (e) {
       setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -109,6 +137,8 @@ export default function JournalPage() {
     }
     setStatus(`saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
     setEntries([]);
+    setProviderUsed(null);
+    setLastParsed(null);
     setBusy(false);
   }
 
@@ -153,6 +183,21 @@ export default function JournalPage() {
           Parse into entries
         </button>
         {status && <span className="text-sm opacity-70">{status}</span>}
+        {providerUsed && entries.length > 0 && (
+          <span className="rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest opacity-70">
+            {providerUsed === "local" ? "sorted locally" : providerUsed === "cloud" ? "sorted via cloud" : "sorted locally + cloud"}
+          </span>
+        )}
+        {providerUsed === "local" && entries.length > 0 && (
+          <button
+            onClick={redoWithCloud}
+            disabled={busy}
+            title="Not happy with the local parse? Re-run from the original dump on the cloud API — replaces these proposals."
+            className="text-sm underline disabled:opacity-40"
+          >
+            Redo with cloud ↻
+          </button>
+        )}
       </div>
 
       {entries.length > 0 && (

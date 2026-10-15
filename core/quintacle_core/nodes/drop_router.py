@@ -8,6 +8,7 @@ import anthropic
 from pydantic import BaseModel
 
 from ..llm_config import DEFAULT_MODEL
+from ..llm_dispatch import parse_structured
 from .journal.llm import FinanceEntry
 from .vision import image_content_blocks
 
@@ -169,27 +170,26 @@ class _TextFileClassification(BaseModel):
     is_document: bool
 
 
-def classify_text_file_type(description: str) -> Literal["document_entry", "kb_entry"]:
+def classify_text_file_type(description: str, provider: str | None = None) -> Literal["document_entry", "kb_entry"]:
     """The PDF/DOCX equivalent of classify_image_type() above — a photo gets
     a vision call to spot the "document" kind (an ID/passport/lease/etc.);
     a PDF/DOCX has no image to look at, but describe_drop() already extracted
     its real text, so this classifies THAT instead. Only reached for an
     unprefixed non-image file drop — an explicit "document:" prefix skips
     this and goes straight to document_entry."""
-    client = anthropic.Anthropic()
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=256,
-        system=(
+    result = parse_structured(
+        (
             "Decide whether this text is the content of a formal personal document — an ID, "
             "passport, visa, lease, insurance policy, certificate, warranty, or similar official "
             "paperwork someone would want to track with an expiry/renewal date — versus a general "
             "note, idea, or piece of knowledge worth remembering. Set is_document accordingly."
         ),
-        messages=[{"role": "user", "content": description}],
-        output_format=_TextFileClassification,
+        description,
+        _TextFileClassification,
+        provider=provider,
+        max_tokens=256,
     )
-    return "document_entry" if response.parsed_output.is_document else "kb_entry"
+    return "document_entry" if result.parsed.is_document else "kb_entry"
 
 
 class _ReceiptExtraction(BaseModel):
