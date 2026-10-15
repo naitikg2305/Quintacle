@@ -24,6 +24,10 @@
 - [on-device-s25u.md](on-device-s25u.md) — research (2026-10-07): what the S25 Ultra's Snapdragon 8 Elite / Hexagon NPU actually runs (measured tok/s for 1B–8B), the five ways in (GenieX, LiteRT-LM, ML Kit GenAI, llama.cpp, ExecuTorch), on-device embeddings via EmbeddingGemma, how it plugs into Quintacle, no-code test to run first
 - [test-plan-and-wishlist.md](test-plan-and-wishlist.md) — 2026-10-07: Naitik's real-use flows (journal, batch/simple drop, knowledge chat) as the end-to-end test plan before phone use, plus a wishlist dump (MCP read+write as the main interface, Minfy/resume logging, weekly budget, points/miles, car health, researched purchases)
 
+Reference: [reference/](reference/) — the systematic technical reference, derived from code
+(not plans): statement of work, architecture, every endpoint, data/DB, graph engine, MCP
+server, vault, sync, drop pipeline, frontend, Android. Start at `reference/00-statement-of-work.md`.
+
 Reference material (not planning docs, read-only source): `~/Desktop/Notebook` — Naitik's
 existing 60GB/24k-file hand-built organization system, surveyed for the ideology behind
 Quintacle's design. Notable gaps found there with no node yet: Grooming, a much more
