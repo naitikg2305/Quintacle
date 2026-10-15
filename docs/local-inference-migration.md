@@ -94,3 +94,24 @@ Pick ONE call site to prove the pattern on first — `classify_image_type()`
 is the smallest, cheapest schema in the app (a single `Literal` field) and is
 the most literally YOLO-shaped task, making it the natural first target
 rather than starting with `parse_journal_dump()`'s much larger schema.
+
+
+## Decided 2026-10-15 — local-first ingest with cloud override, push-gated
+
+The owner's routing rule for the easy sorting tasks (Drop classification,
+journal-dump parsing, and similar `DEFAULT_MODEL` ingest seams):
+
+1. **Local first.** Once the `local:` Ollama provider lands, these seams run
+   on a local small model by default — they're easy tasks, and the existing
+   propose→review→Save flow catches any local mistake at zero cost.
+2. **Cloud override goes a step back, not forward.** If a local proposal is
+   unsatisfying, the review card offers "redo with cloud API" — re-running
+   the classification from the ORIGINAL input (the raw dropped text/photo),
+   never re-prompting over the local model's output.
+3. **Nothing commits until the user says push.** The override loop lives
+   entirely inside the existing review step; Save stays the only write.
+
+Build prerequisites (in flight as of this note): the `local:` provider, the
+narration-edge inventory of which call sites are local-routable, and a
+provider-aware dispatch for the ingest `anthropic.Anthropic()` call sites.
+Implementation wave follows immediately after those land.
