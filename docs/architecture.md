@@ -179,3 +179,40 @@ model narrates" — just with a better fetch.
 - Where ingestion pipelines (YOLO, EXIF extraction, etc.) run and how often
 - How nodes cross-reference each other concretely (shared date/id keys? explicit
   links stored in each node's records?)
+
+## Amendment 2026-10-15 — Quintacle is local-first, on computer AND phone
+
+Decided explicitly by Naitik, mid-build of the perception/local-model wave.
+This sits alongside (not replacing) the core principle above: deterministic
+code still fetches and decides; this amendment is about WHICH model runs at
+the edges when a model is needed at all.
+
+1. **Easy tasks run on local models, both devices.** Perception (YOLO tags,
+   face matching, scene basics) is local by construction — those aren't even
+   LLM tasks. The easy LLM tasks — Drop classification, journal-dump
+   parsing, prose polish of auto-composed lines — default to a local small
+   model (Ollama-class on the computer; 1-2B on the phone's NPU once that
+   stack lands). These were never Opus/Sonnet tasks — the swap is
+   Haiku→local, and the review step catches local mistakes for free.
+2. **Cloud is an escalation the user chooses, never a default.**
+   - *Ingest:* a proposal the user dislikes gets "redo with cloud" — which
+     re-runs from the ORIGINAL input (a step back), never re-prompts over
+     the local output. Nothing commits until the user pushes (the existing
+     review→Save gate).
+   - *Chat:* the chat runs local by default; if an answer isn't good enough,
+     the user escalates that conversation to a real API model BY CHOICE —
+     the chat context transfers into the cloud call so nothing is retyped.
+3. **Cloud keeps two jobs on the happy path:** research-grade questions the
+   user explicitly routes there, and (for now) structured parsing where
+   schema fidelity matters more than tokens — shrinking as local models
+   prove seams during the testing period.
+4. **Why this is cheap here:** capture-time work (perception + deterministic
+   journal lines + graph edges) means answers are mostly retrieval; a small
+   local model narrating retrieved facts is easy mode. The token meter runs
+   only when the user deliberately reaches for a big model.
+
+Where the pieces live: `docs/local-inference-migration.md` (the decided
+routing rule + build status), `docs/reference/` (as-built internals),
+`docs/seamless-mode.md` (how auto-mode later leans on seams local models
+have proven). The full as-built inventory — which is now genuinely too big
+to hold in one head — is `docs/reference/00-statement-of-work.md`.
