@@ -57,7 +57,15 @@ _warned_deps_missing = False
 
 
 def perception_available() -> bool:
-    """True when the heavy deps (onnxruntime + numpy) are importable."""
+    """True when the selected backend can serve perceive_photo. Default
+    backend (onnx): onnxruntime + numpy importable. With
+    QUINTACLE_PERCEPTION_BACKEND=tflite: ai-edge-litert + numpy importable
+    AND the converted .tflite models present (see backend_tflite.py) —
+    otherwise the same None-with-warning degradation as missing deps."""
+    from . import backend_tflite
+
+    if backend_tflite.selected():
+        return backend_tflite.available()
     try:
         import numpy  # noqa: F401
         import onnxruntime  # noqa: F401
@@ -77,18 +85,34 @@ def perceive_photo(data: bytes, mime: str) -> PerceptionResult | None:
     global _warned_deps_missing
     if not perception_available():
         if not _warned_deps_missing:
-            logger.warning(
-                "perception deps not installed — photos get no local tags/faces. "
-                "Install with: pip install -r core/perception-requirements.txt"
-            )
+            from . import backend_tflite
+
+            if backend_tflite.selected():
+                logger.warning(
+                    "tflite perception backend selected but unavailable (needs "
+                    "`pip install ai-edge-litert` + converted models from "
+                    "phone/tier2-perception-tflite/convert.py) — photos get no "
+                    "local tags/faces."
+                )
+            else:
+                logger.warning(
+                    "perception deps not installed — photos get no local tags/faces. "
+                    "Install with: pip install -r core/perception-requirements.txt"
+                )
             _warned_deps_missing = True
         return None
 
     from PIL import Image, ImageOps, UnidentifiedImageError
 
+    from . import backend_tflite
     from .faces import detect_faces
     from .scene import analyze_scene
     from .yolo import detect_tags
+
+    # Env-selected runtime: QUINTACLE_PERCEPTION_BACKEND=tflite swaps LiteRT
+    # interpreters into yolo/faces' session caches (default onnx: no-op /
+    # restores onnxruntime). The pipelines themselves are backend-blind.
+    backend_tflite.sync_sessions()
 
     try:
         img = Image.open(io.BytesIO(data))

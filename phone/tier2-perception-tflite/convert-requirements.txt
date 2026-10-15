@@ -1,0 +1,19 @@
+# Conversion-venv deps ONLY — never install these into core/.venv.
+#
+# The conversion toolchain (onnx2tf + tensorflow) does not support
+# Python 3.14 (onnx2tf requires >=3.12; tensorflow has no cp314 wheels as of
+# 2026-10), so conversion runs in its own venv on Python 3.12:
+#
+#     cd phone/tier2-perception-tflite
+#     uv python install 3.12
+#     uv venv --python 3.12 .venv-convert
+#     uv pip install --python .venv-convert/bin/python -r convert-requirements.txt
+#     .venv-convert/bin/python convert.py
+#
+# opencv lands here as an onnx2tf dependency — that is fine: this venv is a
+# desktop-only build tool. The RUNTIME (backend_tflite.py) stays numpy+PIL+
+# ai-edge-litert only and runs on Python 3.14.
+onnx2tf==2.6.9
+tensorflow==2.21.0
+tf-keras==2.21.0
+# onnx2tf pins its own onnx/onnxruntime/ai-edge-litert versions as hard deps.
