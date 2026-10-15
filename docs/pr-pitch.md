@@ -84,6 +84,49 @@ and capture is a habit; big models still genuinely win at *novel* research
 (that's what the escalate button is for); and the phone deployment, while
 code-complete and parity-proven, hasn't touched a real device yet.
 
+## The architecture, in the founder's own formulation
+
+> "Graph powered, code powered, ML based, self-learning on your data —
+> with an edge of LLM at the end that connects everything."
+
+Five layers, four of them running today:
+
+1. **Graph powered** — the connective substrate. Typed, materialized,
+   provenance-tracked edges; events binding cross-type siblings (one dinner
+   = journal text + expense + food + place + person, all one node-walk
+   apart); people, places and days as addressable nodes.
+2. **Code powered** — the deterministic spine. Prefix routing, whole-word
+   matching, preset expansion, EXIF dating, arithmetic in SQL. House law:
+   *models get a vote, never the pen.* Nothing structural depends on any
+   model's judgment.
+3. **ML based** — the small-model layer. Object detection, face embeddings,
+   scene heuristics, 1-8B local language models for the easy tasks —
+   megabytes, milliseconds, zero cloud, already converted and parity-proven
+   for a phone NPU.
+4. **Self-learning on your data** — and here is the deliberate twist: the
+   system learns by **accumulating structure, not by changing weights**.
+   Tag a face once → recognized forever (few-shot learning in embedding
+   space). Create a preset → every future mention becomes deterministic.
+   Approve a person → past and future text lights up with connections. The
+   learned state is the registries and the graph — which makes the learning
+   *inspectable, undoable, syncable, and immune to catastrophic forgetting*.
+   No fine-tuning run offers those properties.
+5. **An edge of LLM that connects everything** — narration and proposal at
+   the boundary only: it reads what the graph hands it, suggests what the
+   user ratifies, and the expensive model is a button, not a dependency.
+
+The roadmap's cleanest next step is already generating its own data: every
+"redo with cloud" press and every chat escalation is a labeled correction —
+the system can learn *which tasks to trust locally* from usage alone, by
+counting, not training.
+
+In a sentence: a **neuro-symbolic personal system** — symbolic structure
+holding the truth, neural components at the sensory and language
+boundaries — betting against the industry's bigger-model-every-query
+default, and winning on the home turf where it matters: the questions that
+make up a life, which are finite, repetitive, and already answered by your
+own past.
+
 ## Tagline candidates
 
 - *Your life, indexed. Your models, local. Your cloud bill, optional.*

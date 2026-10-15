@@ -231,3 +231,20 @@ to hold in one head — is `docs/reference/00-statement-of-work.md`.
 > `reference/local-models.md`. Point 3 stands as written (vision+schema and
 > research-grade work stay cloud); the phone halves are scripted in
 > `phone/` and still device-pending.*
+
+
+## Note 2026-10-15 — the five-layer formulation (Naitik's words)
+
+The whole architecture, as its owner states it: **"graph powered, code
+powered, ML based, self-learning on your data — with an edge of LLM at the
+end that connects everything."** Layer mapping: graph = the edge store and
+event provenance (`graph.py`, `graph_capture.py`); code = the deterministic
+spine (routing, matching, expansion, SQL arithmetic); ML = the local
+perception + small-LM layer (`perception/`, `llm_dispatch.py`,
+`local_vlm/`); self-learning = structure accumulation, not weight updates —
+registries, enrollments and edges ARE the learned state (inspectable,
+undoable, syncable, no catastrophic forgetting); the LLM edge = proposal
+and narration at the boundary, strong models by explicit escalation only.
+Identified next adaptive step: treat "redo with cloud" / "escalate" events
+as labeled corrections and route seams from observed trust — counting, not
+training. Fuller public-facing version: `pr-pitch.md`.
