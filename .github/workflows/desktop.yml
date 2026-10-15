@@ -1,0 +1,67 @@
+# Desktop builds (Linux + Windows) for the pywebview shell in desktop/.
+#
+# PyInstaller does NOT cross-compile — a Windows .exe can only be built on
+# Windows, hence the OS matrix. Both legs run the built artifact's --smoke
+# mode (headless: no display needed on either OS).
+#
+# NOTE: this workflow has been YAML-syntax-checked but never executed in
+# Actions — treat the first tag-push/dispatch run as its real verification.
+name: desktop
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend static export
+        working-directory: frontend
+        env:
+          CAPACITOR_BUILD: "true"
+        run: |
+          npm ci
+          npx next build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install Python dependencies
+        run: python -m pip install -r core/requirements.txt -r desktop/requirements.txt
+
+      - name: Build binary with PyInstaller
+        run: pyinstaller desktop/quintacle.spec --noconfirm
+
+      - name: Smoke-test built binary (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          export QUINTACLE_DATA_DIR="$RUNNER_TEMP/quintacle-smoke"
+          ./dist/quintacle/quintacle --smoke
+
+      - name: Smoke-test built binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:QUINTACLE_DATA_DIR = Join-Path $env:RUNNER_TEMP "quintacle-smoke"
+          ./dist/quintacle/quintacle.exe --smoke
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quintacle-desktop-${{ runner.os }}
+          path: dist/quintacle/
+          if-no-files-found: error

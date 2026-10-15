@@ -1,0 +1,14 @@
+# Desktop-shell-only dependencies. Kept out of core/requirements.txt on
+# purpose: the phone/Termux install of the core must never pull Qt or
+# PyInstaller. Install alongside core/requirements.txt:
+#   .venv/bin/pip install -r core/requirements.txt -r desktop/requirements.txt
+
+# Linux: Qt backend (PyQt6 + QtWebEngine) — fully pip-installable, no system
+# packages, PyInstaller-bundleable. See desktop/README.md for the rationale.
+pywebview[qt]; sys_platform == "linux"
+
+# Windows: plain pywebview uses the WebView2 runtime preinstalled on
+# Windows 10/11 — nothing extra to bundle beyond the wheel.
+pywebview; sys_platform == "win32"
+
+pyinstaller

@@ -1,0 +1,5 @@
+# PyInstaller outputs from desktop/quintacle.spec (built at the repo root)
+/build/
+/dist/
+
+__pycache__/

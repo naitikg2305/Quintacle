@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Quintacle (dev)
+Comment=Quintacle via the repo checkout — backend + npm dev frontend + chromium app window
+# @LAUNCH_DEV@ is replaced with the absolute launch-dev.sh path by install-linux.sh
+Exec=@LAUNCH_DEV@
+Terminal=false
+Categories=Office;Utility;Development;

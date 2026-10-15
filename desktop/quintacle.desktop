@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Quintacle
+Comment=Quintacle — local-first life OS (packaged desktop app)
+# @QUINTACLE_BIN@ is replaced with the installed binary path by install-linux.sh
+Exec=@QUINTACLE_BIN@
+Terminal=false
+Categories=Office;Utility;
+StartupWMClass=quintacle
