@@ -18,6 +18,8 @@ from ..nodes.kb.drop import _IMAGE_MIME, describe_images
 from ..nodes.kb.store import KBStore
 from ..nodes.logs.log_store import LogFileStore, home_for
 from ..nodes.logs.repository import LogsRepository
+from ..nodes.stocks.positions import compute_positions
+from ..nodes.stocks.store import ACTIONS as STOCK_ACTIONS, StocksRepository, StockTransactionStore
 from ..nodes.schedule.models import Priority, Todo, apply_todo_updates
 from ..nodes.schedule.ranking import rank_todos
 from ..nodes.schedule.store import TodoStore
@@ -38,6 +40,7 @@ kb_store: KBStore
 todo_store: TodoStore
 log_file_store: LogFileStore
 logs_repo: LogsRepository
+stocks_repo: StocksRepository
 ledger: Ledger
 db_conn: sqlite3.Connection
 
@@ -52,7 +55,7 @@ def init(data_dir: Path | None = None) -> None:
     it again with a tmp_path to get a fully isolated set of stores, since the
     @mcp.tool()-decorated functions below look up these names from the
     module's globals at call time, not at decoration time."""
-    global DATA_DIR, _db_path, journal_store, kb_store, todo_store, log_file_store, logs_repo, ledger, db_conn
+    global DATA_DIR, _db_path, journal_store, kb_store, todo_store, log_file_store, logs_repo, stocks_repo, ledger, db_conn
     DATA_DIR = Path(data_dir) if data_dir is not None else Path(os.environ.get("QUINTACLE_DATA_DIR", Path.home() / ".quintacle"))
     kb_root = DATA_DIR / "kb"
     _db_path = DATA_DIR / "quintacle.db"
@@ -63,6 +66,7 @@ def init(data_dir: Path | None = None) -> None:
     conn = db.connect(_db_path)
     db_conn = conn
     logs_repo = LogsRepository(conn, log_file_store)
+    stocks_repo = StocksRepository(conn, StockTransactionStore(kb_root))
     ledger = Ledger(DATA_DIR / "mcp-log.md")
     # Same connection the logs repo uses — the graph's edges table lives in
     # the same quintacle.db (docs/graph-model.md Stage 1).
@@ -205,6 +209,61 @@ def expenses_in_range(start: str, end: str) -> list[dict]:
     """List every logged expense between two dates (inclusive), YYYY-MM-DD."""
     rows = logs_repo.expenses_between(date.fromisoformat(start), date.fromisoformat(end))
     return [dict(row) for row in rows]
+
+
+# --- Stocks: transaction ledger + computed positions ---
+
+
+@mcp.tool()
+def log_stock_transaction(
+    for_date: str,
+    action: str,
+    symbol: str,
+    qty: float = 0,
+    price: float = 0,
+    fees: float = 0,
+    account: str = "",
+    notes: str = "",
+) -> dict:
+    """Log one stock-ledger row. action: "buy" | "sell" | "dividend".
+    buy/sell: qty shares at `price` each (fees fold into basis / reduce
+    proceeds). dividend: `price` is the TOTAL cash received, qty stays 0.
+    Positions/cost basis/P&L are always computed from these rows — never
+    pass pre-aggregated holdings. Structured write: everything already
+    decided, nothing classified. Commits immediately, independently
+    undoable."""
+    if action not in STOCK_ACTIONS:
+        raise ValueError(f"action must be one of {STOCK_ACTIONS}, got {action!r}")
+    entry_date = date.fromisoformat(for_date)
+    sym = symbol.strip().upper()
+    session = _session(
+        "stocks.log_transaction",
+        f"Logged stock {action}: {qty:g} {sym} @ ${price:g} on {entry_date.isoformat()}",
+    )
+    tx_dir = stocks_repo.store.dir()
+    tx_id = _stage_new_log_files(
+        session,
+        tx_dir,
+        f"{entry_date.isoformat()}-*.md",
+        lambda: stocks_repo.log_transaction(entry_date, action, sym, qty, price, fees, account, notes),
+    )
+    session.stage_sqlite_insert(_db_path, "stock_transactions", "id", tx_id)
+    ledger_id = session.commit(result={"transaction_id": tx_id, "symbol": sym})
+    return {"transaction_id": tx_id, "symbol": sym, "date": entry_date.isoformat(), "ledger_id": ledger_id}
+
+
+@mcp.tool()
+def stock_positions() -> dict:
+    """Current positions computed from the transaction ledger — qty held,
+    FIFO cost basis, realized P&L, dividends, plus market value/unrealized
+    P&L against the latest stored EOD snapshot (null when no snapshot yet;
+    prices only update via the app's explicit refresh). Deterministic and
+    read-only: no AI call, no ledger entry, no network fetch."""
+    latest = stocks_repo.latest_prices()
+    result = compute_positions([dict(r) for r in stocks_repo.transactions()], latest)
+    snapshot_dates = [s["price_date"] for s in latest.values()]
+    result["prices_as_of"] = max(snapshot_dates) if snapshot_dates else None
+    return result
 
 
 # --- Schedule / todos ---

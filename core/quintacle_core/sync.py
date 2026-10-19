@@ -39,6 +39,8 @@ from . import clock
 from .graph import get_graph_store, rebuild_from_folder
 from .nodes.logs.api import get_log_store, get_repo
 from .nodes.logs.log_store import rebuild_sqlite_index
+from .nodes.stocks.api import get_stocks_repo
+from .nodes.stocks.store import rebuild_stock_index
 
 SNAPSHOT_DIR = "_sync_snapshots"
 
@@ -237,7 +239,20 @@ def rebuild_derived_indexes() -> dict:
     )
     graph_store = get_graph_store()
     edge_count = rebuild_from_folder(graph_store.data_dir, graph_store.conn)
-    return {"logs": logs_counts, "graph_edges": edge_count}
+    # Stock transactions are markdown-backed the same way (nodes/stocks/) —
+    # their SQLite index rebuilds here too. Price snapshots are deliberately
+    # NOT part of this: SQLite-only cache of public data, nothing to rebuild
+    # from (see db.py's stock_prices comment).
+    try:
+        stocks_repo = get_stocks_repo()
+    except RuntimeError:  # a test app that never wired stocks — same tolerance as log_store above
+        stocks_repo = None
+    stock_tx_count = (
+        rebuild_stock_index(stocks_repo.store, stocks_repo.conn)
+        if stocks_repo is not None and stocks_repo.store is not None
+        else 0
+    )
+    return {"logs": logs_counts, "graph_edges": edge_count, "stock_transactions": stock_tx_count}
 
 
 # --- router ---

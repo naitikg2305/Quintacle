@@ -107,6 +107,42 @@ CREATE TABLE IF NOT EXISTS expense_log (
     kind TEXT NOT NULL DEFAULT 'regular'
 );
 
+-- Stock transaction ledger (docs/next-wave-plan.md §2) — SQLite is the fast
+-- index; markdown under kb/.../Stocks & Investments/transactions/ is the
+-- source of truth (see nodes/stocks/store.py, rebuild_stock_index).
+-- Positions / cost basis / P&L are NEVER stored — always computed from these
+-- rows (nodes/stocks/positions.py). source_file is the backing markdown
+-- filename, so a delete can remove the real record too.
+CREATE TABLE IF NOT EXISTS stock_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    action TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    qty REAL NOT NULL DEFAULT 0,
+    price REAL NOT NULL DEFAULT 0,
+    fees REAL NOT NULL DEFAULT 0,
+    account TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    source_file TEXT NOT NULL DEFAULT ''
+);
+
+-- EOD price snapshots, append-only — one row per (symbol, trading day),
+-- written only by the explicit /stocks/prices/refresh fetch (no daemons).
+-- Deliberately SQLite-only, no markdown mirror: this is PUBLIC, re-fetchable
+-- market data (a local cache), not a personal record — losing it loses
+-- nothing that can't be fetched again. Valuation always reads the latest
+-- row per symbol; older rows stay as portfolio-value-over-time history.
+CREATE TABLE IF NOT EXISTS stock_prices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    price_date TEXT NOT NULL,
+    price REAL NOT NULL,
+    source TEXT NOT NULL DEFAULT 'stooq',
+    fetched_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_prices_symbol_date ON stock_prices(symbol, price_date);
+
 CREATE TABLE IF NOT EXISTS habits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,

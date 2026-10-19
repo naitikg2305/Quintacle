@@ -30,6 +30,7 @@ _ALLOWED_TABLES = {
     "activity_log",
     "exercise_sets",
     "body_stats",
+    "stock_transactions",
 }
 
 
