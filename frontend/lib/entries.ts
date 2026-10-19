@@ -15,8 +15,10 @@ import {
   createRoutine,
   createTodo,
   createWardrobeItem,
+  importStatement,
   KBSuggestion,
   linkEvent,
+  logIncome,
   logActivity,
   logBodyStat,
   logExercise,
@@ -37,6 +39,17 @@ export const BLANK: Record<ParsedEntry["type"], ParsedEntry> = {
   todo: { type: "todo", title: "", due_date: todayIso(), start_time: null, end_time: null, priority: 2 },
   body_stat: { type: "body_stat", metric: "weight", value: 0, unit: "lb", entry_date: null },
   finance: { type: "finance", amount: 0, merchant: "", category: "", notes: "", entry_date: null, kind: "regular" },
+  income: { type: "income", amount: 0, source: "", kind: "salary", notes: "", entry_date: null },
+  statement_import: {
+    type: "statement_import",
+    format: "csv",
+    filename: "",
+    headers: [],
+    mapping: {},
+    transactions: [],
+    skipped_credits: 0,
+    skipped_unparsed: 0,
+  },
   kb_entry: { type: "kb_entry", folder: "", title: "", content: "" },
   ingredient_preset: {
     type: "ingredient_preset",
@@ -144,6 +157,11 @@ export function graphIdFor(entry: ParsedEntry, result: unknown): string | null {
       return has(result, "id") ? `${entry.type}:${result.id}` : null;
     case "finance":
       return has(result, "id") ? `expense:${result.id}` : null;
+    case "income":
+      return has(result, "id") ? `income:${result.id}` : null;
+    case "statement_import":
+      // The import endpoint already event-groups its own rows server-side.
+      return null;
     case "todo":
       return has(result, "id") ? `todo:${result.id}` : null;
     case "kb_entry":
@@ -252,6 +270,30 @@ export async function commitEntry(date: string, entry: ParsedEntry, assets: File
         notes: entry.notes,
         kind: entry.kind,
       });
+    case "income":
+      return logIncome({
+        date: entry.entry_date ?? date,
+        amount: entry.amount,
+        source: entry.source,
+        kind: entry.kind,
+        notes: entry.notes,
+      });
+    case "statement_import":
+      // Only the rows kept in review are written; a row the user re-included
+      // despite its duplicate flag carries the explicit override.
+      return importStatement(
+        entry.transactions
+          .filter((t) => t.include)
+          .map((t) => ({
+            date: t.date,
+            amount: t.amount,
+            merchant: t.merchant,
+            notes: t.notes,
+            kind: t.kind,
+            allow_duplicate: t.duplicate,
+          })),
+        entry.filename
+      );
     case "kb_entry": {
       const suggestion: KBSuggestion = {
         folder: entry.folder,

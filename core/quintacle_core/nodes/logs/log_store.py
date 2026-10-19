@@ -40,6 +40,10 @@ LOG_HOMES = {
     "body_stat": "Personal Development/Physical/Fitness",
     "substance": "Daily Log/Substances",
     "finance": "Organisation/Finance",
+    # Income shares the Finance home — all_entries() filters by the `type`
+    # frontmatter field, so expense and income files coexist in one logs/ dir
+    # the same way exercise and body_stat share Fitness/logs/.
+    "income": "Organisation/Finance",
     "activity:productivity": "Daily Log/Productivity",
     "activity:social": "Daily Log/Social",
     "activity:leisure": "Daily Log/Leisure",
@@ -396,6 +400,16 @@ def rebuild_sqlite_index(
         )
         n += 1
     counts["expense_log"] = n
+
+    conn.execute("DELETE FROM income_log")
+    n = 0
+    for e in store.all_entries("income"):
+        conn.execute(
+            "INSERT INTO income_log (date, amount, source, kind, notes) VALUES (?, ?, ?, ?, ?)",
+            (e["date"], e.get("amount", 0), e.get("source", ""), e.get("kind", "salary"), e.get("notes", "")),
+        )
+        n += 1
+    counts["income_log"] = n
 
     conn.execute("DELETE FROM food_log")
     n = 0

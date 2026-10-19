@@ -49,7 +49,11 @@ export type Habit = {
   name: string;
   target_amount: number;
   target_period: string;
+  // For metric="spend" these form the budget-line matcher: match_kind = one
+  // of the 7 expense kinds, match_category = comma-separated whole-word text
+  // terms over merchant/category/notes. Both empty = total spend (original behavior).
   match_category: string | null;
+  match_kind?: string | null;
   unit: string;
   metric: string;
   direction: "at_least" | "at_most";
@@ -65,6 +69,10 @@ export type HabitProgress = {
   current: number;
   target: number;
   met: boolean;
+  // Time-proration, computed in the backend (never re-derived here beyond display).
+  period_days: number;
+  elapsed_days: number;
+  prorated_target: number;
 };
 
 export const listHabits = () => request<Habit[]>("/logs/habits");
@@ -310,6 +318,48 @@ export type ParsedFinance = {
   entry_date: string | null;
   kind: FinanceKind;
 };
+export type ParsedIncome = {
+  type: "income";
+  amount: number;
+  source: string;
+  kind: string; // salary | other
+  notes: string;
+  entry_date: string | null;
+};
+// One proposed transaction from a dropped bank/card statement (§2b) — parsed
+// deterministically (CSV/OFX) or vision-transcribed (PDF/photo), always
+// reviewed row by row before anything is written.
+export type StatementTransaction = {
+  date: string;
+  amount: number;
+  merchant: string;
+  notes: string;
+  kind: FinanceKind;
+  duplicate: boolean;
+  include: boolean;
+};
+export type StatementMapping = {
+  date: string | null;
+  merchant: string | null;
+  amount: string | null;
+  debit: string | null;
+  credit: string | null;
+  notes: string | null;
+  negate: boolean | null;
+};
+export type ParsedStatementImport = {
+  type: "statement_import";
+  format: "csv" | "ofx" | "vision";
+  filename: string;
+  headers: string[];
+  mapping: Partial<StatementMapping>;
+  transactions: StatementTransaction[];
+  skipped_credits: number;
+  skipped_unparsed: number;
+  // Kept client-side only (never sent by the backend): the raw file text, so
+  // the review card can re-parse after a column-mapping correction.
+  raw_text?: string;
+};
 export type ParsedKBEntry = {
   type: "kb_entry";
   folder: string;
@@ -448,7 +498,9 @@ export type ParsedEntry =
   | ParsedPersonEntry
   | ParsedOutfitPhoto
   | ParsedCreditCardEntry
-  | ParsedInvestmentEntry;
+  | ParsedInvestmentEntry
+  | ParsedIncome
+  | ParsedStatementImport;
 
 export const listWardrobeItems = () => request<WardrobeItem[]>("/wardrobe/items");
 
@@ -850,6 +902,79 @@ export type Expense = {
 
 export const listExpenses = (start: string, end: string) =>
   request<Expense[]>(`/logs/expenses?start=${start}&end=${end}`);
+
+// --- income + finance insights + statement import (next-wave §1/§2b) ---
+
+export type Income = {
+  id: number;
+  date: string;
+  amount: number;
+  source: string;
+  kind: string;
+  notes: string;
+};
+
+export const logIncome = (body: { date: string; amount: number; source?: string; kind?: string; notes?: string }) =>
+  request("/logs/income", { method: "POST", body: JSON.stringify(body) });
+
+export const listIncome = (start: string, end: string) => request<Income[]>(`/logs/income?start=${start}&end=${end}`);
+
+export type MonthlyInsight = {
+  month: string; // YYYY-MM
+  total: number;
+  by_kind: Record<FinanceKind, number>;
+  income: number;
+  savings: number;
+  savings_rate_pct: number | null;
+  delta_total: number | null;
+  delta_by_kind: Record<FinanceKind, number> | null;
+};
+
+export const getMonthlyInsights = (months = 12) => request<MonthlyInsight[]>(`/finance/insights/monthly?months=${months}`);
+
+export type MerchantRollup = { merchant: string; count: number; total: number; average: number; last_date: string };
+
+export const getMerchantRollup = (start: string, end: string, limit = 25) =>
+  request<MerchantRollup[]>(`/finance/insights/merchants?start=${start}&end=${end}&limit=${limit}`);
+
+export type MerchantMover = { merchant: string; this_month: number; last_month: number; delta: number };
+
+export const getMerchantMovers = (limit = 10) => request<MerchantMover[]>(`/finance/insights/movers?limit=${limit}`);
+
+export type DetectedSubscription = {
+  merchant: string;
+  amount: number;
+  cadence: "weekly" | "monthly" | "yearly";
+  charges: number;
+  first_date: string;
+  last_date: string;
+  next_expected: string;
+  active: boolean;
+  monthly_equivalent: number;
+  kind_already_subscription: boolean;
+};
+
+export const getDetectedSubscriptions = () =>
+  request<{ subscriptions: DetectedSubscription[]; monthly_burn: number }>("/finance/insights/subscriptions");
+
+// Deterministic re-parse of a dropped CSV/OFX statement — used by the review
+// card when the user corrects the column mapping. Never writes.
+export const parseStatement = (filename: string, text: string, mapping: Partial<StatementMapping> | null = null) =>
+  request<ParsedStatementImport>("/finance/statement/parse", {
+    method: "POST",
+    body: JSON.stringify({ filename, text, mapping }),
+  }).then((r) => ({ ...r, type: "statement_import" as const }));
+
+// The gated statement write: only rows the user kept in review are sent; the
+// backend re-checks date+amount+merchant dedup and event-groups the batch.
+export const importStatement = (
+  transactions: { date: string; amount: number; merchant: string; notes: string; kind: FinanceKind; allow_duplicate?: boolean }[],
+  statementName: string
+) =>
+  request<{ written: number; skipped_duplicates: number; ids: number[]; event_id: string | null }>(
+    "/finance/statement/import",
+    { method: "POST", body: JSON.stringify({ transactions, statement_name: statementName }) }
+  );
 
 export const createMeal = (body: {
   name: string;

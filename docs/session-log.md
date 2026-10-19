@@ -3,6 +3,65 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-19 — Finance wave: insights, budget lines, income, statement drops (next-wave §1/§2b)
+
+Worktree agent build of the decided finance sections of
+`docs/next-wave-plan.md` (§1 decisions 1–3 and §2b's statement-drop
+decision), landed as three commits on top of `09f1278`. Suite: **380 passed
+/ 5 skipped** (was 350/5), minimal venv, no new deps in
+`core/requirements.txt`; frontend `tsc --noEmit` 0 errors, eslint findings
+byte-identical to the pre-change baseline. Reference:
+`docs/reference/finance.md`; BUILT notes added in-place under §1/§2b.
+
+### Built this session
+
+- **Deterministic insights** (`nodes/finance/insights.py`, `/finance/insights/*`):
+  monthly totals by kind + MoM deltas + income/savings rate, merchant
+  rollups, biggest movers, and subscription recurrence detection (same
+  merchant + similar amount at a weekly/monthly/yearly median gap —
+  arithmetic, no model), surfaced on a new **Insights** tab of the Finance
+  page with an income quick-add. Zero model calls anywhere in analysis.
+- **Named budget lines**: the quota engine's spend metric (previously
+  TOTAL-only) now matches via `match_kind` (expense kind) OR whole-word
+  `match_category` terms over merchant/category/notes — reusing THE matcher
+  (`graph.title_mentioned`); matcher-less spend quotas unchanged. Progress
+  gained `period_days`/`elapsed_days`/`prorated_target` (real month
+  lengths); Dashboard has a "Budget line ($)" goal type and shows even-spend
+  pace on caps.
+- **Income lane** (§1 decision 3): `income_log` + markdown logs under
+  Organisation/Finance, `/logs/income`, deterministic `income:`/`paycheck:`
+  drop prefix (regex parse — date first so "2026-10-12" never reads as an
+  amount), income entry card in Drop, savings rate = income − spend per
+  month in code.
+- **Statement drops** (§2b): CSV (stdlib csv + header-guessed,
+  user-correctable column mapping + data-derived sign convention) and
+  OFX/QFX (hand-rolled minimal SGML/XML `<STMTTRN>` reader) parse with no
+  model and no new dependency; `statement:`-prefixed PDFs/photos go through
+  the existing cloud vision lane (receipt-extraction pattern, transcription
+  only, rows validated in code). One review gate for all paths:
+  propose (never writes) → per-row review in `StatementImportCard`
+  (duplicates flagged + unchecked by default; mapping re-parse) → Save
+  commits kept rows via `/finance/statement/import`, which re-checks
+  date+amount+merchant dedup and event-groups the statement's rows.
+
+### Decisions
+
+- **OR, not AND**, when a budget line sets both kind and text terms — the
+  owner's "creatine + alcohol monthly" example needs the union; a line
+  wanting intersection can just use a narrower text term.
+- Vision statement extraction returns rows ONLY — every date/amount is
+  re-validated and deduped in code (`normalize_vision_transactions`), and
+  statement credits/payments are skipped everywhere: statements feed the
+  spend ledger; income stays its own explicit lane.
+- Income is a separate table, not negative expenses — keeps every spend
+  query filter-free and makes savings a two-table subtraction.
+
+### Deliberately deferred (per the plan's own deferrals)
+
+Accumulation goals, renewal ALERTS (detection + next_expected exist, no
+scheduled notification), points-over-time, aggregator APIs (indefinitely).
+Also left for merge time: retrieval-index hooks for the new income/statement
+types (parallel wave), and MCP tools for income/statement import.
 ## 2026-10-19 — Stocks wave: transaction ledger, computed P&L, EOD snapshots, research folders (§2, worktree agent)
 
 `docs/next-wave-plan.md` §2's three recorded decisions built in one worktree

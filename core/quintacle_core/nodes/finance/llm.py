@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import base64
+from typing import Literal
+
 from pydantic import BaseModel
 
+from ...llm_config import DEFAULT_MODEL
 from ...llm_dispatch import parse_structured
 
 
@@ -57,3 +61,61 @@ def structure_investment(description: str, provider: str | None = None) -> Inves
     """For the explicit "invest:"/"stock:" prefix — intent already stated,
     so no relevance gate, always extracts fields."""
     return parse_structured(_INVESTMENT_SYSTEM_PROMPT, description, InvestmentEstimate, provider=provider, max_tokens=1024).parsed
+
+
+class _StatementTxn(BaseModel):
+    date: str  # YYYY-MM-DD as printed on the statement
+    amount: float  # positive dollars spent
+    merchant: str = ""
+    notes: str = ""
+    kind: Literal["subscription", "food", "alcohol", "experience", "shopping", "big_purchase", "regular"] = "regular"
+
+
+class _StatementExtraction(BaseModel):
+    transactions: list[_StatementTxn]
+
+
+_STATEMENT_SYSTEM = (
+    "This is a bank or credit card statement. Extract EVERY purchase/charge transaction as a row: "
+    "date (YYYY-MM-DD exactly as printed), amount (the positive dollar amount charged), merchant "
+    "(the payee/description as printed, lightly cleaned), notes (any extra detail on the line, else "
+    "empty), and kind — exactly one of: subscription (a recurring bill/membership charge), food (a "
+    "meal or non-alcoholic food/drink purchase), alcohol (a drink/bar tab/bottle purchase), "
+    "experience (paying to do something — an activity, ticket, entrance fee), shopping (clothing, "
+    "gear, everyday retail), big_purchase (a large one-off purchase), or regular (anything else). "
+    "SKIP payments, credits, refunds, interest, and fees-reversals — only money spent. Do not "
+    "compute or invent anything: only transcribe what the statement shows."
+)
+
+
+def extract_statement_transactions(data: bytes, media_type: str, user_description: str = "") -> list[dict]:
+    """PDF/photo statements through the SAME cloud vision lane receipts use
+    (drop_router.extract_finance_from_receipt's pattern — vision+schema sites
+    deliberately stay cloud, per the 2026-10-15 local-first amendment). The
+    model only TRANSCRIBES rows; every number it returns is reviewed in the
+    statement gate and all downstream arithmetic happens in code. anthropic
+    imports lazily so the deterministic CSV/OFX lane never touches it."""
+    import anthropic
+
+    if media_type == "application/pdf":
+        source_block = {
+            "type": "document",
+            "source": {"type": "base64", "media_type": media_type, "data": base64.standard_b64encode(data).decode()},
+        }
+    else:
+        source_block = {
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": base64.standard_b64encode(data).decode()},
+        }
+    content: list[dict] = [source_block]
+    if user_description.strip():
+        content.append({"type": "text", "text": user_description.strip()})
+    client = anthropic.Anthropic()
+    response = client.messages.parse(
+        model=DEFAULT_MODEL,
+        max_tokens=8192,
+        system=_STATEMENT_SYSTEM,
+        messages=[{"role": "user", "content": content}],
+        output_format=_StatementExtraction,
+    )
+    return [t.model_dump() for t in response.parsed_output.transactions]

@@ -146,6 +146,14 @@ class ExpenseLogCreate(BaseModel):
     kind: str = "regular"
 
 
+class IncomeLogCreate(BaseModel):
+    date: date
+    amount: float
+    source: str = ""
+    kind: str = "salary"  # salary | other (next-wave-plan §1 decision 3)
+    notes: str = ""
+
+
 class ActivityLogCreate(BaseModel):
     date: date
     category: str
@@ -185,6 +193,10 @@ class HabitCreate(BaseModel):
     unit: str = ""
     metric: str = "activity_hours"
     direction: str = "at_least"
+    # Budget lines: for metric="spend", match_kind narrows to one of the 7
+    # expense kinds and match_category holds comma-separated whole-word text
+    # terms (merchant/category/notes) — see repository.spend_for_habit_between.
+    match_kind: str | None = None
 
 
 @router.post("/meals")
@@ -350,6 +362,17 @@ def expenses_between(start: date, end: date) -> list[dict]:
     return [dict(row) for row in get_repo().expenses_between(start, end)]
 
 
+@router.post("/income")
+def log_income(body: IncomeLogCreate) -> dict:
+    entry_id = get_repo().log_income(body.date, body.amount, body.source, body.kind, body.notes)
+    return {"id": entry_id, **body.model_dump(mode="json")}
+
+
+@router.get("/income")
+def income_between(start: date, end: date) -> list[dict]:
+    return [dict(row) for row in get_repo().income_between(start, end)]
+
+
 @router.post("/activities")
 def log_activity(body: ActivityLogCreate) -> dict:
     entry_id = get_repo().log_activity(body.date, body.category, body.description, body.hours)
@@ -398,7 +421,8 @@ def log_body_stat(body: BodyStatCreate) -> dict:
 @router.post("/habits")
 def create_habit(body: HabitCreate) -> dict:
     habit_id = get_repo().add_habit(
-        body.name, body.target_amount, body.target_period, body.match_category, body.unit, body.metric, body.direction
+        body.name, body.target_amount, body.target_period, body.match_category, body.unit, body.metric, body.direction,
+        body.match_kind,
     )
     return {"id": habit_id, **body.model_dump()}
 

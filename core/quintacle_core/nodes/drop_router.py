@@ -47,6 +47,10 @@ PREFIX_TYPES = {
     "finance": "finance",
     "expense": "finance",
     "spend": "finance",
+    "income": "income",
+    "paycheck": "income",
+    "statement": "statement_import",
+    "bank": "statement_import",
     "note": "kb_entry",
     "kb": "kb_entry",
     "ingredient": "ingredient_preset",
@@ -88,6 +92,48 @@ def parse_prefix(text: str) -> tuple[str, str] | None:
     if entry_type is None or not rest:
         return None
     return entry_type, rest
+
+
+# "income: 3200 Acme paycheck on 2026-10-15" — fully deterministic field
+# extraction (next-wave-plan §1 decision 3: the income prefix routes AND
+# parses without a model; the amount is one number, the source is the rest).
+_MONEY_RE = re.compile(r"\$?\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?")
+_ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+_INCOME_SALARY_RE = re.compile(r"\b(salary|paycheck|pay\s*check|payroll|paystub|pay\s*stub)\b", re.IGNORECASE)
+
+
+def parse_income_text(text: str) -> dict:
+    """Deterministic income parse: amount = the first money-looking number,
+    entry_date = an explicit YYYY-MM-DD if present (else the UI's date),
+    kind = salary when salary/paycheck wording appears else other, source =
+    whatever text remains. No AI call — the user reviews/edits before Save,
+    same gate as everything else."""
+    source = text.strip()
+    # Date first — "2026" inside an ISO date must never be mistaken for the amount.
+    entry_date = None
+    date_match = _ISO_DATE_RE.search(source)
+    if date_match:
+        entry_date = date_match.group(1)
+        source = (source[: date_match.start()] + source[date_match.end():]).strip()
+    amount = 0.0
+    money = _MONEY_RE.search(source)
+    if money:
+        amount = float(money.group(1).replace(",", "") + (money.group(2) or ""))
+        source = (source[: money.start()] + source[money.end():]).strip()
+    kind = "salary" if _INCOME_SALARY_RE.search(text) else "other"
+    source = re.sub(r"\s+", " ", source).strip(" -–—,.")
+    if source.lower().startswith("from "):
+        source = source[5:].strip()
+    if source.lower().endswith(" on"):
+        source = source[:-3].strip()
+    return {
+        "type": "income",
+        "amount": amount,
+        "source": source,
+        "kind": kind,
+        "notes": "",
+        "entry_date": entry_date,
+    }
 
 
 _ROUTINE_RE = re.compile(r"^\s*(.+?)\s*=\s*(.+)$", re.DOTALL)

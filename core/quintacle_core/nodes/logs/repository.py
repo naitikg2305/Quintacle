@@ -4,6 +4,7 @@ import json
 import sqlite3
 from datetime import date
 
+from ...graph import title_mentioned
 from ..journal.normalize import canonicalize_name
 from .log_store import IngredientPresetStore, LogFileStore, MealPresetStore, RoutineStore, summarize_sets as _summarize_sets
 
@@ -474,6 +475,71 @@ class LogsRepository:
         ).fetchone()
         return row["total"]
 
+    def expense_exists(self, entry_date: date, amount: float, merchant: str) -> bool:
+        """Statement-import dedup (next-wave-plan §2b): the same date + amount
+        (to the cent) + merchant (case/whitespace-insensitive) already logged
+        means this transaction is already tracked — flag, don't double-write."""
+        row = self.conn.execute(
+            """SELECT 1 FROM expense_log
+               WHERE date = ? AND ABS(amount - ?) < 0.005 AND LOWER(TRIM(merchant)) = ?
+               LIMIT 1""",
+            (entry_date.isoformat(), amount, merchant.strip().lower()),
+        ).fetchone()
+        return row is not None
+
+    def spend_for_habit_between(self, habit, start: date, end: date) -> float:
+        """The budget-line matcher (next-wave-plan §1 decision 2). A spend
+        habit with neither match_kind nor match_category keeps the original
+        total-spend behavior; otherwise an expense counts toward the line
+        when its kind equals match_kind OR any comma-separated match_category
+        term appears as a whole word in its merchant/category/notes — THE
+        matcher (graph.title_mentioned), the same single definition of
+        "mentioned" the rest of the app uses. OR, not AND, so one line can
+        cover e.g. kind=alcohol plus the word "creatine". Pure arithmetic in
+        code — no model ever re-derives these sums."""
+        # sqlite3.Row and plain dict both expose .keys(); tolerate rows from
+        # a pre-migration habits table that lacks the column entirely.
+        match_kind = habit["match_kind"] if "match_kind" in habit.keys() else None
+        terms = [t.strip() for t in (habit["match_category"] or "").split(",") if t.strip()]
+        if not match_kind and not terms:
+            return self.total_spend_between(start, end)
+        total = 0.0
+        for row in self.expenses_between(start, end):
+            text = f"{row['merchant']} {row['category']} {row['notes']}"
+            if (match_kind and row["kind"] == match_kind) or any(title_mentioned(t, text) for t in terms):
+                total += row["amount"]
+        return total
+
+    # --- income (next-wave-plan §1 decision 3: separate table, own drop prefix) ---
+
+    def log_income(self, entry_date: date, amount: float, source: str = "", kind: str = "salary", notes: str = "") -> int:
+        if self.log_store:
+            self.log_store.write(
+                "income",
+                entry_date,
+                {"amount": amount, "source": source, "kind": kind},
+                notes=notes,
+            )
+        cur = self.conn.execute(
+            "INSERT INTO income_log (date, amount, source, kind, notes) VALUES (?, ?, ?, ?, ?)",
+            (entry_date.isoformat(), amount, source, kind, notes),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def income_between(self, start: date, end: date) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM income_log WHERE date >= ? AND date <= ? ORDER BY date, id",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+
+    def total_income_between(self, start: date, end: date) -> float:
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM income_log WHERE date >= ? AND date <= ?",
+            (start.isoformat(), end.isoformat()),
+        ).fetchone()
+        return row["total"]
+
     # --- habits / quotas ---
 
     def add_habit(
@@ -485,11 +551,12 @@ class LogsRepository:
         unit: str = "",
         metric: str = "activity_hours",
         direction: str = "at_least",
+        match_kind: str | None = None,
     ) -> int:
         cur = self.conn.execute(
-            """INSERT INTO habits (name, target_amount, target_period, match_category, unit, metric, direction)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (name, target_amount, target_period, match_category, unit, metric, direction),
+            """INSERT INTO habits (name, target_amount, target_period, match_category, unit, metric, direction, match_kind)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (name, target_amount, target_period, match_category, unit, metric, direction, match_kind),
         )
         self.conn.commit()
         return cur.lastrowid

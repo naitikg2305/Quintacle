@@ -24,6 +24,7 @@ import {
   Activity,
   Apple,
   Armchair,
+  Banknote,
   BookOpen,
   Building2,
   Camera,
@@ -91,7 +92,12 @@ const MANUAL: { type: ParsedEntry["type"]; label: string; icon: LucideIcon }[] =
   { type: "person_entry", label: "Person", icon: User },
   { type: "credit_card_entry", label: "Credit card", icon: CreditCard },
   { type: "investment_entry", label: "Investment", icon: TrendingUp },
+  { type: "income", label: "Income", icon: Banknote },
 ];
+
+// Bank/card statement files route deterministically by extension (§2b) — the
+// backend parses them without any model call; PDFs need a "statement:" prefix.
+const STATEMENT_EXT = ["csv", "ofx", "qfx"];
 
 // Long text is almost always a day's narrative worth keeping verbatim.
 const JOURNAL_AUTO_CHARS = 200;
@@ -217,6 +223,15 @@ export default function DropPage() {
       // page) — extraPhotos beyond the first are still attached in full at
       // save time below, they just aren't part of what AI looks at here.
       const { entries: proposed, provider_used } = await proposeDrop(text, file, keepAsIs, extraPhotos[0] ?? null, date);
+      // A CSV/OFX statement proposal keeps the raw file text client-side so
+      // the review card can re-parse after a column-mapping correction
+      // without re-dropping the file.
+      if (file && STATEMENT_EXT.includes(extFor(file))) {
+        const raw = await file.text();
+        for (const p of proposed) {
+          if (p.type === "statement_import") p.raw_text = raw;
+        }
+      }
       setEntries((prev) => [...prev, ...proposed]);
       setProviderUsed(provider_used);
       setLastSort({ text, file, keepAsIs, extra: extraPhotos[0] ?? null, date });
@@ -335,10 +350,17 @@ export default function DropPage() {
     // real-world event — collect each commit's graph id (incl. a committed
     // photo note's) and link them after the saves (see linkBatchAsEvent).
     const eventMembers: (string | null)[] = [];
+    let stmtSummary: string | null = null;
     for (const entry of entries) {
       const assets = ASSET_TYPES.has(entry.type) && file ? [file, ...extraPhotos] : [];
       const result = await commitEntry(date, entry, assets);
       eventMembers.push(graphIdFor(entry, result));
+      if (entry.type === "statement_import" && result && typeof result === "object" && "written" in result) {
+        const r = result as { written: number; skipped_duplicates: number };
+        stmtSummary = `statement imported: ${r.written} transaction${r.written === 1 ? "" : "s"} written${
+          r.skipped_duplicates > 0 ? `, ${r.skipped_duplicates} duplicate${r.skipped_duplicates === 1 ? "" : "s"} skipped` : ""
+        }`;
+      }
       if (singleNote && result && typeof result === "object" && "slug" in result) {
         const r = result as { folder: string; slug: string };
         newSession = { folder: r.folder, slug: r.slug, title: singleNote.title };
@@ -362,7 +384,7 @@ export default function DropPage() {
     // Never blocking: the saves above already happened; a failed event link
     // only downgrades the status line to a warning.
     const eventWarning = await linkBatchAsEvent(eventMembers, date);
-    setStatus(eventWarning ?? `saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
+    setStatus(eventWarning ?? stmtSummary ?? `saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
     setEntries([]);
     setProviderUsed(null);
     setLastSort(null);
@@ -506,7 +528,7 @@ export default function DropPage() {
         ) : (
           <div className="flex flex-col items-center gap-2 text-sm text-muted">
             <Upload size={26} className="text-accent/70" />
-            Drag a photo, video, PDF or DOCX here — or choose one (optional)
+            Drag a photo, video, PDF, DOCX or bank/card statement (CSV/OFX/QFX) here — or choose one (optional)
           </div>
         )}
         <div className="flex flex-wrap items-center justify-center gap-2">
@@ -514,7 +536,7 @@ export default function DropPage() {
             <Upload size={15} /> Choose file
             <input
               type="file"
-              accept="image/*,video/*,.pdf,.docx,.stl"
+              accept="image/*,video/*,.pdf,.docx,.stl,.csv,.ofx,.qfx"
               capture="environment"
               onChange={(e) => onFileChosen(e.target.files?.[0] ?? null)}
               className="hidden"
