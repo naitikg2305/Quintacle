@@ -510,6 +510,12 @@ def log_row_title_and_summary(conn: sqlite3.Connection, member_id: str) -> tuple
             return None
         per = f"{row['kcal']:g} kcal / {row['basis_amount_g']:g} g"
         return row["name"], _join(row["name"], per, "ingredient preset"), row["notes"]
+    if kind == "income":
+        row = conn.execute("SELECT * FROM income_log WHERE id = ?", (row_id,)).fetchone()
+        if row is None:
+            return None
+        title = row["source"] or "income"
+        return title, _join(title, f"+${row['amount']:.2f}", row["kind"], row["date"]), row["notes"]
     return None
 
 

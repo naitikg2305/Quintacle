@@ -365,6 +365,7 @@ def expenses_between(start: date, end: date) -> list[dict]:
 @router.post("/income")
 def log_income(body: IncomeLogCreate) -> dict:
     entry_id = get_repo().log_income(body.date, body.amount, body.source, body.kind, body.notes)
+    safe_index_log_row(f"income:{entry_id}")  # retrieval index — failure-isolated
     return {"id": entry_id, **body.model_dump(mode="json")}
 
 

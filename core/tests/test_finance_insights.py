@@ -143,3 +143,26 @@ def test_lapsed_subscription_not_counted_in_burn(tmp_path):
     assert len(result["subscriptions"]) == 1
     assert result["subscriptions"][0]["active"] is False
     assert result["monthly_burn"] == 0.0
+
+
+# --- retrieval hooks (merge-time wiring: §3 index covers §1's new types) ---
+
+
+def test_income_write_indexes_for_retrieval(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import quintacle_core.api as api_module
+
+    monkeypatch.setattr(api_module, "DATA_DIR", tmp_path)
+    client = TestClient(api_module.create_app())
+    r = client.post(
+        "/logs/income",
+        json={"date": "2026-10-15", "amount": 2500.0, "source": "Minfy", "kind": "salary"},
+    )
+    assert r.status_code == 200
+    entry_id = r.json()["id"]
+
+    hits = client.get("/retrieve", params={"q": "Minfy salary"}).json()["results"]
+    hit = next(h for h in hits if h["id"] == f"income:{entry_id}")
+    assert hit["type"] == "income"
+    assert hit["summary"] == "Minfy — +$2500.00 — salary — 2026-10-15"

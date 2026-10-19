@@ -73,6 +73,7 @@ _LOG_TABLES = {
     "body_stat": "body_stats",
     "meal": "meals",
     "ingredient": "ingredients",
+    "income": "income_log",
 }
 
 

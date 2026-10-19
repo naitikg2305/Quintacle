@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..journal.normalize import canonicalize_name
+from ...retrieval import safe_index_log_row
 from . import insights, statements
 from .store import CreditCardStore, InvestmentStore
 
@@ -242,7 +243,9 @@ def statement_import(body: StatementImportRequest) -> dict:
         if body.statement_name:
             suffix = f"[statement: {body.statement_name}]"
             note = f"{note} {suffix}".strip() if note else suffix
-        written_ids.append(repo.log_expense(txn.date, txn.amount, txn.merchant, txn.category, note, txn.kind))
+        expense_id = repo.log_expense(txn.date, txn.amount, txn.merchant, txn.category, note, txn.kind)
+        written_ids.append(expense_id)
+        safe_index_log_row(f"expense:{expense_id}")  # retrieval index — failure-isolated
 
     event_id = None
     if len(written_ids) >= 2:
