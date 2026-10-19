@@ -203,5 +203,38 @@ orchestrate, but has no index tool, no graph walk, no ranked search.
 
 ---
 
-## 4. (next topic as it comes to mind)
+## 5. Generic pages (the car vision) — ai-managed-pages, now cheap
+
+**State:** every prerequisite built (open fields dict, Phase E views, graph,
+local structured-parse dispatch, perception photos); the feature itself —
+field extraction at ingest, per-folder field-name canonicalization, cover
+photo header, "what's due" + health bars — in no wave yet. Local models
+make extraction ~free; review gate makes it safe.
+
+**Open (owner to answer):** extraction on every drop vs only data-pointed
+text; pilot = the Car or born-generic; intervals stated once by the user as
+fields (recommended) — see conversation 2026-10-19.
+
+## 6. Backup
+
+**Decision (2026-10-19): manual pendrive lane, scripted + encrypted.** One
+command (`backup-to-drive`) writing an encrypted snapshot of ~/.quintacle
+(+ ~/work-logs) to whatever drive is mounted — ten seconds, owner-run.
+Tradeoffs stated and accepted: habit-dependent, same-location risk,
+offsite (restic→S3/B2 per self-hosting.md) consciously deferred.
+
+## 7. Dispositions (2026-10-19)
+
+- **Proactivity** (triggers/notifications/routines engine): owner doesn't
+  care for now — consciously OUT of plan.
+- **Voice** (the Ideal's mic): real but easy — deferred to the post-testing
+  UI-tweaks pass, likely local Whisper-class STT.
+- **Work logs live in Quintacle now** — all ~/work-logs days backfilled via
+  MCP into Nerd Folder/Projects/Quintacle Work Logs (2026-10-19); every
+  future session entry mirrors in as standard practice (file remains too,
+  per the global rule).
+
+---
+
+## 8. (next topic as it comes to mind)
 
