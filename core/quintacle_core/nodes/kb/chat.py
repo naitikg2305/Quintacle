@@ -75,7 +75,12 @@ def _render_entry(store: KBStore, folder: str, slug: str, content: str) -> str:
     return f"### {folder}/{slug}\n{field_lines}\n\n{content}"
 
 
-def _kb_context(store: KBStore) -> str:
+def _kb_context_everything(store: KBStore) -> str:
+    """The ORIGINAL dump-everything context — kept strictly as the fallback
+    for when the retrieval index isn't available (uninitialized process,
+    never backfilled, or any retrieval error). The default path is the
+    retrieval-grounded `_kb_context` below (rebuilt 2026-10-19 — the owner
+    explicitly opened the chat-context logic for the §3/§4 wave)."""
     sections = []
     for folder in store.list_folders():
         for slug in store.list_entries(folder):
@@ -83,6 +88,154 @@ def _kb_context(store: KBStore) -> str:
             if content:
                 sections.append(_render_entry(store, folder, slug, content))
     return "\n\n".join(sections) if sections else "(the knowledge base is empty right now)"
+
+
+# --- retrieval-grounded context (REBUILT 2026-10-19, next-wave-plan §3+§4) ---
+#
+# index→select→fetch instead of dump-everything: retrieve() (FTS5 + optional
+# vectors + graph expansion, all deterministic code) picks ~K nodes for the
+# user's latest question; only THOSE get fetched in full. Structured rows
+# (expenses, meals, workouts...) enter as their already-computed one-line
+# summaries — finished numbers from SQLite, never re-derived by the model.
+# Each hit carries its 1-hop neighbor labels (title + edge type + id) as
+# plain context lines; the chat loop is single-shot (no tool turns), so a
+# neighbor the model wants is something it ASKS the user to bring up next.
+
+_RETRIEVE_K = 8
+_FULL_BODY_CHARS = 4000  # per-hit cap on a prose node's full content
+_TOPIC_BODY_CHARS = 8000  # the scoped topic note itself gets more room
+_CONTEXT_CHAR_BUDGET = 24000  # total cap on the assembled context block
+
+
+def _last_user_text(messages: list[dict]) -> str:
+    """The retrieval query: the newest user turn's typed text. Only real text
+    blocks count — attachment placeholders would just pollute the FTS query."""
+    for m in reversed(messages):
+        if m.get("role") != "user":
+            continue
+        content = m.get("content") or ""
+        if isinstance(content, str):
+            text = content.strip()
+        else:
+            text = "\n".join(b.get("text", "") for b in content if b.get("type") == "text").strip()
+        if text:
+            return text
+    return ""
+
+
+def _neighbor_line(neighbors: list[dict]) -> str:
+    if not neighbors:
+        return ""
+    parts = [f"{n['title']} ({n['edge_type']}, id: {n['id']})" for n in neighbors]
+    return "Connected: " + "; ".join(parts)
+
+
+def _prose_body(store: KBStore, hit_id: str, cap: int) -> str | None:
+    """Full content for a prose hit — notes/places/people (all `note:` ids)
+    read from the KB store with their freeform fields, journal days from the
+    journal store. None = the caller falls back to the hit's summary line."""
+    kind, _, rest = hit_id.partition(":")
+    if kind == "note":
+        folder, _, slug = rest.rpartition("/")
+        if not folder:
+            return None
+        content = store.read(folder, slug)
+        if not content:
+            return None
+        if content.startswith("# "):  # the title heading is already the section header
+            content = content.partition("\n")[2].lstrip("\n")
+        fields = store.read_fields(folder, slug)
+        field_lines = "\n".join(f"- {k}: {v}" for k, v in fields.items())
+        body = f"{field_lines}\n\n{content}" if field_lines else content
+        return body[:cap]
+    if kind == "journal":
+        try:
+            from datetime import date as _date
+            from ..journal.api import get_store as get_journal_store
+
+            content = get_journal_store().load(_date.fromisoformat(rest))
+        except Exception:
+            return None  # journal store not wired / bad id — summary line serves
+        return content[:cap] if content else None
+    return None
+
+
+_PROSE_TYPES = {"note", "place", "person", "journal_day"}
+
+
+def _hit_section(store: KBStore, hit: dict, *, with_body: bool) -> str:
+    """One retrieved node as context. Prose nodes (notes, places, people,
+    journal days) get their FULL current content (capped); everything else —
+    log rows, meals, routines, todos, events — is its finished one-line
+    summary, passed through as-is (the numbers in it were computed in SQL;
+    the model never re-derives them)."""
+    lines = [f"### {hit['title']} [{hit['id']}] ({hit['type']})"]
+    body = _prose_body(store, hit["id"], _FULL_BODY_CHARS) if (with_body and hit["type"] in _PROSE_TYPES) else None
+    if body:
+        lines.append(body)
+    elif hit.get("summary"):
+        lines.append(hit["summary"])
+    neighbor = _neighbor_line(hit.get("neighbors") or [])
+    if neighbor:
+        lines.append(neighbor)
+    return "\n".join(lines)
+
+
+def _kb_context(store: KBStore, query: str, exclude_id: str | None = None) -> str:
+    """The rebuilt context: retrieve(query, k≈8), fetch full content only for
+    the selected prose hits, finished summary lines for structured rows,
+    1-hop neighbor labels per hit. Deterministic assembly in retrieve()'s own
+    order (RRF score desc, id tiebreak) under a chars budget — a hit whose
+    full body would blow the budget degrades to its summary line, never a
+    reshuffle. Raises when retrieval is unusable (uninitialized or empty
+    index) so _system_text can fall back to the legacy behavior."""
+    from ...retrieval import get_retrieval_index
+
+    index = get_retrieval_index()  # RuntimeError when never initialized
+    if not index.counts_by_type():
+        # An existing-but-empty index (fresh process over an old store that
+        # was never backfilled) must not silently answer "nothing matched".
+        raise LookupError("retrieval index is empty — run the backfill")
+    hits = [h for h in index.retrieve(query, k=_RETRIEVE_K) if h["id"] != exclude_id]
+    if not hits:
+        return "(nothing in the knowledge base matched this question)"
+    sections: list[str] = []
+    total = 0
+    for hit in hits:
+        section = _hit_section(store, hit, with_body=True)
+        if total + len(section) > _CONTEXT_CHAR_BUDGET:
+            section = _hit_section(store, hit, with_body=False)
+            if total + len(section) > _CONTEXT_CHAR_BUDGET:
+                break
+        sections.append(section)
+        total += len(section)
+    return "\n\n".join(sections)
+
+
+def _topic_context(store: KBStore, folder: str, slug: str) -> str | None:
+    """Topic hydration (next-wave-plan §4): a chat opened ON a note starts
+    from that node's current state — full content + fields + its graph
+    neighborhood labels — never from any saved transcript (those are
+    second-tier by decision, reachable only via the explicit search lane)."""
+    content = store.read(folder, slug)
+    if content is None:
+        return None
+    first_line, _, rest = content.partition("\n")
+    title = first_line.lstrip("# ").strip() or slug
+    fields = store.read_fields(folder, slug)
+    field_lines = "\n".join(f"- {k}: {v}" for k, v in fields.items())
+    body = rest.lstrip("\n")
+    body = f"{field_lines}\n\n{body}" if field_lines else body
+    lines = [f"## Current topic: {title} [note:{folder}/{slug}]", body[:_TOPIC_BODY_CHARS]]
+    try:
+        from ...retrieval import neighbor_labels
+
+        neighbor = _neighbor_line(neighbor_labels(f"note:{folder}/{slug}"))
+    except Exception:
+        neighbor = ""
+    if neighbor:
+        lines.append(neighbor)
+    return "\n".join(line for line in lines if line)
 
 
 def _kb_context_for_folder(store: KBStore, folder: str) -> str:
@@ -200,24 +353,84 @@ def resolve_model(model: str | None, research: bool) -> dict:
     return entry
 
 
-def _system_text(store: KBStore, use_kb: bool, folder: str | None) -> str | None:
-    """The KB-grounding block, or None when the KB is switched off."""
+_GROUNDING_RULES = (
+    "Ground your answers in the material below when relevant — reference it "
+    "naturally, don't just recite it back. If something isn't covered below, say so "
+    "plainly instead of guessing. One-line entries for logged data (expenses, meals, "
+    "workouts...) carry numbers already computed from the real records — use them "
+    "as-is, never recalculate or re-derive them. \"Connected:\" lines list each "
+    "item's graph neighbors by title and id; if one of those looks like it holds the "
+    "answer, say so and ask the user to bring it up — you can't fetch it yourself. "
+    "This chat is a scratchpad for thinking out loud — nothing here is saved "
+    "automatically; the user pushes anything worth keeping into the knowledge base "
+    "separately."
+)
+
+
+def _system_text(store: KBStore, use_kb: bool, folder: str | None, slug: str | None, messages: list[dict]) -> str | None:
+    """The KB-grounding block, or None when the KB is switched off.
+
+    REBUILT 2026-10-19 (owner opened the chat-context logic — next-wave-plan
+    §3 decision 2): the default path is index→select→fetch over the retrieval
+    engine instead of dumping every note. Three scopes:
+
+    - folder + slug (a chat continued ON a note): topic hydration — that
+      node's full current content + its graph neighborhood labels, prepended,
+      plus retrieval hits for the latest question. No transcript is ever
+      loaded automatically (second-tier by decision).
+    - folder only (the per-folder chat): UNCHANGED — context stays exactly
+      that folder's entries; this scope's whole contract is that the answer
+      can't come from somewhere it can't cite, so no global retrieval here.
+    - no scope: retrieval hits for the latest question.
+
+    Degradation (never a 500): retrieval uninitialized / empty / erroring
+    falls back to the legacy behavior — the folder's entries when scoped,
+    the old dump-everything context otherwise."""
     if not use_kb:
         return None
-    intro = (
-        f"You're chatting with the user about notes filed under \"{folder}\" specifically — "
-        "not their whole knowledge base. Only the notes below exist for this conversation."
-        if folder
-        else "You're chatting with the user about their own personal knowledge base."
-    )
-    context = _kb_context_for_folder(store, folder) if folder else _kb_context(store)
-    return (
-        f"{intro} Ground your answers in the notes below when relevant — reference "
-        "them naturally, don't just recite them back. If something isn't covered in "
-        "the notes, say so plainly instead of guessing. This chat is a scratchpad for "
-        "thinking out loud — nothing here is saved automatically; the user pushes "
-        "anything worth keeping into the knowledge base separately.\n\n" + context
-    )
+
+    if folder and not slug:
+        intro = (
+            f"You're chatting with the user about notes filed under \"{folder}\" specifically — "
+            "not their whole knowledge base. Only the notes below exist for this conversation."
+        )
+        return f"{intro} {_GROUNDING_RULES}\n\n{_kb_context_for_folder(store, folder)}"
+
+    topic = _topic_context(store, folder, slug) if folder and slug else None
+
+    query = _last_user_text(messages)
+    retrieved: str | None = None
+    if query:
+        try:
+            retrieved = _kb_context(store, query, exclude_id=f"note:{folder}/{slug}" if topic else None)
+        except Exception:
+            retrieved = None  # uninitialized / empty / any retrieval error → legacy fallback
+
+    if topic is not None:
+        intro = (
+            "You're continuing a conversation with the user about one topic from their "
+            "personal knowledge base — its note's current state is below, with its "
+            "connections. Anything else retrieved for their latest question follows it."
+        )
+        parts = [topic]
+        if retrieved is not None:
+            parts.append("## Retrieved for the latest question\n\n" + retrieved)
+        elif folder:
+            # Retrieval down: the topic note still hydrates; its folder's
+            # entries stand in for retrieval (the legacy scoped behavior).
+            parts.append(_kb_context_for_folder(store, folder))
+        return f"{intro} {_GROUNDING_RULES}\n\n" + "\n\n".join(parts)
+
+    intro = "You're chatting with the user about their own personal knowledge base."
+    if retrieved is not None:
+        intro += (
+            " The entries below were retrieved for their latest question — a selection, "
+            "not the whole knowledge base."
+        )
+        context = retrieved
+    else:
+        context = _kb_context_everything(store)
+    return f"{intro} {_GROUNDING_RULES}\n\n{context}"
 
 
 def _run_anthropic(model: str, messages: list[dict], kb_text: str | None) -> str:
@@ -517,9 +730,12 @@ def run_kb_chat(
     research: bool,
     folder: str | None = None,
     model: str | None = None,
+    slug: str | None = None,
 ) -> str:
     entry = resolve_model(model, research)
-    kb_text = _system_text(store, use_kb, folder)
+    # Context is assembled once, identically for every provider — escalating
+    # the same conversation to a cloud model transfers the SAME context.
+    kb_text = _system_text(store, use_kb, folder, slug, messages)
     if entry["provider"] == "openai":
         reply = _run_openai(entry["id"], messages, kb_text)
     elif entry["provider"] == "bedrock":

@@ -23,11 +23,19 @@ from ..journal.normalize import canonicalize_name
 from ..profile.api import get_store as get_profile_store
 from ..travel.api import get_store as get_travel_store
 from .auto_journal import process_photo_commit
+from ... import clock
 from .chat import CHAT_MODELS, BedrockError, OllamaError, UnknownModelError, run_kb_chat
-from .chat_store import ChatStore
+from .chat_store import ChatStore, _as_text
 from .drop import _IMAGE_MIME, describe_drop, describe_images, extract_photo_date, extract_photo_location, is_image
 from .image_gen import generate_image
-from .llm import suggest_kb_batch, suggest_kb_entry, suggest_kb_entry_for_folder, suggest_kb_update
+from .llm import (
+    suggest_kb_batch,
+    suggest_kb_entry,
+    suggest_kb_entry_for_folder,
+    suggest_kb_update,
+    suggest_record_fold,
+    suggest_record_fold_new,
+)
 from .photo_organizer import compute_photo_folder
 from .spreadsheet import read_spreadsheet, write_spreadsheet
 from .store import KBStore, _ASSET_LINES_RE
@@ -570,6 +578,9 @@ class ChatRequest(BaseModel):
     research: bool = False
     folder: str | None = None  # scoped chat — context limited to this folder + its subfolders
     model: str | None = None  # the picker's choice (see CHAT_MODELS); None = the old default/research behavior
+    # With folder: a chat continued ON one note — topic hydration (the note's
+    # current content + graph neighborhood prepended; see chat._system_text).
+    slug: str | None = None
 
 
 @router.get("/models")
@@ -581,7 +592,7 @@ def list_chat_models() -> list[dict]:
 def chat_endpoint(body: ChatRequest) -> dict:
     try:
         reply = run_kb_chat(
-            get_store(), [m.model_dump() for m in body.messages], body.use_kb, body.research, body.folder, body.model
+            get_store(), [m.model_dump() for m in body.messages], body.use_kb, body.research, body.folder, body.model, body.slug
         )
     except UnknownModelError as e:
         raise HTTPException(400, str(e))
@@ -598,6 +609,91 @@ def chat_endpoint(body: ChatRequest) -> dict:
             raise HTTPException(400, "OPENAI_API_KEY not set — add it to core/.env to use GPT models")
         raise HTTPException(502, f"OpenAI error: {e}")
     return {"reply": reply}
+
+
+# --- "record that" (next-wave-plan §4) — explicit consolidation, gated ------
+#
+# Chat is read-only by default; folding a conversation into the KB happens
+# ONLY when the user asks. Two steps, same propose→review→Save contract as
+# /kb/sort + /kb/entries: /record-that distills a DATED append proposal and
+# writes NOTHING; /record-that/save is the separate explicit commit the user
+# clicks after reviewing/editing the text — and it APPENDS to the target
+# note (dated entries, decision-log style), never rewriting its history.
+
+
+class RecordThatRequest(BaseModel):
+    messages: list[ChatMessage]
+    folder: str | None = None  # the scoped topic note, when the chat was continued on one
+    slug: str | None = None
+    provider: str | None = None  # local|cloud|auto — same step-back override as /kb/sort
+
+
+def _conversation_text(messages: list[ChatMessage]) -> str:
+    return "\n\n".join(f"{'You' if m.role == 'user' else 'Assistant'}: {_as_text(m.content)}" for m in messages)
+
+
+@router.post("/record-that")
+def record_that(body: RecordThatRequest) -> dict:
+    """Proposes a dated append — never writes. The date header is computed in
+    code (clock.today, Eastern); the model only distills the bullet points
+    (local-first via the normal parse_structured routing)."""
+    if not body.messages:
+        raise HTTPException(400, "nothing to record — the conversation is empty")
+    convo = _conversation_text(body.messages)
+    used = llm_dispatch.collect_providers()
+    try:
+        if body.folder and body.slug:
+            existing = get_store().read(body.folder, body.slug)
+            if existing is None:
+                raise HTTPException(404, "target entry not found")
+            title = existing.partition("\n")[0].lstrip("# ").strip() or body.slug
+            points = suggest_record_fold(convo, title, provider=body.provider).points
+            folder = body.folder
+        else:
+            fold = suggest_record_fold_new(convo, get_store().list_folders(), get_store().notes_index(), provider=body.provider)
+            folder, title, points = fold.folder, fold.title, fold.points
+    except (OllamaError, ValueError) as e:
+        raise HTTPException(400, str(e))
+    today = clock.today().isoformat()
+    return {
+        "folder": folder,
+        "slug": body.slug,
+        "title": title,
+        "date": today,
+        "append": f"### {today} — from chat\n\n{points.strip()}",
+        "provider_used": llm_dispatch.summarize_providers(used),
+    }
+
+
+class RecordSaveRequest(BaseModel):
+    folder: str
+    title: str  # the note's title — an existing note gets the append; otherwise a new note is created
+    append: str  # the reviewed (possibly edited) dated block
+
+
+@router.post("/record-that/save")
+def record_that_save(body: RecordSaveRequest) -> dict:
+    """The explicit Save after review — the existing KB update machinery
+    (store.write + graph sync + retrieval index, exactly what POST /kb/entries
+    runs), but append-only: the note's existing body is carried through
+    verbatim in code and the dated block lands at the end."""
+    append = body.append.strip()
+    if not append:
+        raise HTTPException(400, "nothing to save — the append text is empty")
+    store = get_store()
+    existing = store.read(body.folder, body.title)  # read slugifies the title, same as write
+    if existing is not None:
+        first_line, _, rest = existing.partition("\n")
+        title = first_line.lstrip("# ").strip() or body.title
+        existing_body = rest.strip("\n")
+        content = f"{existing_body}\n\n{append}" if existing_body else append
+    else:
+        title = body.title
+        content = append
+    folder_slug, entry_slug = store.write(body.folder, title, content)  # links=None → existing links kept
+    _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", title, content, None)
+    safe_index_note(folder_slug, entry_slug, title, content)
+    return {"folder": folder_slug, "slug": entry_slug, "appended": existing is not None}
 
 
 class GenerateImageRequest(BaseModel):
