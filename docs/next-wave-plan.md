@@ -183,8 +183,23 @@ orchestrate, but has no index tool, no graph walk, no ranked search.
 - Tier A now with B later, or both in one wave?
 - Confirm the index spans everything, not just notes. (Recommended: yes.)
 
-**Decisions:**
-- (hashing in progress)
+**Decisions (2026-10-19):**
+1. **Tier A AND Tier B in one wave** — owner: "I want B as well; that's why
+   we have the graph for retrieval." The full triple-hybrid retrieval
+   system: **graph** for relational questions (walks no text search can do),
+   **FTS5** for exact-word ranked search, **vectors** (sqlite-vec + a LOCAL
+   embedding model, EmbeddingGemma-class per on-device-s25u.md) for
+   meaning-match when wording differs. One unified surface over all three.
+2. **chat.py context logic: opened by the owner for this build** — the
+   dump-everything `_kb_context` is replaced by the index→select→fetch loop.
+   (KB chat's prompting/session machinery otherwise still protected.)
+3. **The index spans everything** — notes, people, places, events,
+   experiences, journal days, labeled log rows.
+4. **`summary` one-liner per node** — written once at ingest by the local
+   model (reviewable, frontmatter), deterministic fallback title+first-line,
+   backfill pass for existing nodes. The owner's original "small heading
+   notes in each node", made real. Embeddings computed at ingest too (and
+   backfilled) — capture-time work, free retrieval forever.
 
 ---
 
