@@ -38,7 +38,8 @@ Reference: [reference/](reference/) — the systematic technical reference, deri
 (not plans): statement of work, architecture, every endpoint, data/DB, graph engine, MCP
 server, vault, sync, drop pipeline, frontend, Android — plus (2026-10-15)
 `reference/perception-and-autojournal.md` and `reference/local-models.md` for the perception/
-local-model wave. Start at `reference/00-statement-of-work.md` (see its 2026-10-15 addendum).
+local-model wave, and (2026-10-19) `reference/retrieval.md` for the triple-hybrid retrieval
+engine. Start at `reference/00-statement-of-work.md` (see its 2026-10-15 addendum).
 The on-device stack has its own in-repo docs: `phone/README.md` + per-tier READMEs.
 
 Reference material (not planning docs, read-only source): `~/Desktop/Notebook` — Naitik's

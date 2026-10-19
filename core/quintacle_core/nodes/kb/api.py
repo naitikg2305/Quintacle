@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from ... import llm_dispatch
 from ...graph import get_graph_store, link_new_entry, sync_frontmatter_links
 from ...graph_capture import safe_entry_graph_links
+from ...retrieval import safe_index_note
 from ...perception import perceive_photo
 from ..journal.api import get_store as get_journal_store
 from ..journal.normalize import canonicalize_name
@@ -238,6 +239,8 @@ def create_entry(body: EntryCreate) -> dict:
     content = _localize_remote_images(body.content, body.folder, get_store())
     folder_slug, entry_slug = get_store().write(body.folder, body.title, content, body.links, fields=body.fields)
     _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", body.title, content, body.links)
+    # Retrieval index (retrieval.py) — failure-isolated, never fails the save.
+    safe_index_note(folder_slug, entry_slug, body.title, content)
     return {"folder": folder_slug, "slug": entry_slug}
 
 
@@ -500,6 +503,8 @@ async def create_entry_with_asset(
     linked_content = f"{content}\n\n{asset_lines}" if asset_lines else content
     get_store().write(folder, title, linked_content, link_list, location)
     _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", title, linked_content, link_list)
+    # Retrieval index (retrieval.py) — failure-isolated, never fails the save.
+    safe_index_note(folder_slug, entry_slug, title, linked_content)
 
     # The photo auto-journal: deterministic line into that EXIF date's
     # journal + pictured_with/at_location edges (see nodes/kb/auto_journal).

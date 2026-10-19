@@ -1,0 +1,6 @@
+# Optional vector lane for retrieval.py — sqlite-vec KNN over LOCAL Ollama
+# embeddings (QUINTACLE_EMBED_MODEL, default embeddinggemma). Lazy-imported:
+# core/requirements.txt stays phone/Termux-safe without this, and retrieval
+# silently degrades to FTS5 + graph when it's absent. Install with:
+#   pip install -r core/requirements-retrieval.txt
+sqlite-vec

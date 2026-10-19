@@ -201,6 +201,19 @@ orchestrate, but has no index tool, no graph walk, no ranked search.
    notes in each node", made real. Embeddings computed at ingest too (and
    backfilled) — capture-time work, free retrieval forever.
 
+**BUILT 2026-10-19** — the retrieval engine half of this section is real
+code: `core/quintacle_core/retrieval.py` (nodes_index + FTS5 + optional
+sqlite-vec/`QUINTACLE_EMBED_MODEL` lane, RRF fusion, 1-hop graph expansion),
+hooks on every write path (REST + MCP, failure-isolated), summaries
+(structured = computed in code; prose = local model with deterministic
+fallback — one deviation from decision 4's sketch: the one-liner lives in
+the `nodes_index` SQLite row, not note frontmatter, keeping files untouched),
+`python -m quintacle_core.retrieval_backfill`, `GET /retrieve`, MCP
+`search_index` (tool 18). Transcripts' `conversations/` prefix is already
+excluded from the default index per §4. Reference:
+`docs/reference/retrieval.md`. NOT built here (next wave): chat.py's
+index→select→fetch loop over this engine (decision 2 stays pending).
+
 ---
 
 ## 4. Conversational ideology — "continue any topic like a human"

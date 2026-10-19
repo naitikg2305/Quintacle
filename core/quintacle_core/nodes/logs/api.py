@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from ... import clock
 from ...graph_capture import safe_journal_graph_links
+from ...retrieval import safe_index_log_row, safe_index_routine
 from ..profile.store import ProfileStore
 from ..profile.targets import age_years
 from .log_store import LogFileStore, rebuild_sqlite_index
@@ -194,6 +195,7 @@ def create_meal(body: MealCreate) -> dict:
     # of mcg) would otherwise silently corrupt the %RDA math later.
     micros = _canonicalize_micros(body.micros)
     meal_id = repo.add_meal(body.name, body.protein_g, body.carbs_g, body.fat_g, body.kcal, body.fiber_g, body.notes, micros)
+    safe_index_log_row(f"meal:{meal_id}")  # retrieval index — failure-isolated
     return {"id": meal_id, **body.model_dump()}
 
 
@@ -229,6 +231,7 @@ def create_ingredient(body: IngredientCreate) -> dict:
     ingredient_id = repo.add_ingredient(
         body.name, body.protein_g, body.carbs_g, body.fat_g, body.kcal, body.fiber_g, body.basis_amount_g, body.notes, micros
     )
+    safe_index_log_row(f"ingredient:{ingredient_id}")  # retrieval index — failure-isolated
     return {"id": ingredient_id, **body.model_dump()}
 
 
@@ -245,6 +248,7 @@ class RoutineCreate(BaseModel):
 @router.post("/routines")
 def create_routine(body: RoutineCreate) -> dict:
     name = get_repo().add_routine(body.name, body.exercises)
+    safe_index_routine(name, body.exercises)  # retrieval index — failure-isolated
     return {"name": name, "exercises": body.exercises}
 
 
@@ -307,6 +311,7 @@ def create_meal_from_ingredients(body: MealFromIngredientsCreate) -> dict:
             )
             resolved_components.append({"ingredient_id": ingredient_id, "quantity_g": comp.quantity_g})
     meal_id = repo.add_meal_from_ingredients(body.name, resolved_components, body.notes)
+    safe_index_log_row(f"meal:{meal_id}")  # retrieval index — failure-isolated
     return {"id": meal_id, "components": [dict(row) for row in repo.meal_components(meal_id)]}
 
 
@@ -315,6 +320,7 @@ def log_food(body: FoodLogCreate) -> dict:
     entry_id = get_repo().log_food(
         body.date, body.meal_type, body.meal_id, body.freeform_kcal, body.servings, body.notes
     )
+    safe_index_log_row(f"food:{entry_id}")  # retrieval index — failure-isolated
     return {"id": entry_id, **body.model_dump(mode="json")}
 
 
@@ -328,12 +334,14 @@ def food_for_date(for_date: date) -> dict:
 @router.post("/substances")
 def log_substance(body: SubstanceLogCreate) -> dict:
     entry_id = get_repo().log_substance(body.date, body.substance, body.amount, body.notes)
+    safe_index_log_row(f"substance:{entry_id}")  # retrieval index — failure-isolated
     return {"id": entry_id, **body.model_dump(mode="json")}
 
 
 @router.post("/expenses")
 def log_expense(body: ExpenseLogCreate) -> dict:
     entry_id = get_repo().log_expense(body.date, body.amount, body.merchant, body.category, body.notes, body.kind)
+    safe_index_log_row(f"expense:{entry_id}")  # retrieval index — failure-isolated
     return {"id": entry_id, **body.model_dump(mode="json")}
 
 
@@ -349,6 +357,7 @@ def log_activity(body: ActivityLogCreate) -> dict:
     # so they link (people/experiences/place emergence) from their day's
     # journal: node — additive, never blocking the log write itself.
     safe_journal_graph_links(body.date, body.description)
+    safe_index_log_row(f"activity:{entry_id}")  # retrieval index — failure-isolated
     return {"id": entry_id, **body.model_dump(mode="json")}
 
 
@@ -366,6 +375,7 @@ def activities_between(start: date, end: date) -> list[dict]:
 def log_exercise(body: ExerciseLogCreate) -> dict:
     sets = [s.model_dump() for s in body.sets]
     entry_id = get_repo().log_exercise(body.date, body.exercise_name, sets, body.notes)
+    safe_index_log_row(f"exercise:{entry_id}")  # retrieval index — failure-isolated
     return {"id": entry_id, **body.model_dump(mode="json")}
 
 
@@ -381,6 +391,7 @@ def known_exercise_names() -> list[str]:
 @router.post("/body-stats")
 def log_body_stat(body: BodyStatCreate) -> dict:
     entry_id = get_repo().log_body_stat(body.date, body.metric, body.value, body.unit)
+    safe_index_log_row(f"body_stat:{entry_id}")  # retrieval index — failure-isolated
     return {"id": entry_id, **body.model_dump(mode="json")}
 
 
