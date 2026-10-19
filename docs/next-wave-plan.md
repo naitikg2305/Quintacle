@@ -123,6 +123,35 @@ KB + research chat + graph is exactly the "researched choices" machinery
   falls out for free. Public data = the explicit privacy-clean exception to
   local-first. Graceful offline (stale snapshot shown with its date).
 
+**BUILT (2026-10-19)** — all three recorded decisions above are code:
+- **Ledger**: `core/quintacle_core/nodes/stocks/` — buy/sell/dividend rows,
+  markdown source of truth under `Organisation/Finance/Stocks &
+  Investments/transactions/` with a rebuildable `stock_transactions` SQLite
+  index (also rebuilt on sync pull). Positions / FIFO cost basis / realized
+  P&L on partial sells / dividends computed in `positions.py` on every read —
+  nothing aggregated is stored, nothing is model-derived. In-app writes are
+  the form's review→Save; MCP got `log_stock_transaction` (ledger entry +
+  staged-snapshot undo) and read-only `stock_positions`.
+- **Prices**: implementation detail refined at build time — Stooq's plain-
+  HTTP CSV is the DEFAULT source (stdlib-only, keeps `core/requirements.txt`
+  Termux-safe); yfinance became the *optional* lane (`core/
+  stocks-requirements.txt`, lazy import, `QUINTACLE_PRICE_SOURCE=yfinance`)
+  rather than the default, since it drags in pandas. Append-only
+  `stock_prices` rows (one per symbol+trading day), explicit
+  `POST /stocks/prices/refresh` only — no daemons; per-symbol failures
+  degrade to the last snapshot shown with its date. Keyed fallbacks
+  (Finnhub/Alpha Vantage) not built — add only if Stooq+yfinance both prove
+  inadequate in practice.
+- **Research**: one KB folder per company under `Organisation/Finance/Stocks
+  Research/<TICKER>/`, thesis note with status owned/watching/passed
+  (passed theses kept and marked, per the decision), `thesis_for` edge to a
+  new `holding:<TICKER>` graph id — ticker-keyed so it survives index
+  rebuilds and exists for never-bought companies.
+- Frontend: `/stocks` page (positions table, snapshot date + refresh,
+  ledger, research links). The static InvestmentStore page stays as-is for
+  now — retiring it in favor of the derived view is a merge-time cleanup.
+  Detail: `docs/reference/stocks.md`.
+
 ---
 
 ## 2b. Bank accounts & card statements — the import lane

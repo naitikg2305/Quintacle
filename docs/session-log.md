@@ -3,6 +3,40 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-19 — Stocks wave: transaction ledger, computed P&L, EOD snapshots, research folders (§2, worktree agent)
+
+`docs/next-wave-plan.md` §2's three recorded decisions built in one worktree
+session (parallel to the finance and retrieval-index agents — no touches to
+expenses/quota code, `nodes/kb/chat.py`, or retrieval hooks). Suite
+**350 → 365 passed / 5 skipped**; frontend `tsc --noEmit` 0 errors, no new
+eslint errors. Detail: `docs/reference/stocks.md`; BUILT note appended to
+§2.
+
+- **Ledger** (`core/quintacle_core/nodes/stocks/`): buy/sell/dividend rows,
+  markdown source of truth under `Stocks & Investments/transactions/`,
+  `stock_transactions` SQLite index (rebuilt from files, incl. on sync
+  pull). Positions / FIFO cost basis / realized P&L / dividends computed in
+  `positions.py` on every read — never stored, never model-derived; oversell
+  flags instead of corrupting math.
+- **Prices** (`prices.py`): Stooq plain-HTTP CSV default (stdlib-only —
+  `core/requirements.txt` untouched, Termux-safe); yfinance as the optional
+  lane (`core/stocks-requirements.txt`, lazy import). Append-only
+  `stock_prices` rows (one per symbol+trading day), explicit
+  `POST /stocks/prices/refresh` only, per-symbol degradation to the last
+  stale snapshot shown with its date. Tests stub HTTP — suite is fully
+  offline.
+- **Research**: KB folder per company under `Stocks Research/<TICKER>/`,
+  status owned/watching/**passed** (passed theses kept and marked),
+  `thesis_for` edge to the new ticker-keyed `holding:<TICKER>` graph id;
+  `/graph` emits holding nodes.
+- **Surfaces**: `/stocks` REST endpoints; MCP `log_stock_transaction`
+  (ledger + staged undo; `stock_transactions` whitelisted in undo.py) and
+  read-only `stock_positions`; frontend `/stocks` page (positions table,
+  snapshot date + refresh, ledger form, research links) + nav entry.
+- Deliberately not done: keyed price fallbacks (Finnhub/Alpha Vantage),
+  retiring the static InvestmentStore page (merge-time cleanup), any
+  retrieval-index hooks (added at merge per the wave split).
+
 ## 2026-10-15 — The perception wave: local-first ingest, on-device perception, auto photo-journal, the phone/ stack
 
 Seven parallel worktree agents plus the main-thread integration, landed on
