@@ -109,10 +109,78 @@ KB + research chat + graph is exactly the "researched choices" machinery
 - Research home: one folder per company (e.g. `Organisation/Finance/Stocks
   Research/<TICKER>/`) with graph edge thesis ↔ holding? (Recommended.)
 
+**Decisions (2026-10-19):**
+- **Prices: auto-fetch, in.** Free sources are sufficient for personal use —
+  yfinance (no key, de-facto standard, unofficial) with Stooq EOD / keyed
+  free tiers (Finnhub, Alpha Vantage) as fallbacks. End-of-day is enough.
+  Each fetch stored as a snapshot row → portfolio-value-over-time history
+  falls out for free. Public data = the explicit privacy-clean exception to
+  local-first. Graceful offline (stale snapshot shown with its date).
+
+---
+
+## 2b. Bank accounts & card statements — the import lane
+
+**His ask:** "can we also do the same with bank account APIs and credit
+card statement pulls?"
+
+**Honest landscape (2026):** live US bank/card feeds all transit an
+aggregator (Plaid/Finicity/MX...). Plaid isn't meaningfully free for live
+data and routes credentials + every transaction through their cloud —
+counter to Quintacle's whole posture. SimpleFIN Bridge (~$1.5/mo) is the
+privacy-respecting aggregator if live feeds are ever truly wanted.
+
+**Decision (2026-10-19): statement DROPS, not live APIs.**
+- User downloads CSV/OFX (deterministic parse — no model, no third party,
+  no credentials, free forever) or PDF (existing vision pipeline) from the
+  bank and drops it; transactions land as expense rows with kinds,
+  graph-wired, event-grouped per statement.
+- Bonus unlock: with statements in, **subscription detection becomes
+  deterministic** (same merchant + similar amount recurring ≈ monthly —
+  arithmetic, not AI), un-deferring that item.
+- Aggregator lane: DEFERRED indefinitely, documented tradeoff; revisit only
+  if statement drops prove too much friction in practice.
+
+---
+
+## 3. Retrieval — "the LLM knows exactly what to retrieve and get"
+
+**His words:** "like ChatGPT or Claude — it has a good idea of the question
+I'm asking, referencing from docs internally. I want Quintacle to do that.
+That's why we had the graph and the folder structure with small heading
+notes in each node. Do we have that at least?"
+
+**Verified state (2026-10-19):** the index data EXISTS (`notes_index()` —
+title per node; /graph labels everything incl. log rows) but no
+question-answering surface uses it. The in-app KB chat brute-force dumps
+EVERY note's full content into the prompt (`_kb_context`) — works at 45
+notes, dies at 1,000. `neighborhood()`/`reverse_lookup()` exist but are
+exposed to no model surface (only the person-appearances page). MCP has
+kb_search (crude substring), folders, get, day_recall — a client model can
+orchestrate, but has no index tool, no graph walk, no ranked search.
+
+**The plan (hashing):**
+- **Tier A — deterministic retrieval loop (the real unlock, no new deps):**
+  expose to MCP + chat: (1) `index` — every node in one cheap list (id,
+  type, title, one-liner) spanning notes/people/places/events/labeled log
+  rows; (2) `graph_neighborhood(node, hops)`; (3) **FTS5** ranked full-text
+  search (SQLite built-in). Loop: question → scan index / search → pick ids
+  → get exactly those → answer. Small local models can run this loop.
+- **Tier B — semantic recall (the 2026-09-30 amendment, still unbuilt):**
+  sqlite-vec + a LOCAL embedding model (EmbeddingGemma-class per
+  on-device-s25u.md) for fuzzy prose recall. Optional layer on A.
+
+**Open (owner to decide):**
+- Opening `chat.py`'s context logic (historically protected; currently open
+  for providers only) so the in-app chat does index→select→fetch instead of
+  dump-everything.
+- Tier A now with B later, or both in one wave?
+- Confirm the index spans everything, not just notes. (Recommended: yes.)
+
 **Decisions:**
 - (hashing in progress)
 
 ---
 
-## 3. (next topic as it comes to mind)
+## 4. (next topic as it comes to mind)
 
