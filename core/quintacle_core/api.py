@@ -86,6 +86,8 @@ from .nodes.travel.llm import maybe_structure_experience, structure_experience
 from .nodes.people.api import init_store as init_people_store, get_store as get_people_store, router as people_router
 from .nodes.people.llm import maybe_structure_person_mention, structure_person
 from .nodes.finance.api import init_store as init_credit_card_store, router as credit_card_router, investments_router, get_investment_store
+from .nodes.stocks.api import init_store as init_stocks_store, get_stocks_repo, router as stocks_router
+from .nodes.stocks.store import holding_node_id
 from .nodes.finance.llm import structure_credit_card, structure_investment
 from .nodes.vault.api import init_store as init_vault_store, router as vault_router
 from .perception import perceive_photo
@@ -190,6 +192,12 @@ def create_app() -> FastAPI:
     init_credit_card_store(kb_root)
     app.include_router(credit_card_router)
     app.include_router(investments_router)
+
+    # Stock transaction ledger + computed positions + research folders —
+    # markdown transactions live in the same kb/ tree (Stocks & Investments/
+    # transactions/), the SQLite index shares quintacle.db.
+    init_stocks_store(conn, kb_root)
+    app.include_router(stocks_router)
 
     # Deliberately OUTSIDE kb_root — every model-facing surface (KB chat,
     # MCP tools, search, graph, drop) only walks kb/, so vault/ being a
@@ -777,6 +785,20 @@ def create_app() -> FastAPI:
         # node for each event id the edges table actually references, labelled
         # by its linked day when it has one, else by member count.
         stored_edges = get_graph_store().all()
+
+        # Holdings — the per-ticker anchor nodes thesis notes edge into
+        # (nodes/stocks). Emitted for every symbol the transaction ledger
+        # knows PLUS every holding: id an edge references, so a
+        # researched-but-passed company's thesis edge still has a node to
+        # draw to even though it was never bought.
+        holding_ids = {holding_node_id(s) for s in get_stocks_repo().all_symbols()}
+        for edge in stored_edges:
+            for endpoint in (edge["source_id"], edge["target_id"]):
+                if endpoint.startswith("holding:"):
+                    holding_ids.add(endpoint)
+        for hid in sorted(holding_ids):
+            nodes.append({"id": hid, "type": "holding", "label": hid.partition(":")[2]})
+
         event_members: dict[str, list[str]] = {}
         event_date_by_id: dict[str, str] = {}
         for edge in stored_edges:

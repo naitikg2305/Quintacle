@@ -1,0 +1,6 @@
+# OPTIONAL — the yfinance EOD price lane (QUINTACLE_PRICE_SOURCE=yfinance).
+# yfinance drags in pandas/numpy, which is why it lives here and is
+# lazy-imported (nodes/stocks/prices.py), never in core/requirements.txt:
+# the default Stooq CSV source is plain stdlib HTTP and phone/Termux-safe.
+# The full test suite passes WITHOUT this installed.
+yfinance
