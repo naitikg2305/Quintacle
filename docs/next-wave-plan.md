@@ -223,10 +223,18 @@ committed.
   (decisions with dates, open questions, superseded items get correction
   notes) — never rewriting history, per the docs-are-decision-logs
   principle.
-- **Transcripts are ephemeral.** No thread list, no cold archive. "Why
-  would we save random convos — the reason I built this is to only
-  preserve what's necessary." Continuity comes purely from the KB: the
-  distilled note is what survives, and what retrieval finds.
+- **Transcripts: second-tier archive** (amended same day — was "fully
+  ephemeral"; "only preserve what's necessary" still governs the *index*).
+  On close, the raw transcript drops verbatim into
+  `conversations/<topic>/<date>.md` with a `transcript_of` edge — a file
+  write, zero model calls. **Excluded from the default retrieval index**;
+  reachable only when the owner explicitly asks to dive deeper / refer to
+  transcripts (own FTS table, scoped to the topic). Anything worth
+  promoting goes through "record that" into the real note.
+- **The chat page itself stays fresh.** No accumulating thread list, no
+  session log in the UI: "talk yap add and delete — always keep the chat
+  page fresh and neat." Continuity comes from the KB via retrieval, not
+  from reopening old chats.
 
 ## 5. Generic pages (the car vision) — ai-managed-pages, now cheap
 
