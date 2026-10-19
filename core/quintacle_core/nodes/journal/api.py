@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, HTTPException
 
 from ... import llm_dispatch
 from ...graph_capture import safe_journal_graph_links
+from ...retrieval import safe_index_journal
 from ...nodes.kb.chat import OllamaError
 from ..logs.api import get_log_store, get_repo as get_logs_repo
 from ..people.api import get_store as get_people_store
@@ -39,6 +40,9 @@ def save_journal(for_date: date, content: str = Body(..., media_type="text/plain
     # place-emergence check — as MCP journal_append, via the one shared
     # helper. Additive, never blocking: a linking failure can't lose the save.
     safe_journal_graph_links(for_date, content)
+    # Retrieval index (retrieval.py): re-index the WHOLE day (appends stack),
+    # failure-isolated — an indexing error never loses the save.
+    safe_index_journal(for_date, get_store().load(for_date) or "")
     return {"date": for_date.isoformat(), "saved": True}
 
 

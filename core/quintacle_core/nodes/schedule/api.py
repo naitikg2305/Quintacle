@@ -5,6 +5,7 @@ from datetime import date
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ...retrieval import safe_index_todo, safe_remove_node
 from .models import Priority, Todo, apply_todo_updates
 from .ranking import build_calendar, rank_todos
 from .store import TodoStore
@@ -54,6 +55,7 @@ def list_todos() -> list[Todo]:
 def create_todo(body: TodoCreate) -> Todo:
     todo = Todo(**body.model_dump())
     get_store().save(todo)
+    safe_index_todo(todo)  # retrieval index — failure-isolated
     return todo
 
 
@@ -67,12 +69,14 @@ def update_todo(todo_id: str, body: TodoUpdate) -> Todo:
     updates = body.model_dump(exclude_unset=True)
     todo = apply_todo_updates(todo, updates)
     store.save(todo)
+    safe_index_todo(todo)  # retrieval index — failure-isolated
     return todo
 
 
 @router.delete("/todos/{todo_id}")
 def delete_todo(todo_id: str) -> dict:
     get_store().delete(todo_id)
+    safe_remove_node(f"todo:{todo_id}")  # retrieval index — failure-isolated
     return {"deleted": todo_id}
 
 

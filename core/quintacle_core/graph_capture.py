@@ -61,6 +61,7 @@ from typing import Iterable
 
 from .graph import create_edge, get_graph_store, link_new_entry, title_mentioned
 from .markdown_paths import slugify
+from .retrieval import safe_index_event, safe_index_note
 from .nodes.documents.store import DocumentStore
 from .nodes.grooming.store import GroomingItemStore
 from .nodes.home.store import HomeItemStore, ResidenceStore
@@ -215,13 +216,17 @@ def _emerge_places(
         if not exists:
             if len(matching) < PLACE_EMERGENCE_THRESHOLD:
                 continue
-            stores.kb.write(
+            body = f"Emergent place — first seen across {len(matching)} entries."
+            place_folder, place_slug = stores.kb.write(
                 PLACES_FOLDER,
                 name,
-                f"Emergent place — first seen across {len(matching)} entries.",
+                body,
                 links=[],
                 fields={"kind": "place", "city": name},
             )
+            # Retrieval index (retrieval.py): place notes are written here,
+            # not through kb/api — failure-isolated, never blocks emergence.
+            safe_index_note(place_folder, place_slug, name, body)
             emerged.append(name)
         for sid in matching:
             created.append(create_edge(sid, target, "at_location", EMERGENT_PLACE))
@@ -407,6 +412,10 @@ def link_event(members: list[str], for_date: date | None = None) -> dict:
             "SELECT id FROM edges WHERE source_id = ? OR target_id = ?", (event_id, event_id)
         )
     }
+    # Retrieval index (retrieval.py): the ONE shared implementation behind
+    # both doors (REST /graph/event, MCP link_event) also indexes the event
+    # node it just minted — failure-isolated, never fails the link.
+    safe_index_event(event_id, len(valid), for_date)
     return {"event_id": event_id, "edges_created": len(after - before), "skipped": skipped}
 
 

@@ -17,6 +17,7 @@ load_dotenv()
 from . import clock
 from . import db
 from . import llm_dispatch
+from . import retrieval
 from .day_bundle import build_day_bundle
 from .nodes.kb.chat import OllamaError
 from .graph import get_graph_store, init_graph_store, sync_frontmatter_links
@@ -140,6 +141,10 @@ def create_app() -> FastAPI:
     kb_root = DATA_DIR / "kb"
     conn = db.connect(DATA_DIR / "quintacle.db")
     init_graph_store(DATA_DIR, conn)
+    # The universal retrieval index (retrieval.py) shares the same SQLite
+    # file as the graph's edges table — every write path below feeds it via
+    # failure-isolated safe_index_* hooks.
+    retrieval.init_retrieval_index(conn)
     init_repo(conn, LogFileStore(kb_root))
     app.include_router(logs_router)
 
@@ -630,6 +635,17 @@ def create_app() -> FastAPI:
                         entry["perception"] = payload
 
         return {"entries": entries, "provider_used": llm_dispatch.summarize_providers(used)}
+
+    @app.get("/retrieve")
+    def retrieve_nodes(q: str, k: int = 10, types: str | None = None) -> dict:
+        """Triple-hybrid retrieval over EVERY indexed node type (retrieval.py,
+        next-wave-plan §3): FTS5 bm25 + optional local-vector cosine, merged
+        by reciprocal-rank fusion in code, then 1-hop graph expansion per
+        hit. `types` is a comma-separated filter (e.g. "note,person").
+        Deterministic and read-only — no model call anywhere in this path;
+        the vector lane silently drops out when sqlite-vec/Ollama are absent."""
+        type_list = [t for t in (types.split(",") if types else []) if t.strip()]
+        return {"query": q, "results": retrieval.retrieve(q, k=k, types=type_list or None)}
 
     @app.post("/graph/event")
     def graph_event(body: EventLinkRequest) -> dict:

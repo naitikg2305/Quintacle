@@ -10,6 +10,7 @@ from uuid import uuid4
 from mcp.server.fastmcp import FastMCP
 
 from .. import db
+from .. import retrieval
 from ..day_bundle import build_day_bundle, entry_assets
 from ..graph_capture import link_event as capture_link_event
 from ..markdown_paths import resolve_nested, slugify
@@ -67,6 +68,10 @@ def init(data_dir: Path | None = None) -> None:
     # Same connection the logs repo uses — the graph's edges table lives in
     # the same quintacle.db (docs/graph-model.md Stage 1).
     configure_graph_link(DATA_DIR, conn, journal_store=journal_store, kb_store=kb_store)
+    # The universal retrieval index (retrieval.py) shares that connection
+    # too — the write tools below feed it via failure-isolated hooks, and
+    # search_index reads it.
+    retrieval.init_retrieval_index(conn)
 
 
 init()
@@ -106,6 +111,9 @@ def journal_append(for_date: str, content: str) -> dict:
     journal_store.save(entry_date, content, marker=marker)
     session.stage_journal_append(journal_store.root, entry_date, marker)
     link_new_entry("journal_day", f"journal:{entry_date.isoformat()}", content, session=session)
+    # Retrieval index: the WHOLE day re-indexed (appends stack) — failure-
+    # isolated, never fails the append.
+    retrieval.safe_index_journal(entry_date, journal_store.load(entry_date) or "")
     ledger_id = session.commit(result={"date": entry_date.isoformat()})
     return {"date": entry_date.isoformat(), "ledger_id": ledger_id}
 
@@ -149,6 +157,7 @@ def kb_create_entry(
     session.stage_file(target_path)
     folder_slug, entry_slug = kb_store.write(folder, title, content, links, fields=fields)
     link_new_entry("kb_note", f"note:{folder_slug}/{entry_slug}", f"{title}\n{content}", session=session, links=links or [], folder=folder_slug)
+    retrieval.safe_index_note(folder_slug, entry_slug, title, content)  # failure-isolated
     ledger_id = session.commit(result={"folder": folder_slug, "slug": entry_slug})
     return {"folder": folder_slug, "slug": entry_slug, "ledger_id": ledger_id}
 
@@ -167,6 +176,24 @@ def kb_search_entries(query: str) -> list[dict]:
     """Case-insensitive substring search across every KB entry's filename and
     body, regardless of folder — {folder, slug, snippet} per match."""
     return kb_store.search(query)
+
+
+# --- Universal retrieval ---
+
+
+@mcp.tool()
+def search_index(query: str, k: int = 10, types: list[str] | None = None) -> list[dict]:
+    """Ranked hybrid search over EVERY node type in the store — notes,
+    journal days, people, places, experiences, todos, expenses and the
+    other log rows, meal/routine presets, events — not just KB entries
+    (that's kb_search_entries). Each result: {id, type, title, summary
+    (one-liner), score, neighbors: [{id, title, edge_type}] (its 1-hop
+    graph neighbors)}. `types` filters (e.g. ["note", "person"]). Use the
+    returned graph ids with kb_get_entry / journal_get / day_recall to
+    fetch exactly what you need. Deterministic and read-only: FTS5 +
+    optional local vectors fused by reciprocal rank in code — no AI call,
+    no ledger entry, nothing to undo."""
+    return retrieval.retrieve(query, k=k, types=types)
 
 
 # --- Logs: expenses ---
@@ -196,6 +223,7 @@ def log_expense(
     )
     session.stage_sqlite_insert(_db_path, "expense_log", "id", expense_id)
     link_new_entry("expense", f"expense:{expense_id}", f"{merchant} {category} {notes}".strip(), session=session, amount=amount, date=entry_date.isoformat())
+    retrieval.safe_index_log_row(f"expense:{expense_id}")  # failure-isolated
     ledger_id = session.commit(result={"expense_id": expense_id, "date": entry_date.isoformat()})
     return {"expense_id": expense_id, "date": entry_date.isoformat(), "ledger_id": ledger_id}
 
@@ -236,6 +264,7 @@ def todo_create(
     session.stage_file(todo_store.path_for(todo.id))
     todo_store.save(todo)
     link_new_entry("todo", f"todo:{todo.id}", f"{title} {notes}".strip(), session=session, due_date=due_date)
+    retrieval.safe_index_todo(todo)  # failure-isolated
     ledger_id = session.commit(result={"todo": todo.model_dump(mode="json")})
     return {**todo.model_dump(mode="json"), "ledger_id": ledger_id}
 
@@ -278,6 +307,7 @@ def todo_update(
     todo = apply_todo_updates(todo, updates)
     todo_store.save(todo)
     link_new_entry("todo", f"todo:{todo.id}", f"{todo.title} {todo.notes}".strip(), session=session)
+    retrieval.safe_index_todo(todo)  # failure-isolated
     ledger_id = session.commit(result={"todo": todo.model_dump(mode="json")})
     return {**todo.model_dump(mode="json"), "ledger_id": ledger_id}
 
@@ -289,6 +319,7 @@ def todo_delete(todo_id: str) -> dict:
     session = _session("schedule.todo_delete", f"Deleted todo {todo_id}")
     session.stage_file(todo_store.path_for(todo_id))
     todo_store.delete(todo_id)
+    retrieval.safe_remove_node(f"todo:{todo_id}")  # failure-isolated
     ledger_id = session.commit(result={"deleted": todo_id})
     return {"deleted": todo_id, "ledger_id": ledger_id}
 

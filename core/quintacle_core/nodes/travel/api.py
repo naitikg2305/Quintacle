@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from ...graph import link_new_entry, sync_frontmatter_links
 from ...graph_capture import emerge_places_for_text, mention_candidates
+from ...retrieval import safe_index_experience
 from ..journal.api import get_store as get_journal_store
 from ..journal.normalize import canonicalize_name
 from ..kb.store import KBStore
@@ -76,6 +77,9 @@ def create_experience(body: ExperienceCreate) -> dict:
         emerge_places_for_text(body.city)
     except Exception:
         pass
+
+    # Retrieval index (retrieval.py) — failure-isolated, never fails the save.
+    safe_index_experience(name, folder, slug, body.city, body.kind, body.rating, body.notes)
 
     return {"name": name, "slug": slug, "folder": folder}
 
