@@ -721,6 +721,96 @@ export const createInvestment = (fields: {
   notes?: string;
 }) => request<{ name: string; slug: string }>("/investments", { method: "POST", body: JSON.stringify(fields) });
 
+// --- stocks: transaction ledger, computed positions, EOD snapshots, research ---
+
+export const STOCK_ACTIONS = ["buy", "sell", "dividend"] as const;
+export type StockAction = (typeof STOCK_ACTIONS)[number];
+
+export type StockTransaction = {
+  id: number;
+  date: string;
+  action: StockAction;
+  symbol: string;
+  qty: number;
+  price: number;
+  fees: number;
+  account: string;
+  notes: string;
+};
+
+export const listStockTransactions = (symbol?: string) =>
+  request<StockTransaction[]>(`/stocks/transactions${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`);
+
+export const logStockTransaction = (body: {
+  date: string;
+  action: StockAction;
+  symbol: string;
+  qty?: number;
+  price?: number;
+  fees?: number;
+  account?: string;
+  notes?: string;
+}) => request<{ id: number; symbol: string }>("/stocks/transactions", { method: "POST", body: JSON.stringify(body) });
+
+export const deleteStockTransaction = (id: number) =>
+  request<{ deleted: number }>(`/stocks/transactions/${id}`, { method: "DELETE" });
+
+// Everything below is COMPUTED server-side from the ledger rows + the latest
+// stored EOD snapshot — the page never does valuation math of its own.
+export type StockPosition = {
+  symbol: string;
+  qty: number;
+  cost_basis: number;
+  avg_cost: number | null;
+  realized_pnl: number;
+  dividends: number;
+  oversold: boolean;
+  accounts: string[];
+  last_price: number | null;
+  last_price_date: string | null;
+  price_source: string | null;
+  market_value: number | null;
+  unrealized_pnl: number | null;
+};
+
+export type StockPositions = {
+  positions: StockPosition[];
+  totals: {
+    cost_basis: number;
+    market_value: number;
+    unrealized_pnl: number;
+    realized_pnl: number;
+    dividends: number;
+    priced_symbols: number;
+    unpriced_symbols: number;
+  };
+  prices_as_of: string | null;
+};
+
+export const stockPositions = () => request<StockPositions>("/stocks/positions");
+
+export type PriceRefreshResult = {
+  results: ({ symbol: string } & ({ price: number; price_date: string; source: string; stored: boolean } | { error: string }))[];
+  fetched: number;
+  errors: number;
+};
+
+export const refreshStockPrices = (symbols?: string[]) =>
+  request<PriceRefreshResult>("/stocks/prices/refresh", { method: "POST", body: JSON.stringify({ symbols: symbols ?? null }) });
+
+export type StockResearchNote = {
+  symbol: string;
+  status: "owned" | "watching" | "passed";
+  title: string;
+  folder: string;
+  slug: string;
+};
+
+export const listStockResearch = () => request<StockResearchNote[]>("/stocks/research");
+
+export const createStockResearch = (body: { symbol: string; status: string; title?: string; content?: string }) =>
+  request<{ folder: string; slug: string; note_id: string }>("/stocks/research", { method: "POST", body: JSON.stringify(body) });
+
 // Who actually served a parse: "local" (free, on-machine), "cloud" (metered
 // Anthropic), "mixed" (auto fell back mid-request), or null (fully
 // deterministic — no model was consulted at all).
