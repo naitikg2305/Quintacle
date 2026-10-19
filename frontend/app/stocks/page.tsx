@@ -10,11 +10,11 @@ import {
   refreshStockPrices,
   STOCK_ACTIONS,
   StockAction,
+  stockPositions,
   StockPositions,
   StockResearchNote,
   StockTransaction,
 } from "@/lib/api";
-import { stockPositions } from "@/lib/api";
 import { todayIso } from "@/lib/date";
 
 function fmt(n: number | null | undefined): string {
