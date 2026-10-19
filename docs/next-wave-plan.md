@@ -243,6 +243,21 @@ excluded from the default index per §4. Reference:
 `docs/reference/retrieval.md`. NOT built here (next wave): chat.py's
 index→select→fetch loop over this engine (decision 2 stays pending).
 
+**BUILT 2026-10-19 (chat-context wave)** — decision 2 is now code: chat.py's
+`_kb_context` is the index→select→fetch loop over this engine.
+`retrieve(latest user message, k=8)` selects; full content is fetched ONLY
+for the selected prose hits (notes/places/people/journal days, per-hit char
+cap); structured rows enter as their already-computed one-line summaries
+(finished numbers — the model never re-derives them); each hit carries its
+1-hop neighbor labels as plain context lines (the chat loop is single-shot,
+no tool turns — a wanted neighbor is something the model asks the user to
+bring up). Deterministic assembly in RRF order under a 24k-char budget.
+Retrieval uninitialized/empty/erroring falls back to the ORIGINAL
+dump-everything context (kept as `_kb_context_everything`) — degraded, never
+a 500. The folder-only scoped chat is deliberately unchanged (its "can't see
+what it can't cite" contract would break under global retrieval). Reference:
+`docs/reference/chat-context.md`.
+
 ---
 
 ## 4. Conversational ideology — "continue any topic like a human"
@@ -290,6 +305,29 @@ optional local-model nicer-slug was deliberately skipped (zero-model hot
 path; deterministic slug is mandatory anyway). Hydration-from-retrieval and
 explicit "record that" folding belong to §3's engine / the chat-context
 wave, not built here. Details: `docs/reference/transcripts.md`.
+
+**BUILT 2026-10-19 (chat-context wave)** — the remaining §4 bullets are code:
+
+- **Topic hydration**: a chat continued ON a note (the existing "continue in
+  chat" affordance now sends folder+slug) prepends that node's full current
+  content + fields + its graph-neighborhood labels, then retrieval hits for
+  the latest question — continuity from the KB, never from a transcript.
+- **"Record that", explicit only**: a chat-header button. `POST
+  /kb/record-that` distills the conversation into a DATED append proposal
+  (date computed in code via clock.today — Eastern; the model writes only
+  the bullets, local-first via parse_structured's normal routing) and writes
+  NOTHING; the review panel lets the owner edit folder/note/text (folder is
+  the scoped topic's, or model-proposed + user-picked when unscoped); only
+  `POST /kb/record-that/save` writes — append-only onto the note's existing
+  body (pad pattern, history never rewritten), through the existing write
+  machinery (store.write + graph sync + retrieval index). No auto-fold
+  anywhere; the model-may-offer nicety was deliberately skipped (prompting
+  stays conservative this wave).
+- **Transcripts stay second-tier**: the deep-search lane is an explicit
+  button on the chat input (uses the typed text as the query, zero model
+  calls) surfacing `GET /transcripts/search` hits (topic, date, snippet) as
+  a deterministic message in the log — in context for the next turn, never
+  automatic.
 
 ## 5. Generic pages (the car vision) — ai-managed-pages, now cheap
 
