@@ -3,6 +3,46 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-19 — Chat-context wave: _kb_context rebuilt on retrieval, topic hydration, transcripts lane, "record that" (§3 decision 2 + §4, worktree agent)
+
+The last piece of the retrieval/conversational wave, built on `redone-UI`
+at `3229d09` (owner explicitly opened chat.py's KB-context logic for this
+build — session/prompting machinery and the provider registry untouched).
+Suite **406 → 426 passed / 5 skipped**; frontend `tsc --noEmit` 0 errors,
+eslint clean on the touched files. Reference: `docs/reference/chat-context.md`;
+BUILT notes appended to next-wave-plan §3 and §4. No touches to
+expense/quota/drop code (finance wave runs in parallel); frontend diff is
+`app/kb/page.tsx` + `lib/api.ts` only.
+
+- **`_kb_context` rebuilt** (`nodes/kb/chat.py`): index→select→fetch —
+  `retrieve(latest user message, k=8)`, full content only for selected prose
+  hits (4k chars each), structured rows as their finished one-line summaries
+  (never re-derived), 1-hop neighbor labels as context lines (single-shot
+  loop — no tool turns, by design), deterministic RRF-order assembly under a
+  24k-char budget. Retrieval uninitialized/empty/erroring → the ORIGINAL
+  dump-everything context (kept as `_kb_context_everything`), never a 500.
+  Folder-only scoped chat deliberately unchanged (can't-cite-it contract).
+- **Topic hydration**: "continue in chat" on a note now sends folder+slug;
+  the note's full content + fields + graph neighborhood prepend the context.
+  Never a transcript. Escalate ↗ re-sends the same scope — same context,
+  different provider (asserted by test).
+- **Transcripts deep-search lane**: explicit button on the chat input calls
+  `GET /transcripts/search` with the typed text; hits (topic/date/snippet)
+  land as a deterministic log message — context for the next turn. Explicit
+  only; default context provably never contains archive text.
+- **"Record that"**: `POST /kb/record-that` proposes a DATED append (date
+  from `clock.today()` in code; model only distills bullets, local-first via
+  parse_structured; unscoped proposals also pick folder+title for the user
+  to confirm) and writes nothing; review panel edits everything;
+  `POST /kb/record-that/save` appends onto the note's existing body verbatim
+  — history never rewritten — through store.write + graph sync + index.
+- Deliberately not done: tool-ish follow-up fetch turns (chat loop stays
+  single-shot), the model *offering* to record (prompting stays
+  conservative), retrieval in the folder-only scoped chat, and any Anthropic
+  prompt-caching rework (per-turn contexts cache-miss by nature; mechanism
+  left intact).
+
+
 ## 2026-10-19 — Finance wave: insights, budget lines, income, statement drops (next-wave §1/§2b)
 
 Worktree agent build of the decided finance sections of

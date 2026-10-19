@@ -199,6 +199,71 @@ class KBBodyUpdate(BaseModel):
     body: str
 
 
+_RECORD_RULES = (
+    "Extract ONLY what's worth keeping — decisions made (with the why), conclusions, "
+    "concrete facts and preferences stated, and genuinely open questions — as tight "
+    "markdown bullet points in the person's own voice. Never invent numbers, dates, or "
+    "facts that aren't in the conversation; skip pleasantries, false starts, and dead "
+    "ends. If a point supersedes something older, state it as a plain update (\"now X, "
+    "was Y\") rather than pretending the old state never existed. Do NOT include any "
+    "date or title heading — those are added separately, in code."
+)
+
+_RECORD_SCOPED_SYSTEM_PROMPT = (
+    "You distill a chat conversation into a short dated entry that will be APPENDED to "
+    "one existing note in a personal knowledge base (its title is given — the note is a "
+    "running decision log; history is never rewritten). " + _RECORD_RULES + " Return just:\n"
+    "- points: the markdown bullet points."
+)
+
+
+class RecordFoldPoints(BaseModel):
+    points: str
+
+
+_RECORD_UNSCOPED_SYSTEM_PROMPT = (
+    "You distill a chat conversation into a short dated entry for a personal knowledge "
+    "base — the user will pick/confirm where it's filed. " + _RECORD_RULES + " Return:\n"
+    "- folder: the best fit from the folder list, OR a short new folder name (2-3 words, "
+    "Title Case) if nothing fits. Prefer an existing folder.\n"
+    "- title: a short descriptive title for the topic this conversation was about — if an "
+    "existing note already covers this exact topic, use ITS title so the entry lands there.\n"
+    "- points: the markdown bullet points."
+)
+
+
+class RecordFoldNew(BaseModel):
+    folder: str
+    title: str
+    points: str
+
+
+def suggest_record_fold(
+    conversation_text: str, topic_title: str | None = None, provider: str | None = None
+) -> RecordFoldPoints:
+    """\"Record that\" (next-wave-plan §4), scoped: the chat is already on a
+    note — the model ONLY writes the bullet points; folder/title/date are
+    fixed by code. Local-first via parse_structured's normal routing."""
+    system = _RECORD_SCOPED_SYSTEM_PROMPT + f"\n\nThe note being appended to: {topic_title!r}"
+    return parse_structured(system, conversation_text, RecordFoldPoints, provider=provider, max_tokens=4096).parsed
+
+
+def suggest_record_fold_new(
+    conversation_text: str,
+    existing_folders: list[str],
+    existing_notes: list[dict] | None = None,
+    provider: str | None = None,
+) -> RecordFoldNew:
+    """\"Record that\" with no scoped topic: the model also proposes a folder
+    and title (reviewed/edited by the user before anything writes — same
+    propose→review→Save gate as every other KB write)."""
+    offered = sorted(set(existing_folders) | set(SEED_FOLDERS))
+    system = (
+        _RECORD_UNSCOPED_SYSTEM_PROMPT + "\n\nFolders: " + ", ".join(offered) + "\n\n" + _format_notes_index(existing_notes or [])
+    )
+    return parse_structured(system, conversation_text, RecordFoldNew, provider=provider, max_tokens=4096).parsed
+
+
 def suggest_kb_update(existing_body: str, new_text: str, provider: str | None = None) -> str:
     result = parse_structured(
         _UPDATE_SYSTEM_PROMPT,

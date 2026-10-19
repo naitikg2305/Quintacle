@@ -395,6 +395,19 @@ def retrieve(query: str, k: int = 10, types: list[str] | None = None) -> list[di
     return get_retrieval_index().retrieve(query, k=k, types=types)
 
 
+def neighbor_labels(node_id: str) -> list[dict]:
+    """The same 1-hop `{id, title, edge_type}` labels retrieve() attaches to
+    its hits, for ONE node — chat's topic hydration (next-wave-plan §4) uses
+    this to show a scoped note's graph neighborhood. Degrades to [] when
+    retrieval was never initialized or the graph isn't up, never an error."""
+    if _index is None:
+        return []
+    try:
+        return _index._neighbors(node_id)
+    except Exception:
+        return []
+
+
 # --- summaries: deterministic core, models at the edges ---
 
 
