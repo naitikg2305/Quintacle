@@ -3,25 +3,21 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  archiveTranscript,
   base64ToFile,
   buildChatMessage,
   ChatMessage,
   ChatModel,
   chatWithKB,
-  ChatSession,
-  createChatSession,
   createGroomingItem,
   createGroomingRoutine,
   createMealFromIngredients,
   createOutfit,
   createWardrobeItem,
   createRoutine,
-  deleteChatSession,
   generateImage,
   KBSuggestion,
   listChatModels,
-  listChatSessions,
-  loadChatSession,
   ParsedGroomingRoutineComposition,
   ParsedMealComposition,
   ParsedOutfitComposition,
@@ -29,7 +25,6 @@ import {
   pushKBEntry,
   pushKBEntryWithAsset,
   readKBEntry,
-  saveChatSession,
   sortKBEntry,
   suggestGroomingRoutine,
   suggestMealComposition,
@@ -41,6 +36,8 @@ import OutfitEditor from "@/components/OutfitEditor";
 import GroomingRoutineEditor from "@/components/GroomingRoutineEditor";
 import ChatLog from "@/components/ChatLog";
 import {
+  Archive,
+  ArchiveX,
   Database,
   Droplets,
   Dumbbell,
@@ -51,7 +48,6 @@ import {
   SendHorizontal,
   Shirt,
   Sparkles,
-  Trash2,
   TriangleAlert,
   Utensils,
   X,
@@ -111,16 +107,15 @@ function KBPageInner() {
   const [chatBusy, setChatBusy] = useState(false);
   // Phone only: one pane at a time (chat | scratchpad). lg+ shows both.
   const [pane, setPane] = useState<"chat" | "scratch">("chat");
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sessionTitle, setSessionTitle] = useState("");
-
-  async function refreshSessions() {
-    setSessions(await listChatSessions());
-  }
+  // The chat's subject — first message (or the note being continued), used
+  // only as the archive's topic slug. There is deliberately NO thread list:
+  // the page stays fresh ("talk yap add and delete"); continuity comes from
+  // the KB, closed chats go verbatim into the second-tier transcript archive.
+  const [chatSubject, setChatSubject] = useState("");
+  // Per-chat "don't keep" toggle — when off, closing archives nothing.
+  const [keepTranscript, setKeepTranscript] = useState(true);
 
   useEffect(() => {
-    refreshSessions();
     listChatModels().then((list) => {
       setModels(list);
       let saved: string | null = null;
@@ -162,28 +157,22 @@ function KBPageInner() {
     } catch {}
   }
 
-  async function openSession(id: string, title: string) {
-    setSessionId(id);
-    setSessionTitle(title);
-    setChatLog(await loadChatSession(id));
-    setTarget(null);
-    setChatFile(null);
-  }
-
-  function newChat() {
-    setSessionId(null);
-    setSessionTitle("");
+  // Closing a chat (the New button, or continuing on a note) archives the
+  // transcript verbatim — one file write, zero model calls — unless the
+  // "don't keep" toggle is set, then clears the page. Always fresh.
+  async function closeChat() {
+    if (chatLog.length > 0) {
+      try {
+        await archiveTranscript(chatLog, chatSubject || null, keepTranscript);
+      } catch {
+        // an unreachable backend must not trap the user in a stale chat
+      }
+    }
+    setChatSubject("");
+    setKeepTranscript(true);
     setChatLog([]);
     setTarget(null);
     setChatFile(null);
-  }
-
-  async function deleteSession() {
-    if (!sessionId) return;
-    if (!confirm("Delete this chat? This can't be undone — push anything worth keeping into the Knowledge Base first.")) return;
-    await deleteChatSession(sessionId);
-    newChat();
-    await refreshSessions();
   }
 
   async function continueInChatWith(folder: string, slug: string, content: string) {
@@ -191,15 +180,12 @@ function KBPageInner() {
     const title = firstLine.replace(/^#\s*/, "").trim() || slug;
     const body = content.slice(firstLine.length).replace(/^\n+/, "");
 
-    const created = await createChatSession(`Re: ${title}`);
-    setSessionId(created.id);
-    setSessionTitle(`Re: ${title}`);
-    setChatLog([]);
+    await closeChat();
+    setChatSubject(`Re: ${title}`);
     setUseKB(true);
     setTarget({ folder, slug, title });
     setScratchpad(body);
     setSuggestion(null);
-    await refreshSessions();
   }
 
   useEffect(() => {
@@ -447,15 +433,9 @@ function KBPageInner() {
     setChatFile(null);
     setChatBusy(true);
 
-    let id = sessionId;
-    let title = sessionTitle;
-    if (!id) {
-      title = inputForTitle.slice(0, 60) || "Chat";
-      const created = await createChatSession(title);
-      id = created.id;
-      setSessionId(id);
-      setSessionTitle(title);
-    }
+    // The first message names the chat — only ever used as the archive's
+    // topic slug when this chat closes; nothing is saved while it's live.
+    if (!chatSubject) setChatSubject(inputForTitle.slice(0, 60) || "Chat");
 
     let finalLog = next;
     try {
@@ -467,8 +447,6 @@ function KBPageInner() {
       finalLog = [...next, { role: "assistant" as const, content: `(error: ${e instanceof Error ? e.message : String(e)})` }];
     }
     setChatLog(finalLog);
-    await saveChatSession(id, title, finalLog);
-    await refreshSessions();
     setChatBusy(false);
   }
 
@@ -480,13 +458,10 @@ function KBPageInner() {
   async function escalate(messageIndex: number, cloudModel: string) {
     setChatError(null);
     setChatBusy(true);
-    let finalLog = chatLog;
     try {
       const context = chatLog.slice(0, messageIndex);
       const { reply } = await chatWithKB(context, useKB, false, undefined, cloudModel);
-      finalLog = [...chatLog, { role: "assistant" as const, content: reply, model: cloudModel }];
-      setChatLog(finalLog);
-      if (sessionId) await saveChatSession(sessionId, sessionTitle, finalLog);
+      setChatLog([...chatLog, { role: "assistant" as const, content: reply, model: cloudModel }]);
     } catch (e) {
       setChatError(e instanceof Error ? e.message : String(e));
     }
@@ -589,29 +564,28 @@ function KBPageInner() {
                 )}
               </label>
             </div>
+            {/* No thread list, ever — the page stays fresh ("talk yap add and
+                delete"). Closing archives the transcript (unless "don't keep"),
+                then clears. */}
             <div className="flex flex-wrap items-center gap-2">
-              <Select
-                className="min-w-0 flex-1 py-1 text-xs"
-                value={sessionId ?? ""}
-                onChange={(e) =>
-                  e.target.value ? openSession(e.target.value, sessions.find((s) => s.id === e.target.value)?.title ?? "") : newChat()
+              <button
+                onClick={() => setKeepTranscript(!keepTranscript)}
+                title={
+                  keepTranscript
+                    ? "Closing this chat files its transcript in the archive (outside the KB — only deep search ever reads it)"
+                    : "Don't keep — closing this chat archives nothing"
                 }
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors",
+                  keepTranscript ? "border-line text-muted" : "border-danger/50 bg-danger/10 text-danger"
+                )}
               >
-                <option value="">New chat</option>
-                {sessions.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.title}
-                  </option>
-                ))}
-              </Select>
-              <Button size="sm" onClick={newChat}>
-                <Plus size={14} /> New
+                {keepTranscript ? <Archive size={14} /> : <ArchiveX size={14} />}
+                {keepTranscript ? "Keep transcript" : "Don't keep"}
+              </button>
+              <Button size="sm" onClick={closeChat} disabled={chatBusy} title="Archive this chat and start fresh">
+                <Plus size={14} /> New chat
               </Button>
-              {sessionId && (
-                <Button size="sm" variant="danger" onClick={deleteSession} title="Delete this chat">
-                  <Trash2 size={14} />
-                </Button>
-              )}
             </div>
             {target && (
               <p className="text-xs text-muted">

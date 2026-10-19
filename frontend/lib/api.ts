@@ -1160,6 +1160,20 @@ export function base64ToFile(base64: string, mimeType: string, filename: string)
   return new File([bytes], filename, { type: mimeType });
 }
 
+// --- transcript archive --------------------------------------------------
+// Archive-on-close for the chat page (next-wave-plan.md §4): the raw
+// transcript lands verbatim under <data_dir>/conversations/ — OUTSIDE kb/,
+// invisible to every KB/model surface, reachable only via the explicit
+// /transcripts/search deep-dive lane. keep=false (the per-chat "don't keep"
+// toggle) archives nothing.
+export type ArchiveResult = { archived: boolean; path?: string; topic?: string };
+
+export const archiveTranscript = (messages: ChatMessage[], subject: string | null, keep: boolean) =>
+  request<ArchiveResult>("/transcripts/archive", {
+    method: "POST",
+    body: JSON.stringify({ messages, subject, keep }),
+  });
+
 export type ChatSession = { id: string; title: string };
 
 export const listChatSessions = () => request<ChatSession[]>("/kb/chats");
