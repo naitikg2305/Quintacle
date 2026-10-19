@@ -156,10 +156,9 @@ def test_retrieval_error_falls_back_to_the_legacy_dump(client, monkeypatch):
     assert "Shinjuku ramen crawl" in kb_text  # the dump, not a 500
 
 
-def test_empty_index_falls_back_to_the_legacy_dump(tmp_path, monkeypatch):
+def test_empty_index_falls_back_to_the_legacy_dump(tmp_path):
     # A store with notes but a never-backfilled (empty) index must not answer
     # "nothing matched" — it degrades to the legacy dump instead.
-    captured = _capture_contexts(monkeypatch)
     store = KBStore(tmp_path / "kb")
     store.write("Fitness", "Deadlift Cues", "Brace before you pull.")
     from quintacle_core.db import connect
@@ -167,7 +166,6 @@ def test_empty_index_falls_back_to_the_legacy_dump(tmp_path, monkeypatch):
     retrieval.init_retrieval_index(connect(tmp_path / "test.db"))  # exists, zero rows
     text = _system_text(store, True, None, None, [{"role": "user", "content": "deadlift?"}])
     assert "Brace before you pull." in text
-    del captured
 
 
 # --- topic hydration (§4: "continue any topic like a human") ------------------

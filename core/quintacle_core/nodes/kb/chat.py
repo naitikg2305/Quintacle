@@ -689,9 +689,11 @@ def _run_local(picker_id: str, messages: list[dict], kb_text: str | None) -> str
         "model": raw_model,
         "messages": [{"role": "system", "content": system_text}] + _to_ollama_messages(messages, _ollama_model_is_vision(raw_model)),
         "stream": False,
-        # Ollama's default context window is small (4k); the KB block alone
-        # can blow past that and get silently truncated — ask for more.
-        "options": {"num_ctx": 8192},
+        # Ollama's default context window is small (4k); the retrieved KB
+        # block (up to ~24k chars ≈ 6-7k tokens) plus the conversation can
+        # blow past 8k and get silently truncated — ask for 16k, same as
+        # llm_dispatch's local parse path.
+        "options": {"num_ctx": 16384},
     }
     req = urllib.request.Request(
         f"{host}/api/chat",
