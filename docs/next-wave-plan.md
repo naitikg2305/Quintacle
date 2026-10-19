@@ -50,13 +50,69 @@ money."
 7. **Investments** — live-ish valuation? (external price data = a new
    dependency class; decide deliberately).
 
-**Decisions (hashing in progress):**
-- (none yet)
+**Decisions (2026-10-19):**
+1. **Spend analysis: ALL views, yes** — monthly totals by kind over time,
+   month-vs-last-month deltas, merchant rollups. Placement (Claude's call,
+   standing unless overridden): a new **Insights** tab on the Finance page
+   (money reads together), while budget lines surface on the **Dashboard**
+   automatically (they ride the habit engine, which already lives there).
+   Deterministic SQL only — zero model calls anywhere in analysis.
+2. **Budgets: named custom lines from day one**, not just the 7 kinds —
+   "winery $50 this weekend", "one 222 + one date a week", "creatine +
+   alcohol monthly". Design: extend the habit/quota engine — spend metric
+   gains a matcher (kind, and/or whole-word text match on
+   merchant/category/notes, reusing THE matcher), habit name = the line's
+   name. Per-kind lines are just the simplest case of this.
+3. **Income: in scope.** New income entries (date, amount, source, kind:
+   salary/other) — separate table, own `income:` drop prefix (deterministic
+   routing), savings rate = income − spend per window on Insights/Dashboard.
+   Paycheck PDFs themselves stay Documents/vault territory — the tracked
+   number and the sensitive document are different objects.
 
-**Deferred:**
-- (none yet)
+**Deferred (consciously, not forgotten):**
+- Accumulation goals ("save $5k by March") — becomes a view over
+  income/spend aggregates once 1–3 exist.
+- Subscription intelligence (recurrence detection, renewal alerts, monthly
+  burn rollup) — a view + a scheduled check over existing kind=subscription
+  rows.
+- Points earning/burning over time; statement import.
 
 ---
 
-## 2. (next topic as it comes to mind)
+## 2. Stocks — records vs reasoning (two different animals, deliberately)
+
+**His words:** "wanna add say stocks — which ones I bought etc. But also
+then, the planning of stocks is different af: talking about specific
+companies and the reasoning to invest in said companies."
+
+**Exists today:** InvestmentStore — one static record per holding (name,
+symbol, shares, cost_basis, account, purchase_date). No transactions, no
+sells, no prices, no P&L. Research-wise: nothing stock-specific — but the
+KB + research chat + graph is exactly the "researched choices" machinery
+(watches/headphones pattern) waiting to be pointed at companies.
+
+**The two layers, as he framed them:**
+- **Records (what I own):** the ledger of buys (and sells?) over time.
+- **Reasoning (why I own it):** per-company research — chats, theses,
+  arguments for/against — captured as KB notes, graph-linked to the actual
+  holding, so the buy decision's full trail is one node-walk from the
+  position. This is the store-once thesis applied to investing: research a
+  company ONCE with a strong model, store the thesis, retrieve it at every
+  review instead of re-researching.
+
+**Open questions (hashing):**
+- Transactions vs static holdings: multiple buys of the same ticker, sells,
+  realized P&L?
+- Prices: auto-fetch (external market API — note: prices are PUBLIC data,
+  so this is a privacy-clean exception to local-first, but a new
+  external-dependency class — decide deliberately) vs manual snapshots?
+- Research home: one folder per company (e.g. `Organisation/Finance/Stocks
+  Research/<TICKER>/`) with graph edge thesis ↔ holding? (Recommended.)
+
+**Decisions:**
+- (hashing in progress)
+
+---
+
+## 3. (next topic as it comes to mind)
 
