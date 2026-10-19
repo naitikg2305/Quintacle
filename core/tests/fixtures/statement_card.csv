@@ -1,0 +1,7 @@
+Transaction Date,Post Date,Description,Category,Type,Amount,Memo
+09/02/2026,09/03/2026,NETFLIX.COM,Entertainment,Sale,-15.49,
+09/05/2026,09/06/2026,CHIPOTLE 1234,Food & Drink,Sale,-12.80,lunch
+09/08/2026,09/09/2026,Payment Thank You - Web,,Payment,250.00,
+09/14/2026,09/15/2026,"TOTAL WINE AND MORE",Shopping,Sale,-43.25,
+09/21/2026,09/22/2026,CHIPOTLE 1234,Food & Drink,Sale,-12.80,
+not-a-date,09/23/2026,GARBLED ROW,,Sale,-1.00,

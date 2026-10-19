@@ -60,6 +60,7 @@ def test_rebuild_index_reproduces_sqlite_from_markdown_alone(tmp_path):
         "substance_log": 1,
         "body_stats": 1,
         "expense_log": 0,
+        "income_log": 0,
         "food_log": 0,
     }
     assert conn.execute("SELECT description FROM activity_log").fetchone()[0] == "shipped a feature"

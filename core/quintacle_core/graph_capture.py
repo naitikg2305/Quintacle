@@ -415,6 +415,7 @@ def link_event(members: list[str], for_date: date | None = None) -> dict:
 # can never drift apart on what an "expense:12" is called.
 _LOG_ROW_LABELS: dict[str, tuple[str, object]] = {
     "expense": ("expense_log", lambda r: f"${r['amount']:.2f} {r['merchant']}".strip()),
+    "income": ("income_log", lambda r: f"${r['amount']:.2f} {r['source']}".strip()),
     "food": (
         "food_log",
         lambda r: r["notes"] or r["meal_name"] or r["meal_type"],

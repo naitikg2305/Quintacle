@@ -28,6 +28,7 @@ from .nodes.drop_router import (
     entry_type_for_image_kind,
     extension,
     extract_finance_from_receipt,
+    parse_income_text,
     parse_prefix,
     parse_routine_definition,
 )
@@ -83,8 +84,16 @@ from .nodes.travel.api import init_store as init_travel_store, get_store as get_
 from .nodes.travel.llm import maybe_structure_experience, structure_experience
 from .nodes.people.api import init_store as init_people_store, get_store as get_people_store, router as people_router
 from .nodes.people.llm import maybe_structure_person_mention, structure_person
-from .nodes.finance.api import init_store as init_credit_card_store, router as credit_card_router, investments_router, get_investment_store
-from .nodes.finance.llm import structure_credit_card, structure_investment
+from .nodes.finance.api import (
+    init_store as init_credit_card_store,
+    router as credit_card_router,
+    investments_router,
+    finance_router,
+    get_investment_store,
+    parse_statement_text,
+)
+from .nodes.finance.llm import extract_statement_transactions, structure_credit_card, structure_investment
+from .nodes.finance.statements import STATEMENT_EXTENSIONS, annotate_duplicates, normalize_vision_transactions
 from .nodes.vault.api import init_store as init_vault_store, router as vault_router
 from .perception import perceive_photo
 from .sync import init_sync, router as sync_router
@@ -176,6 +185,7 @@ def create_app() -> FastAPI:
     init_credit_card_store(kb_root)
     app.include_router(credit_card_router)
     app.include_router(investments_router)
+    app.include_router(finance_router)
 
     # Deliberately OUTSIDE kb_root — every model-facing surface (KB chat,
     # MCP tools, search, graph, drop) only walks kb/, so vault/ being a
@@ -235,6 +245,7 @@ def create_app() -> FastAPI:
             repo.exercise_between(start, end),
             repo.substances_between(start, end),
             repo.expenses_between(start, end),
+            repo.income_between(start, end),
         ):
             for row in rows:
                 counts[row["date"]] = counts.get(row["date"], 0) + 1
@@ -311,6 +322,13 @@ def create_app() -> FastAPI:
 
         prefix = parse_prefix(text) if text.strip() else None
         entry_type, rest = prefix if prefix else (None, text)
+
+        # A CSV/OFX/QFX file IS a bank/card statement — deterministic by
+        # extension, no classification call needed (next-wave-plan §2b). A
+        # PDF/photo statement needs the explicit "statement:"/"bank:" prefix,
+        # since an unprefixed PDF could be anything.
+        if entry_type is None and data is not None and ext in STATEMENT_EXTENSIONS:
+            entry_type = "statement_import"
 
         # Computed once, reused by whichever branch below needs a text
         # description AND by the additive Experience check after the branch
@@ -463,6 +481,32 @@ def create_app() -> FastAPI:
         elif entry_type == "finance" and is_image:
             entries = [extract_finance_from_receipt(photos, rest).model_dump()]
             experience_check_text = f"{entries[0].get('merchant', '')} {entries[0].get('category', '')} {rest}"
+        elif entry_type == "income":
+            # Fully deterministic — amount/source/kind/date from the text
+            # itself (see drop_router.parse_income_text), reviewed before Save
+            # like everything else. No model call at all.
+            entries = [parse_income_text(rest)]
+            experience_check_text = None
+        elif entry_type == "statement_import":
+            # The §2b statement lane. CSV/OFX/QFX: deterministic parse (the
+            # same parse_statement_text /finance/statement/parse exposes, so
+            # the review UI can re-parse with a corrected column mapping).
+            # PDF/photo: the existing cloud vision lane transcribes rows (see
+            # finance/llm.py), then identical code-side validation + dedup.
+            # Either way NOTHING is written here — the proposal carries every
+            # transaction into the statement review gate.
+            if data is not None and ext in STATEMENT_EXTENSIONS:
+                stmt = parse_statement_text(filename, data.decode("utf-8", errors="replace"))
+            elif data is not None and (ext == "pdf" or is_image):
+                media_type = "application/pdf" if ext == "pdf" else mime
+                raw_txns = extract_statement_transactions(data, media_type, rest)
+                stmt = normalize_vision_transactions(raw_txns)
+                annotate_duplicates(stmt["transactions"], get_logs_repo())
+                stmt["filename"] = filename
+            else:
+                raise HTTPException(400, "statement: needs a CSV/OFX/QFX file, or a PDF/photo of the statement")
+            entries = [{"type": "statement_import", **stmt}]
+            experience_check_text = None
         elif entry_type == "kb_entry":
             description = get_description()
             existing_notes = get_kb_store().notes_index()

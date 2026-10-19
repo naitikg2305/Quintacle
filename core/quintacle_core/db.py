@@ -107,6 +107,18 @@ CREATE TABLE IF NOT EXISTS expense_log (
     kind TEXT NOT NULL DEFAULT 'regular'
 );
 
+-- Income side of the ledger (next-wave-plan §1 decision 3, 2026-10-19):
+-- separate table, not negative expenses — spend analytics never have to
+-- filter income out, and savings rate is a plain two-table subtraction.
+CREATE TABLE IF NOT EXISTS income_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    amount REAL NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'salary',
+    notes TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS habits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
@@ -148,6 +160,10 @@ _MIGRATIONS = [
     "ALTER TABLE exercise_sets ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE body_stats ADD COLUMN unit TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE expense_log ADD COLUMN kind TEXT NOT NULL DEFAULT 'regular'",
+    # Budget lines (next-wave-plan §1 decision 2): the spend metric's matcher.
+    # match_kind = one of the 7 expense kinds; match_category doubles as the
+    # whole-word text-match terms for spend habits (see quotas.py).
+    "ALTER TABLE habits ADD COLUMN match_kind TEXT",
 ]
 
 
