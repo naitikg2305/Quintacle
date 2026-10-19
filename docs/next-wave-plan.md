@@ -110,6 +110,12 @@ KB + research chat + graph is exactly the "researched choices" machinery
   Research/<TICKER>/`) with graph edge thesis ↔ holding? (Recommended.)
 
 **Decisions (2026-10-19):**
+- **Transaction ledger: yes.** Buys AND sells per ticker over time; cost
+  basis and realized P&L computed, never hand-maintained. The static
+  one-record holding becomes a derived view over transactions.
+- **Research: yes** — folder per company, thesis ↔ holding graph edges, and
+  theses are kept for companies researched-but-passed ("looked, passed,
+  here's why" is half the value at re-evaluation).
 - **Prices: auto-fetch, in.** Free sources are sufficient for personal use —
   yfinance (no key, de-facto standard, unofficial) with Stooq EOD / keyed
   free tiers (Finnhub, Alpha Vantage) as fallbacks. End-of-day is enough.
