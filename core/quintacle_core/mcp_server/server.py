@@ -277,6 +277,11 @@ def log_stock_transaction(
     )
     session.stage_sqlite_insert(_db_path, "stock_transactions", "id", tx_id)
     ledger_id = session.commit(result={"transaction_id": tx_id, "symbol": sym})
+    if action == "dividend":
+        tx_summary = f"{sym} — dividend ${price:.2f} — {entry_date.isoformat()}"
+    else:
+        tx_summary = f"{sym} — {action} {qty:g} @ ${price:.2f} — {entry_date.isoformat()}"
+    retrieval.safe_index_node(f"stock_tx:{tx_id}", "stock_transaction", f"{sym} {action}", summary=tx_summary)  # failure-isolated
     return {"transaction_id": tx_id, "symbol": sym, "date": entry_date.isoformat(), "ledger_id": ledger_id}
 
 

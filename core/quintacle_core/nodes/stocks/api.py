@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from ...graph import create_edge
 from ...markdown_paths import resolve_nested
+from ...retrieval import safe_index_node, safe_index_note, safe_remove_node
 from ..kb.store import KBStore
 from .positions import compute_positions
 from .prices import PriceFetchError, fetch_eod
@@ -86,7 +87,13 @@ def log_transaction(body: TransactionCreate) -> dict:
     tx_id = get_stocks_repo().log_transaction(
         body.date, body.action, body.symbol, body.qty, body.price, body.fees, body.account, body.notes
     )
-    return {"id": tx_id, "symbol": normalize_symbol(body.symbol)}
+    sym = normalize_symbol(body.symbol)
+    if body.action == "dividend":
+        summary = f"{sym} — dividend ${body.price:.2f} — {body.date}"
+    else:
+        summary = f"{sym} — {body.action} {body.qty:g} @ ${body.price:.2f} — {body.date}"
+    safe_index_node(f"stock_tx:{tx_id}", "stock_transaction", f"{sym} {body.action}", summary=summary)  # retrieval index — failure-isolated
+    return {"id": tx_id, "symbol": sym}
 
 
 @router.get("/transactions")
@@ -101,6 +108,7 @@ def delete_transaction(tx_id: int) -> dict:
     Quintacle undo uses."""
     if not get_stocks_repo().delete_transaction(tx_id):
         raise HTTPException(404, f"no such transaction: {tx_id}")
+    safe_remove_node(f"stock_tx:{tx_id}")  # retrieval index — failure-isolated
     return {"deleted": tx_id}
 
 
@@ -200,6 +208,7 @@ def write_research(body: ResearchCreate) -> dict:
         f"{RESEARCH_HOME}/{symbol}", title, content, fields={"symbol": symbol, "status": body.status}
     )
     note_id = f"note:{folder_slug}/{entry_slug}"
+    safe_index_note(folder_slug, entry_slug, title, content)  # retrieval index — failure-isolated
     edge = create_edge(note_id, holding_node_id(symbol), "thesis_for", "structural")
     return {"folder": folder_slug, "slug": entry_slug, "note_id": note_id, "edge_id": edge["id"], "status": body.status}
 

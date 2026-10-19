@@ -281,3 +281,38 @@ def test_mcp_stock_transaction_commit_and_undo(tmp_path):
     mcp_server.undo_write(result["ledger_id"])
     assert len(list(tx_dir.glob("2026-01-05-*.md"))) == 0  # staged file restored away
     assert len(mcp_server.stocks_repo.transactions()) == 0  # sqlite row reversed
+
+
+# --- retrieval hooks (merge-time wiring: §3 index covers the §2 ledger) ---
+
+
+def test_transaction_write_indexes_and_delete_removes(tmp_path, monkeypatch):
+    client = make_client(tmp_path, monkeypatch)
+    r = client.post(
+        "/stocks/transactions",
+        json={"date": "2026-10-19", "action": "buy", "symbol": "aapl", "qty": 10, "price": 150.0},
+    )
+    assert r.status_code == 200
+    tx_id = r.json()["id"]
+
+    hits = client.get("/retrieve", params={"q": "AAPL buy"}).json()["results"]
+    hit = next(h for h in hits if h["id"] == f"stock_tx:{tx_id}")
+    assert hit["type"] == "stock_transaction"
+    assert hit["summary"] == "AAPL — buy 10 @ $150.00 — 2026-10-19"
+
+    client.delete(f"/stocks/transactions/{tx_id}")
+    hits = client.get("/retrieve", params={"q": "AAPL buy"}).json()["results"]
+    assert all(h["id"] != f"stock_tx:{tx_id}" for h in hits)
+
+
+def test_research_note_indexes(tmp_path, monkeypatch):
+    client = make_client(tmp_path, monkeypatch)
+    r = client.post(
+        "/stocks/research",
+        json={"symbol": "NVDA", "title": "NVDA thesis", "content": "Datacenter demand compounding.", "status": "watching"},
+    )
+    assert r.status_code == 200
+    note_id = r.json()["note_id"]
+
+    hits = client.get("/retrieve", params={"q": "datacenter demand"}).json()["results"]
+    assert any(h["id"] == note_id for h in hits)
