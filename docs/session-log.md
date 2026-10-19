@@ -3,6 +3,47 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-19 — Transcript archive: second-tier store + fresh chat page (next-wave §4, archive half)
+
+Worktree agent build of `next-wave-plan.md` §4's transcript bullets (the §3
+retrieval engine was built in parallel by another agent — nothing here
+depends on it). Suite: **366 passed / 5 skipped** (was 350/5); frontend
+`npx tsc --noEmit` 0 errors, eslint clean on touched files.
+
+### Built this session
+
+- **Transcript archive** (`core/quintacle_core/nodes/kb/transcripts.py`):
+  on chat close the raw transcript lands verbatim in
+  `<data_dir>/conversations/<topic-slug>/<YYYY-MM-DD-HHMM>.md` — one file
+  write, ZERO model calls. `conversations/` is at the data-dir root,
+  deliberately OUTSIDE `kb/` (the vault's structural-invisibility pattern),
+  so KB endpoints, MCP tools, drop, and graph note rendering can never see
+  it (tested against the real surfaces). Frontmatter date/topic/
+  message_count; deterministic topic slug (slugified subject, else
+  date-time; the optional local-model nicer-slug was consciously skipped —
+  zero-model hot path). One `transcript_of` edge to the topic's node only
+  on a confident `title_mentioned` match (longest title wins); never a
+  guess.
+- **Private transcript FTS**: FTS5 table in its own
+  `conversations/transcripts.db` (separate from `quintacle.db` and from any
+  main retrieval index), populated at archive time.
+  `GET /transcripts/search?q=&topic=` — ranked `{path, topic, date,
+  snippet}` hits — is the ONLY read lane ("dive deeper on explicit ask");
+  `POST /transcripts/archive` (with `keep`) is the only write lane.
+- **Fresh chat page** (`frontend/app/kb/page.tsx`): thread list / session
+  dropdown / per-session delete removed — "talk yap add and delete". "New
+  chat" archives the current transcript then clears; continuing onto a note
+  closes (and archives) the old chat first. Per-chat **Don't keep** toggle
+  (default keep). `/kb/chats` + `ChatStore` left intact server-side;
+  `chat.py` KB-context/prompting untouched per the standing rule.
+
+### Deliberately left for the chat-context wave
+
+- Hydration-from-retrieval when opening a topic chat (§3's engine).
+- Explicit "record that" consolidation into topic notes.
+- Any in-app UI over `/transcripts/search` (the lane exists; surfacing it
+  belongs with the retrieval chat work).
+
 ## 2026-10-15 — The perception wave: local-first ingest, on-device perception, auto photo-journal, the phone/ stack
 
 Seven parallel worktree agents plus the main-thread integration, landed on
