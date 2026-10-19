@@ -25,8 +25,9 @@ import {
 
 const CATEGORIES = ["productivity", "social", "leisure", "yourself", "emotional"];
 const PERIODS = ["day", "week", "2weeks", "month"];
+const EXPENSE_KINDS = ["subscription", "food", "alcohol", "experience", "shopping", "big_purchase", "regular"];
 
-type GoalType = "time" | "amount_cap";
+type GoalType = "time" | "amount_cap" | "budget";
 type Row = { habit: Habit; progress: HabitProgress; history: HabitHistoryPoint[] };
 
 // One accent for "target met", a quiet neutral for "not yet" — the mark carries
@@ -126,6 +127,10 @@ export default function HabitsPage() {
   const [target, setTarget] = useState("");
   const [period, setPeriod] = useState("week");
   const [category, setCategory] = useState(CATEGORIES[0]);
+  // Budget-line matcher (metric=spend): an expense kind and/or comma-separated
+  // whole-word terms over merchant/category/notes — both blank = total spend.
+  const [budgetKind, setBudgetKind] = useState("");
+  const [budgetTerms, setBudgetTerms] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [askOpen, setAskOpen] = useState(false);
 
@@ -161,18 +166,33 @@ export default function HabitsPage() {
             metric: "activity_hours",
             direction: "at_least",
           }
-        : {
-            name,
-            target_amount: Number(target),
-            target_period: period,
-            match_category: null,
-            unit: "kcal",
-            metric: "food_kcal",
-            direction: "at_most",
-          }
+        : goalType === "amount_cap"
+          ? {
+              name,
+              target_amount: Number(target),
+              target_period: period,
+              match_category: null,
+              unit: "kcal",
+              metric: "food_kcal",
+              direction: "at_most",
+            }
+          : {
+              // Named budget line: the quota engine's spend metric with the
+              // kind/text matcher; blank matcher = total spend, the original quota.
+              name,
+              target_amount: Number(target),
+              target_period: period,
+              match_category: budgetTerms.trim() || null,
+              match_kind: budgetKind || null,
+              unit: "$",
+              metric: "spend",
+              direction: "at_most",
+            }
     );
     setName("");
     setTarget("");
+    setBudgetKind("");
+    setBudgetTerms("");
     setStatus("goal added");
     await refresh();
   }
@@ -274,6 +294,14 @@ export default function HabitsPage() {
               <div className="h-1.5 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
                 <div className={cn("h-full rounded-full", meterColor(p, pct))} style={{ width: `${Math.min(100, pct)}%` }} />
               </div>
+              {p.metric === "spend" && p.direction === "at_most" && p.elapsed_days < p.period_days && (
+                <p className="text-xs text-muted">
+                  pace: <span className="font-mono text-foreground">{p.current.toFixed(2)}</span> vs{" "}
+                  <span className="font-mono text-foreground">{p.prorated_target.toFixed(2)}</span> even-spend by day{" "}
+                  {p.elapsed_days}/{p.period_days}
+                  {p.current > p.prorated_target ? " — ahead of pace" : " — under pace"}
+                </p>
+              )}
               {history.length > 0 && (
                 <div className="flex items-center gap-3">
                   <Sparkline history={history} />
@@ -294,10 +322,11 @@ export default function HabitsPage() {
           options={[
             { value: "time", label: "Time-based (hours)" },
             { value: "amount_cap", label: "Amount cap (kcal)" },
+            { value: "budget", label: "Budget line ($)" },
           ]}
         />
         <Input
-          placeholder={goalType === "time" ? "e.g. Golf" : "e.g. Daily calorie cap"}
+          placeholder={goalType === "time" ? "e.g. Golf" : goalType === "amount_cap" ? "e.g. Daily calorie cap" : "e.g. Food budget, Winery weekend"}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
@@ -305,7 +334,7 @@ export default function HabitsPage() {
           <Input
             type="number"
             className="w-28"
-            placeholder={goalType === "time" ? "hours" : "kcal"}
+            placeholder={goalType === "time" ? "hours" : goalType === "amount_cap" ? "kcal" : "$"}
             value={target}
             onChange={(e) => setTarget(e.target.value)}
           />
@@ -325,7 +354,32 @@ export default function HabitsPage() {
               ))}
             </Select>
           )}
+          {goalType === "budget" && (
+            <>
+              <Select className="w-auto" value={budgetKind} onChange={(e) => setBudgetKind(e.target.value)}>
+                <option value="">any kind</option>
+                {EXPENSE_KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {k.replace("_", " ")}
+                  </option>
+                ))}
+              </Select>
+              <Input
+                className="w-56"
+                placeholder="match words (e.g. winery, creatine)"
+                title="Comma-separated whole words matched against merchant/category/notes; an expense counts if it matches the kind OR any word. Both blank = total spend."
+                value={budgetTerms}
+                onChange={(e) => setBudgetTerms(e.target.value)}
+              />
+            </>
+          )}
         </div>
+        {goalType === "budget" && (
+          <p className="text-xs text-muted">
+            Counts expenses matching the kind OR any listed word (whole-word, against merchant/category/notes). Leave both
+            blank for a total-spend cap.
+          </p>
+        )}
         <Button variant="primary" onClick={submit} disabled={!name || !target}>
           <Plus size={16} /> Add goal
         </Button>

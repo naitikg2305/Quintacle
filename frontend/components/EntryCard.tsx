@@ -2,6 +2,7 @@
 
 import { ExerciseSet, FINANCE_KINDS, Meal, ParsedEntry } from "@/lib/api";
 import MealCompositionEditor from "./MealCompositionEditor";
+import StatementImportCard from "./StatementImportCard";
 import OutfitEditor from "./OutfitEditor";
 import GroomingRoutineEditor from "./GroomingRoutineEditor";
 
@@ -313,6 +314,44 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
             onChange={(e) => onUpdate(i, { notes: e.target.value })}
           />
         </>
+      )}
+
+      {entry.type === "income" && (
+        <>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            className="border rounded px-2 py-1 w-24 text-sm"
+            placeholder="amount"
+            value={entry.amount}
+            onChange={(e) => onUpdate(i, { amount: Number(e.target.value) })}
+          />
+          <input
+            className="border rounded px-2 py-1 text-sm w-40"
+            placeholder="source (employer, sale...)"
+            value={entry.source}
+            onChange={(e) => onUpdate(i, { source: e.target.value })}
+          />
+          <select
+            className="border rounded px-2 py-1 text-sm"
+            value={entry.kind}
+            onChange={(e) => onUpdate(i, { kind: e.target.value })}
+          >
+            <option value="salary">salary</option>
+            <option value="other">other</option>
+          </select>
+          <input
+            className="border rounded px-2 py-1 text-sm flex-1"
+            placeholder="notes"
+            value={entry.notes}
+            onChange={(e) => onUpdate(i, { notes: e.target.value })}
+          />
+        </>
+      )}
+
+      {entry.type === "statement_import" && (
+        <StatementImportCard entry={entry} onUpdate={(patch) => onUpdate(i, patch)} />
       )}
 
       {entry.type === "kb_entry" && (
