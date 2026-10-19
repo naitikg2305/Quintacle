@@ -203,6 +203,31 @@ orchestrate, but has no index tool, no graph walk, no ranked search.
 
 ---
 
+## 4. Conversational ideology — "continue any topic like a human"
+
+**The frame (agreed 2026-10-19):** conversations are working memory, the KB
+is long-term memory, and consolidation is the bridge. A topic is a node
+(e.g. a schemes.md-style plan note). Opening a chat about a topic hydrates
+from retrieval (§3) — the node's current state plus its graph neighborhood
+— not from any saved transcript. The manual prototype is this very doc:
+yap in chat, and only what's worth keeping gets pushed into the pad and
+committed.
+
+**Decisions (2026-10-19):**
+- **Chat is read-only by default.** Hydrate via retrieval, yap freely,
+  close — nothing written anywhere. Folding is the exception, not the rule.
+- **Consolidation is explicit only.** No session-end or idle-timeout
+  auto-fold. The owner says "record that" (the model may *offer* when it
+  notices a decision landed); the write goes through the normal gated path.
+- **Folded shape = the pad pattern:** dated appends to the topic's note
+  (decisions with dates, open questions, superseded items get correction
+  notes) — never rewriting history, per the docs-are-decision-logs
+  principle.
+- **Transcripts are ephemeral.** No thread list, no cold archive. "Why
+  would we save random convos — the reason I built this is to only
+  preserve what's necessary." Continuity comes purely from the KB: the
+  distilled note is what survives, and what retrieval finds.
+
 ## 5. Generic pages (the car vision) — ai-managed-pages, now cheap
 
 **State:** every prerequisite built (open fields dict, Phase E views, graph,
