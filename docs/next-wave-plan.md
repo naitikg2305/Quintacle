@@ -236,6 +236,19 @@ committed.
   page fresh and neat." Continuity comes from the KB via retrieval, not
   from reopening old chats.
 
+**Status (2026-10-19): transcript-archive + fresh-page bullets BUILT.**
+`core/quintacle_core/nodes/kb/transcripts.py` — archive-on-close writes the
+verbatim transcript to `<data_dir>/conversations/<topic-slug>/<stamp>.md`
+(outside `kb/`, invisible to every KB/MCP/model surface; zero model calls),
+with its own FTS5 index (`conversations/transcripts.db`) behind the explicit
+`GET /transcripts/search` lane and a `transcript_of` edge when the subject
+confidently names a real node. Chat page: thread list removed, "New chat"
+archives-then-clears, per-chat "Don't keep" toggle (default keep). The
+optional local-model nicer-slug was deliberately skipped (zero-model hot
+path; deterministic slug is mandatory anyway). Hydration-from-retrieval and
+explicit "record that" folding belong to §3's engine / the chat-context
+wave, not built here. Details: `docs/reference/transcripts.md`.
+
 ## 5. Generic pages (the car vision) — ai-managed-pages, now cheap
 
 **State:** every prerequisite built (open fields dict, Phase E views, graph,
