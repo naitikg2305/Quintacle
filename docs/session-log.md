@@ -3,6 +3,76 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-19 — The retrieval wave: universal triple-hybrid index (next-wave-plan §3)
+
+One worktree agent, built on `redone-UI` from `09f1278`. Suite: **373
+passed / 5 skipped** (was 350/5) in the minimal venv — the full suite passes
+both WITHOUT sqlite-vec/Ollama and with sqlite-vec present but the daemon
+down (verified in both states).
+
+### Built this session
+
+- **`core/quintacle_core/retrieval.py`** — the §3 decision made code:
+  `nodes_index` (id/type/title/summary/updated_at — ids are EXACTLY
+  graph.py's scheme; a person stays `note:people/<slug>/profile` with
+  type=person) + `nodes_fts` (FTS5 over title/summary/body, title-weighted
+  bm25) + an OPTIONAL `nodes_vec` lane (sqlite-vec, cosine, local Ollama
+  `/api/embed`, `QUINTACLE_EMBED_MODEL` default embeddinggemma — lazily
+  created, self-disabling on the first failure so a down daemon never slows
+  writes). `retrieve(q, k, types)` fuses the lanes by reciprocal rank IN
+  CODE, then attaches 1-hop `graph.neighborhood` labels
+  `{id, title, edge_type}` per hit. No model anywhere in the retrieve path.
+- **Summaries, deterministic core**: every structured row's one-liner is
+  computed from its fields (`Chipotle — $14.50 — food — 2026-10-12`;
+  kcal × servings done in SQL). Prose nodes (notes, journal days) go through
+  `prose_summary` — `llm_dispatch.parse_structured` pinned to
+  `provider="local"` (never a silent cloud bill), deterministic
+  first-content-line fallback on ANY failure and in all tests
+  (`QUINTACLE_SUMMARY_PROVIDER=off` in the new tests/conftest.py).
+- **Hooks on every write path**, REST and MCP, all failure-isolated
+  (`safe_index_*`: logged, swallowed, never fail the user's write; silent
+  no-ops in processes that never init retrieval): KB entries, journal saves
+  (whole-day re-index), all six log tables, meal/ingredient/routine presets,
+  todos (incl. delete → remove), people, experiences, emergent place notes,
+  and event nodes inside `graph_capture.link_event` (both doors at once).
+- **Exclusions**: the Vault stays structurally invisible (outside kb/ AND
+  `is_excluded()` refuses vault ids at the one `index_node` chokepoint);
+  `conversations/` excluded by prefix for the §4 transcript archive; the
+  backfill also skips log/preset markdown mirrors (those index under their
+  canonical SQLite row ids — reference, never duplicate).
+- **Backfill**: `python -m quintacle_core.retrieval_backfill` — idempotent
+  upsert over the whole store, per-type counts printed. Verified against a
+  `/tmp` sandbox seeded through the real app (never `~/.quintacle`).
+- **Exposure**: `GET /retrieve?q&k&types` in api.py; read-only MCP tool
+  `search_index` (count now 18 — no ledger entry, nothing to undo).
+  `core/requirements-retrieval.txt` holds sqlite-vec (lazy import;
+  `core/requirements.txt` stays phone/Termux-safe).
+- **23 new tests** (`tests/test_retrieval.py`): index CRUD, per-type
+  deterministic summaries, the prose-summary seam (off/fallback/local-only),
+  FTS-only retrieval + type filter + FTS-operator neutralization, RRF math +
+  stubbed-vector fusion, graph expansion, vault/conversations exclusion,
+  hook failure-isolation (an exploding index never fails a save), REST
+  end-to-end on preset-seeded registries, MCP round trip, backfill
+  idempotency. Vector lane additionally hand-verified live with sqlite-vec +
+  a stub embed server (upsert/KNN/fusion/remove + daemon-down degradation).
+
+### Decisions
+
+- **Summary lives in the index row, not note frontmatter** — §3 decision 4
+  sketched a frontmatter one-liner; storing it in `nodes_index` keeps every
+  markdown file byte-identical to what the user wrote and the whole index
+  disposable/rebuildable (same contract as every other SQLite table here).
+- **Prose summaries are local-or-fallback, never auto→cloud**: ingest's
+  `auto` fallback would bill a cloud call on every note save for a line the
+  user never asked for; a summary is exactly the "easy task" the local-first
+  principle routes locally, so the provider is pinned.
+- **MCP `undo_write` doesn't un-index** (stale row until the next backfill)
+  — accepted for this wave; the index is additive and repair is one command.
+- **Left deliberately for the chat wave (§4)**: chat.py's context logic
+  still dumps everything — the index→select→fetch loop over `retrieve()` is
+  that wave's job, as is the `conversations/` transcript writer this wave
+  pre-excluded.
+
 ## 2026-10-15 — The perception wave: local-first ingest, on-device perception, auto photo-journal, the phone/ stack
 
 Seven parallel worktree agents plus the main-thread integration, landed on
