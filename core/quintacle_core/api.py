@@ -43,6 +43,7 @@ from .nodes.logs.api import init_repo, init_profile_ref, get_repo as get_logs_re
 from .nodes.logs.log_store import LogFileStore
 from .nodes.journal.api import init_store as init_journal_store, get_store as get_journal_store, router as journal_router
 from .nodes.kb.api import init_store as init_kb_store, init_chat_store, get_store as get_kb_store, router as kb_router
+from .nodes.kb.transcripts import init_transcript_store, router as transcripts_router
 from .nodes.kb.perception_api import router as perception_router
 from .nodes.profile.api import init_store as init_profile_store, router as profile_router
 from .nodes.wardrobe.api import (
@@ -150,6 +151,14 @@ def create_app() -> FastAPI:
     init_chat_store(DATA_DIR / "kb_chats")
     app.include_router(kb_router)
     app.include_router(perception_router)
+
+    # Transcript archive — conversations/ at the data-dir root, deliberately
+    # OUTSIDE kb_root (same structural-invisibility pattern as the vault):
+    # every model-facing surface only walks kb/, so archived chats can never
+    # land in a prompt, a KB listing, or a default search. Reachable only via
+    # the explicit GET /transcripts/search lane (nodes/kb/transcripts.py).
+    init_transcript_store(DATA_DIR)
+    app.include_router(transcripts_router)
 
     profile_store = init_profile_store(DATA_DIR / "profile.json")
     init_profile_ref(profile_store)
