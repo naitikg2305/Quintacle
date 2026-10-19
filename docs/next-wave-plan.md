@@ -266,6 +266,11 @@ command (`backup-to-drive`) writing an encrypted snapshot of ~/.quintacle
 Tradeoffs stated and accepted: habit-dependent, same-location risk,
 offsite (restic→S3/B2 per self-hosting.md) consciously deferred.
 
+**BUILT 2026-10-19:** `scripts/backup-to-drive` — tar+openssl AES-256
+(PBKDF2, prompted passphrase), snapshots `~/.quintacle` + `~/work-logs`
+to the mounted drive (auto-detects a single /run/media mount), with a
+`restore` mode; round-trip + wrong-passphrase tested in a sandbox.
+
 ## 7. Dispositions (2026-10-19)
 
 - **Proactivity** (triggers/notifications/routines engine): owner doesn't

@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# backup-to-drive — the decided backup lane (docs/next-wave-plan.md §6):
+# one command, encrypted snapshot of ~/.quintacle (+ ~/work-logs) onto a
+# mounted drive. Restore with: backup-to-drive restore <file.tar.gz.enc>
+#
+#   backup-to-drive [/path/to/mounted/drive]
+#   backup-to-drive restore <snapshot.tar.gz.enc> [target-dir]
+#
+# No target given: picks the single drive under /run/media/$USER, asks if several.
+# Encryption: openssl AES-256-CBC, PBKDF2 200k iters, passphrase prompted —
+# nothing lands on the stick unencrypted, passphrase never touches disk or argv.
+
+set -euo pipefail
+
+DATA_DIR="${QUINTACLE_DATA_DIR:-$HOME/.quintacle}"
+# interactive prompt by default; QUINTACLE_BACKUP_PASS only for scripted runs
+PASSARG=(); [[ -n "${QUINTACLE_BACKUP_PASS:-}" ]] && PASSARG=(-pass env:QUINTACLE_BACKUP_PASS)
+LOGS_DIR="$HOME/work-logs"
+STAMP="$(TZ=America/New_York date +%Y-%m-%d-%H%M)"
+
+die() { echo "error: $*" >&2; exit 1; }
+
+if [[ "${1:-}" == "restore" ]]; then
+  SNAP="${2:-}"; [[ -f "$SNAP" ]] || die "restore needs a snapshot file"
+  TARGET="${3:-$HOME/quintacle-restore-$STAMP}"
+  mkdir -p "$TARGET"
+  openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 "${PASSARG[@]}" -in "$SNAP" | tar -xzf - -C "$TARGET"
+  echo "restored to $TARGET (contains .quintacle/ and work-logs/; move into place manually)"
+  exit 0
+fi
+
+DRIVE="${1:-}"
+if [[ -z "$DRIVE" ]]; then
+  mapfile -t mounts < <(find "/run/media/$USER" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+  [[ ${#mounts[@]} -eq 1 ]] || die "pass the drive path (found ${#mounts[@]} mounts under /run/media/$USER)"
+  DRIVE="${mounts[0]}"
+fi
+[[ -d "$DRIVE" && -w "$DRIVE" ]] || die "$DRIVE is not a writable directory"
+[[ -d "$DATA_DIR" ]] || die "no data dir at $DATA_DIR"
+
+OUT="$DRIVE/quintacle-backup-$STAMP.tar.gz.enc"
+STAGE_ARGS=(-C "$(dirname "$DATA_DIR")" "$(basename "$DATA_DIR")")
+[[ -d "$LOGS_DIR" ]] && STAGE_ARGS+=(-C "$HOME" "work-logs")
+
+tar -czf - "${STAGE_ARGS[@]}" | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 "${PASSARG[@]}" -out "$OUT"
+sync
+
+SIZE="$(du -h "$OUT" | cut -f1)"
+echo "wrote $OUT ($SIZE)"
+echo "verify anytime: scripts/backup-to-drive restore '$OUT' /tmp/verify-$STAMP"
