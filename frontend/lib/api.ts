@@ -1229,11 +1229,48 @@ export const listChatModels = () => request<ChatModel[]>("/kb/models");
 
 // `model` is the picker's choice; the old `research` flag stays for callers
 // (folder chat, read-only chat) that never got a picker — the backend uses it
-// only when no model is given.
-export const chatWithKB = (messages: ChatMessage[], use_kb: boolean, research: boolean, folder?: string, model?: string) =>
+// only when no model is given. `slug` (with `folder`) marks a chat continued
+// ON one note — the backend hydrates its content + graph neighborhood as the
+// topic (next-wave-plan §4); context otherwise comes from retrieval.
+export const chatWithKB = (messages: ChatMessage[], use_kb: boolean, research: boolean, folder?: string, model?: string, slug?: string) =>
   request<{ reply: string }>("/kb/chat", {
     method: "POST",
-    body: JSON.stringify({ messages, use_kb, research, folder: folder ?? null, model: model ?? null }),
+    body: JSON.stringify({ messages, use_kb, research, folder: folder ?? null, model: model ?? null, slug: slug ?? null }),
+  });
+
+// --- transcripts deep search + "record that" (next-wave-plan §4) -----------
+
+// The EXPLICIT "dive deeper / check the transcripts" lane — the only surface
+// that reads the second-tier archive; never called automatically.
+export type TranscriptHit = { path: string; topic: string; date: string; snippet: string };
+
+export const searchTranscripts = (q: string, topic?: string) =>
+  request<TranscriptHit[]>(`/transcripts/search?q=${encodeURIComponent(q)}${topic ? `&topic=${encodeURIComponent(topic)}` : ""}`);
+
+// "Record that": distills the conversation into a DATED append proposal for
+// the topic's note — proposes only, writes NOTHING (review gate). The date
+// header is computed server-side in code (Eastern), never by the model.
+export type RecordThatProposal = {
+  folder: string;
+  slug: string | null;
+  title: string;
+  date: string;
+  append: string;
+  provider_used: string | null;
+};
+
+export const recordThat = (messages: ChatMessage[], folder?: string, slug?: string) =>
+  request<RecordThatProposal>("/kb/record-that", {
+    method: "POST",
+    body: JSON.stringify({ messages, folder: folder ?? null, slug: slug ?? null }),
+  });
+
+// The explicit Save after review — append-only onto the note (dated entries,
+// never rewriting history); creates the note when the title doesn't exist yet.
+export const saveRecordThat = (folder: string, title: string, append: string) =>
+  request<{ folder: string; slug: string; appended: boolean }>("/kb/record-that/save", {
+    method: "POST",
+    body: JSON.stringify({ folder, title, append }),
   });
 
 // Anthropic has no image generation model — this one call goes to a

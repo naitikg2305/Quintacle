@@ -25,6 +25,10 @@ import {
   pushKBEntry,
   pushKBEntryWithAsset,
   readKBEntry,
+  recordThat,
+  RecordThatProposal,
+  saveRecordThat,
+  searchTranscripts,
   sortKBEntry,
   suggestGroomingRoutine,
   suggestMealComposition,
@@ -38,9 +42,11 @@ import ChatLog from "@/components/ChatLog";
 import {
   Archive,
   ArchiveX,
+  BookmarkPlus,
   Database,
   Droplets,
   Dumbbell,
+  FileSearch,
   ImagePlus,
   NotebookPen,
   Paperclip,
@@ -114,6 +120,9 @@ function KBPageInner() {
   const [chatSubject, setChatSubject] = useState("");
   // Per-chat "don't keep" toggle — when off, closing archives nothing.
   const [keepTranscript, setKeepTranscript] = useState(true);
+  // "Record that" review state — the proposed dated append, edited here
+  // before the explicit save (propose→review→Save; nothing writes until then).
+  const [recordProposal, setRecordProposal] = useState<RecordThatProposal | null>(null);
 
   useEffect(() => {
     listChatModels().then((list) => {
@@ -173,6 +182,62 @@ function KBPageInner() {
     setChatLog([]);
     setTarget(null);
     setChatFile(null);
+    setRecordProposal(null);
+  }
+
+  // The EXPLICIT transcripts deep-search lane (never automatic): uses the
+  // typed text as the query, and surfaces the hits (topic, date, snippet) as
+  // a deterministic message in the log — so they're in context for the next
+  // turn. Zero model calls; the archive is otherwise invisible to chat.
+  async function diveIntoTranscripts() {
+    const q = chatInput.trim();
+    if (!q) return;
+    setChatError(null);
+    setChatBusy(true);
+    try {
+      const hits = await searchTranscripts(q);
+      const lines = hits.length
+        ? hits.slice(0, 8).map((h) => `- **${h.topic}** (${h.date.slice(0, 10)}): ${h.snippet}`)
+        : ["- (no archived transcript matches)"];
+      const block = `Transcript search for "${q}" — ${hits.length} hit(s):\n\n${lines.join("\n")}`;
+      setChatLog([...chatLog, { role: "assistant" as const, content: block, model: "transcripts" }]);
+      if (!chatSubject) setChatSubject(q.slice(0, 60));
+      setChatInput("");
+    } catch (e) {
+      setChatError(e instanceof Error ? e.message : String(e));
+    }
+    setChatBusy(false);
+  }
+
+  // "Record that" — explicit consolidation (§4): the backend distills the
+  // conversation into a DATED append for the topic's note and writes NOTHING;
+  // the proposal lands in a review panel (scratchpad side) to edit, and only
+  // the Save button there actually writes (append-only, history intact).
+  async function startRecordThat() {
+    if (chatLog.length === 0) return;
+    setChatError(null);
+    setChatBusy(true);
+    try {
+      setRecordProposal(await recordThat(chatLog, target?.folder, target?.slug));
+      setPane("scratch");
+    } catch (e) {
+      setChatError(e instanceof Error ? e.message : String(e));
+    }
+    setChatBusy(false);
+  }
+
+  async function saveRecordProposal() {
+    if (!recordProposal) return;
+    setBusy(true);
+    setStatus("recording...");
+    try {
+      const res = await saveRecordThat(recordProposal.folder, recordProposal.title, recordProposal.append);
+      setStatus(res.appended ? `appended to ${res.folder}/${res.slug}` : `created ${res.folder}/${res.slug}`);
+      setRecordProposal(null);
+    } catch (e) {
+      setStatus(`record failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setBusy(false);
   }
 
   async function continueInChatWith(folder: string, slug: string, content: string) {
@@ -439,7 +504,9 @@ function KBPageInner() {
 
     let finalLog = next;
     try {
-      const { reply } = await chatWithKB(next, useKB, false, undefined, effectiveModel);
+      // A chat continued on a note sends its folder+slug — the backend
+      // hydrates that topic's content + graph neighborhood (next-wave §4).
+      const { reply } = await chatWithKB(next, useKB, false, target?.folder, effectiveModel, target?.slug);
       // `model` is client-side bookkeeping: it labels the answer and, for a
       // `local:` model, enables the per-answer Escalate ↗ affordance.
       finalLog = [...next, { role: "assistant" as const, content: reply, model: effectiveModel }];
@@ -460,7 +527,8 @@ function KBPageInner() {
     setChatBusy(true);
     try {
       const context = chatLog.slice(0, messageIndex);
-      const { reply } = await chatWithKB(context, useKB, false, undefined, cloudModel);
+      // Same scope as the original ask — the escalation transfers the SAME context.
+      const { reply } = await chatWithKB(context, useKB, false, target?.folder, cloudModel, target?.slug);
       setChatLog([...chatLog, { role: "assistant" as const, content: reply, model: cloudModel }]);
     } catch (e) {
       setChatError(e instanceof Error ? e.message : String(e));
@@ -586,6 +654,14 @@ function KBPageInner() {
               <Button size="sm" onClick={closeChat} disabled={chatBusy} title="Archive this chat and start fresh">
                 <Plus size={14} /> New chat
               </Button>
+              <Button
+                size="sm"
+                onClick={startRecordThat}
+                disabled={chatBusy || chatLog.length === 0}
+                title="Distill this conversation into a dated entry for the topic's note — you review and edit the proposed text before anything is saved"
+              >
+                <BookmarkPlus size={14} /> Record that
+              </Button>
             </div>
             {target && (
               <p className="text-xs text-muted">
@@ -649,6 +725,14 @@ function KBPageInner() {
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && sendChat()}
             />
+            <button
+              onClick={diveIntoTranscripts}
+              disabled={chatBusy || !chatInput.trim()}
+              title="Search the transcript archive for the typed text — hits land in the chat as context for your next question. Transcripts are never read automatically."
+              className="flex items-center rounded-lg border border-line px-2.5 text-muted transition-colors hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <FileSearch size={18} />
+            </button>
             <Button
               variant="primary"
               onClick={sendChat}
@@ -787,6 +871,51 @@ function KBPageInner() {
               <Button variant="primary" className="w-full" onClick={pushWorkout} disabled={busy}>
                 Save as workout routine
               </Button>
+            </div>
+          )}
+
+          {recordProposal && (
+            <div className="mt-3 space-y-2 border-t border-line pt-3">
+              <p className={cn(label, "flex items-center gap-2 text-accent")}>
+                <BookmarkPlus size={14} /> Record from chat — {recordProposal.date}
+              </p>
+              <p className="text-xs text-muted">
+                A dated entry appended to the note below — existing content is never rewritten.
+                {!recordProposal.slug && " No topic was scoped: pick/confirm the folder and note title."}
+              </p>
+              <label className="block">
+                <span className={label}>Folder</span>
+                <Input
+                  className="mt-1"
+                  value={recordProposal.folder}
+                  onChange={(e) => setRecordProposal({ ...recordProposal, folder: e.target.value })}
+                />
+              </label>
+              <label className="block">
+                <span className={label}>Note</span>
+                <Input
+                  className="mt-1"
+                  value={recordProposal.title}
+                  onChange={(e) => setRecordProposal({ ...recordProposal, title: e.target.value })}
+                />
+              </label>
+              <label className="block">
+                <span className={label}>Dated entry</span>
+                <Textarea
+                  className="mt-1"
+                  rows={8}
+                  value={recordProposal.append}
+                  onChange={(e) => setRecordProposal({ ...recordProposal, append: e.target.value })}
+                />
+              </label>
+              <div className="flex gap-2">
+                <Button variant="primary" className="flex-1" onClick={saveRecordProposal} disabled={busy}>
+                  Append to note
+                </Button>
+                <Button onClick={() => setRecordProposal(null)} disabled={busy}>
+                  Discard
+                </Button>
+              </div>
             </div>
           )}
 
