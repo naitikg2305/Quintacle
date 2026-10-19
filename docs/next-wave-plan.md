@@ -77,6 +77,24 @@ money."
   rows.
 - Points earning/burning over time; statement import.
 
+**BUILT (2026-10-19):** decisions 1–3 are code. Insights tab on the Finance
+page (`/finance/insights/{monthly,merchants,movers,subscriptions}` —
+deterministic SQL/arithmetic in `core/quintacle_core/nodes/finance/insights.py`,
+zero model calls): monthly totals by kind + month-over-month deltas + income/
+savings rate, merchant rollups, biggest movers, and recurring-charge detection
+(un-deferred via §2b's bonus — cadence arithmetic, surfaced with monthly burn).
+Budget lines ride the habit engine exactly as decided: the spend metric now
+takes `match_kind` (one of the 7 kinds) and/or whole-word `match_category`
+terms over merchant/category/notes via THE matcher (`graph.title_mentioned`),
+OR-combined so "creatine + alcohol" is one line; matcher-less spend quotas
+keep their original total-spend meaning, and progress carries a time-prorated
+target (Dashboard shows even-spend pace). Income: `income_log` (SQLite) +
+markdown logs under Organisation/Finance, the deterministic `income:` /
+`paycheck:` drop prefix (regex parse, no model), `/logs/income`, and savings
+rate = income − spend per month on Insights. Still deferred: accumulation
+goals, renewal ALERTS (detection + next-expected date exist; no scheduled
+notification), points-over-time. Reference: `docs/reference/finance.md`.
+
 ---
 
 ## 2. Stocks — records vs reasoning (two different animals, deliberately)
@@ -146,6 +164,20 @@ privacy-respecting aggregator if live feeds are ever truly wanted.
   arithmetic, not AI), un-deferring that item.
 - Aggregator lane: DEFERRED indefinitely, documented tradeoff; revisit only
   if statement drops prove too much friction in practice.
+
+**BUILT (2026-10-19):** the statement-drop lane is live. CSV/OFX/QFX files
+dropped on the Drop page route deterministically by extension (no model);
+CSV goes through a stdlib parser with a header-guessed, user-correctable
+column mapping (re-parse in the review card), OFX/QFX through a hand-rolled
+reader for the minimal SGML/XML `<STMTTRN>` subset — no new dependency in
+`core/requirements.txt`. PDF/photo statements use the explicit `statement:`
+prefix and the existing cloud vision lane (same pattern as receipt
+extraction; the model only transcribes rows, code validates every one).
+Every path lands in the SAME review gate: per-row keep/edit before Save,
+rows already in the ledger (same date+amount+merchant) flagged and unchecked
+by default, re-checked again at write time (`/finance/statement/import`),
+and the written rows event-grouped per statement. Subscription detection
+un-deferred as §1 notes. Aggregators remain out, as decided.
 
 ---
 
