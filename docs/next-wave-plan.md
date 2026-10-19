@@ -211,9 +211,19 @@ field extraction at ingest, per-folder field-name canonicalization, cover
 photo header, "what's due" + health bars — in no wave yet. Local models
 make extraction ~free; review gate makes it safe.
 
-**Open (owner to answer):** extraction on every drop vs only data-pointed
-text; pilot = the Car or born-generic; intervals stated once by the user as
-fields (recommended) — see conversation 2026-10-19.
+**Decisions (2026-10-19):**
+- **Extraction mode: attempt on every drop, conservatively.** The local
+  model tries fields on everything, but "not going crazy for no reason" —
+  emit only values the text explicitly states (a number, a date, a named
+  quantity), never inferred or padded fields; silence is the correct output
+  for prose with nothing structured in it. Review gate prunes the rest.
+- **Born generic from day one.** No Car-specific code anywhere — any folder
+  can grow fields; the Car is just the first folder it gets used on, not a
+  hand-coded pilot. Per-folder field-name canonicalization (the model sees
+  the folder's existing field names and reuses them) is what keeps a
+  generic system coherent.
+- Intervals/thresholds ("oil every 5k mi") stated once by the owner as
+  fields; what's-due is then arithmetic, not model judgment.
 
 ## 6. Backup
 
