@@ -1,11 +1,92 @@
 "use client";
 
-import { useState } from "react";
+import { ReactNode, useState } from "react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
-import { base64ToFile, ChatContentBlock, ChatMessage, chatMessageText } from "@/lib/api";
+import { API_BASE, base64ToFile, ChatContentBlock, ChatMessage, chatMessageText } from "@/lib/api";
+
+// --- clickable deep links in chat answers (next-wave §10) -------------------
+// The model is instructed (core/nodes/kb/chat.py) to emit root-relative
+// markdown links into the app's REAL routes; the renderer below decides what
+// each href becomes. Only "/"-relative and http(s) hrefs ever become links —
+// anything else (javascript:, data:, mailto:, a route that doesn't exist)
+// renders as plain text. No raw HTML is ever rendered (react-markdown
+// ignores HTML nodes without rehype-raw, which is deliberately not added).
+
+// Every page the app actually serves (frontend/app/**/page.tsx). A chat link
+// must match one of these pathnames to be client-side navigable — the note
+// deep-link shape is /kb/browse?path=<folder>&open=<slug> (what Browse
+// already reads on mount). /vault is deliberately absent: the vault is
+// invisible to every model surface, so model output never gets a live link in.
+const APP_ROUTES = new Set([
+  "/",
+  "/day",
+  "/documents",
+  "/finance",
+  "/finance/cards",
+  "/finance/investments",
+  "/gallery",
+  "/habits",
+  "/home",
+  "/journal",
+  "/kb",
+  "/kb/batch",
+  "/kb/browse",
+  "/kb/drop",
+  "/kb/folder",
+  "/kb/graph",
+  "/people",
+  "/profile",
+  "/stocks",
+  "/sync",
+  "/todos",
+  "/travel",
+  "/wardrobe",
+]);
+
+// Backend file endpoints (see lib/api.ts *AssetUrl helpers). These are API
+// paths, not pages — and the Capacitor build does NOT run same-origin with
+// the backend, so a bare "/kb/asset?..." href must be resolved against
+// API_BASE at render time, never left for the browser to resolve itself.
+const ASSET_ROUTES = new Set([
+  "/kb/asset",
+  "/wardrobe/asset",
+  "/wardrobe/outfits/asset",
+  "/grooming/asset",
+  "/documents/asset",
+  "/home/asset",
+]);
+
+function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
+  const h = href ?? "";
+  // External links keep working, in a new tab.
+  if (/^https?:\/\//i.test(h)) {
+    return (
+      <a href={h} target="_blank" rel="noreferrer">
+        {children}
+      </a>
+    );
+  }
+  // Root-relative only — "//evil.com" has no matching pathname below and
+  // falls through to plain text.
+  if (h.startsWith("/")) {
+    const pathname = h.split(/[?#]/)[0].replace(/\/+$/, "") || "/";
+    if (ASSET_ROUTES.has(pathname)) {
+      return (
+        <a href={`${API_BASE}${h}`} target="_blank" rel="noreferrer">
+          {children}
+        </a>
+      );
+    }
+    if (APP_ROUTES.has(pathname)) {
+      return <Link href={h}>{children}</Link>;
+    }
+  }
+  return <span>{children}</span>;
+}
 
 // Rebuild the File behind a message's image/PDF block so a photo DISCUSSED in
 // chat can hop into the scratchpad's pending drop attachments (next-wave §9)
@@ -98,7 +179,7 @@ export default function ChatLog({
               ))}
               {m.role === "assistant" ? (
                 <div className="prose prose-sm dark:prose-invert max-w-none prose-img:rounded-lg prose-a:text-accent">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={{ a: MarkdownLink }}>
                     {text}
                   </ReactMarkdown>
                 </div>
