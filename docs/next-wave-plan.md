@@ -572,9 +572,34 @@ carrying the endeavor dimension.
   COMPUTED from SQL at ask-time, never copied; chat always hydrates it.
 - **Work logs**: all days, one home — `Daily Log/Work Logs` — edges to every
   project/employer mentioned ("what did I do for Minfy this year" = walk edges).
+  - **BUILT 2026-10-20** (worktree agent, work-log lane):
+    `core/quintacle_core/nodes/logs/worklog.py`. `parse_work_log()` is pure
+    and deterministic (zero model calls), grounded against the real
+    ~/work-logs variance: `## Session N` blocks (or whole-file when
+    unnumbered), header times with `~`/en-dash/hyphen/`→` and past-midnight
+    ranges, Where → repos + project. `import_work_log()` writes the verbatim
+    note (`Work log - YYYY-MM-DD`, fields `{date, kind: work-log}`,
+    overwrite-by-title) through KBStore + the same graph-sync +
+    retrieval-index calls as the KB create path; entity edges are
+    deterministic — every `Career/*` / `Projects/*` note title mentioned in
+    the log (`graph.title_mentioned`) becomes a materialized link. Two
+    doors: `POST /logs/worklog/import {date, content}` and the MCP
+    `import_work_log(for_date, content)` tool (one staged-undo ledger entry
+    per import — note, rows, files, edges undo together).
 - **Auto productivity rows**: one activity one-liner per work-log session,
   deterministic (hours from the Session header, description from Summary),
   deduped vs manual rows, backfilled at import.
+  - **BUILT 2026-10-20** (same lane): per session with a computable
+    start–end, ONE `activity_log` row — category `productivity`, hours
+    computed in code (`14:30–18:45` → 4.25; unparseable side → no row,
+    never guessed), description = Summary first sentence prefixed with the
+    `…/code/<name>` project when Where implies one ("Quintacle: fired five
+    build waves"). Dedupe is delete-by-tag, never fuzzy: rows carry
+    `source: worklog-auto` in markdown frontmatter AND the new
+    `activity_log.source` column (migration; rebuild carries it), so a
+    re-import deletes exactly its own prior rows — manual rows (`source=''`)
+    are untouchable by construction. Rows index into retrieval
+    (`safe_index_log_row`). 18 tests in `core/tests/test_worklog.py`.
 - **Time/date always**: chat knows now (ET); date words in questions resolve
   IN CODE to that day's bundle (journal, rows, photo who-with lines, people)
   hydrated into context.

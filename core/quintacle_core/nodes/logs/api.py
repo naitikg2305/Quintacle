@@ -17,6 +17,7 @@ from .nutrition_targets import IS_LIMIT, rda_for, to_canonical_unit
 from .quotas import habit_history, habit_progress, weekly_ledger
 from .repository import LogsRepository
 from .routine_llm import resolve_workout_routine, suggest_workout_routine
+from .worklog import import_work_log
 
 # Graph write-rule coverage decision (docs/graph-model.md, graph_capture.py):
 # the NUMERIC log endpoints here — food, exercise, substances, body stats,
@@ -393,6 +394,34 @@ def activities_for_date(for_date: date) -> list[dict]:
 @router.get("/activities")
 def activities_between(start: date, end: date) -> list[dict]:
     return [dict(row) for row in get_repo().activities_between(start, end)]
+
+
+class WorkLogImport(BaseModel):
+    date: date
+    content: str
+
+
+@router.post("/worklog/import")
+def import_worklog(body: WorkLogImport) -> dict:
+    """One day's ~/work-logs file into Quintacle (next-wave-plan §10):
+    deterministic session parse (worklog.parse_work_log — zero model calls),
+    the verbatim KB note under Daily Log/Work Logs through the SAME
+    graph-linking + retrieval-index calls POST /kb/entries runs, and one
+    auto productivity row per session with computable hours (tagged
+    source=worklog-auto; re-import replaces exactly its own prior rows,
+    manual rows untouched)."""
+    # Imported lazily: kb.api → profile.api → logs.api at module level would
+    # be a circular import; at request time everything is initialized.
+    from ..kb.api import _sync_note_graph_links, get_store as get_kb_store
+
+    return import_work_log(
+        body.date,
+        body.content,
+        kb_store=get_kb_store(),
+        conn=get_repo().conn,
+        log_store=get_log_store(),
+        link_note=_sync_note_graph_links,
+    )
 
 
 @router.post("/exercise")

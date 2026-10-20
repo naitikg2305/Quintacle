@@ -72,12 +72,18 @@ CREATE TABLE IF NOT EXISTS substance_log (
     notes TEXT NOT NULL DEFAULT ''
 );
 
+-- activity_log.source: '' for manually logged rows; 'worklog-auto' for rows
+-- the work-log importer derived from a session header (next-wave-plan §10).
+-- The tag is what makes re-import dedupe deterministic — delete-by-tag, never
+-- fuzzy matching — and it lives in the markdown frontmatter too (the source
+-- of truth), so a rebuild preserves it.
 CREATE TABLE IF NOT EXISTS activity_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL,
     category TEXT NOT NULL,
     description TEXT NOT NULL,
-    hours REAL NOT NULL DEFAULT 0
+    hours REAL NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS exercise_sets (
@@ -233,6 +239,8 @@ _MIGRATIONS = [
     # Versioned habits (next-wave-plan §8): NULL = live; a date = the last day
     # the habit is still judged (end-dating never deletes the row).
     "ALTER TABLE habits ADD COLUMN ended_on TEXT",
+    # Work-log auto rows (next-wave-plan §10): see the activity_log comment.
+    "ALTER TABLE activity_log ADD COLUMN source TEXT NOT NULL DEFAULT ''",
     # Backfill: one initial version per pre-versioning habit, in force since
     # forever ('0001-01-01'). Pre-versioning weeks are therefore judged
     # against the targets current AT MIGRATION TIME — the only honest reading,
