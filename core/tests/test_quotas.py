@@ -15,7 +15,9 @@ def test_week_window_starts_monday():
 def test_habit_progress_sums_matching_category_in_window(tmp_path):
     conn = connect(tmp_path / "test.db")
     repo = LogsRepository(conn)
-    habit_id = repo.add_habit("Golf", target_amount=2, target_period="week", match_category="golf", unit="hrs")
+    habit_id = repo.add_habit(
+        "Golf", target_amount=2, target_period="week", match_category="golf", unit="hrs", today=date(2026, 9, 3)
+    )["id"]
 
     repo.log_activity(date(2026, 9, 3), "golf", "played 9 holes", hours=1.0)
     repo.log_activity(date(2026, 9, 3), "work", "unrelated", hours=3.0)
@@ -32,8 +34,8 @@ def test_amount_based_goal_is_met_when_under_cap(tmp_path):
     repo = LogsRepository(conn)
     habit_id = repo.add_habit(
         "Calorie cap", target_amount=2000, target_period="day", match_category=None,
-        unit="kcal", metric="food_kcal", direction="at_most",
-    )
+        unit="kcal", metric="food_kcal", direction="at_most", today=date(2026, 9, 3),
+    )["id"]
 
     repo.log_food(date(2026, 9, 3), "lunch", freeform_kcal=1200, servings=1)
 
@@ -48,8 +50,8 @@ def test_amount_based_goal_is_not_met_over_cap(tmp_path):
     repo = LogsRepository(conn)
     habit_id = repo.add_habit(
         "Calorie cap", target_amount=2000, target_period="day", match_category=None,
-        unit="kcal", metric="food_kcal", direction="at_most",
-    )
+        unit="kcal", metric="food_kcal", direction="at_most", today=date(2026, 9, 3),
+    )["id"]
 
     repo.log_food(date(2026, 9, 3), "lunch", freeform_kcal=1500, servings=1)
     repo.log_food(date(2026, 9, 3), "dinner", freeform_kcal=1000, servings=1)
@@ -63,7 +65,11 @@ def test_amount_based_goal_is_not_met_over_cap(tmp_path):
 def test_habit_history_returns_oldest_first_across_weekly_periods(tmp_path):
     conn = connect(tmp_path / "test.db")
     repo = LogsRepository(conn)
-    habit_id = repo.add_habit("Golf", target_amount=2, target_period="week", match_category="golf", unit="hrs")
+    # Created before the window history will walk — versioned history skips
+    # weeks before the habit's first effective_from.
+    habit_id = repo.add_habit(
+        "Golf", target_amount=2, target_period="week", match_category="golf", unit="hrs", today=date(2026, 8, 10)
+    )["id"]
 
     repo.log_activity(date(2026, 8, 24), "golf", "back nine", hours=1.0)  # week of Aug 24
     repo.log_activity(date(2026, 9, 3), "golf", "front nine", hours=3.0)  # week of Aug 31 (this week)
