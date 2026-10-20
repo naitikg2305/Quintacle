@@ -3,6 +3,36 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-20 — Drop-types lane of §8: stock_transaction + habit_entry end to end (worktree agent)
+
+The drop-types slice of the §8 wave, built on `redone-UI` at `36fa600` in
+parallel with the logs/habits-upsert agent and the kb/drop-review refactor
+agent (their files untouched here except the drop page's MANUAL button
+list). Suite 446 → 459 passed (+13 new tests); the 7 retrieval/chat-context
+failures on this machine are environmental (newer SQLite FTS5 behavior) and
+byte-identical before/after. Frontend `tsc --noEmit` 0 errors; eslint
+findings identical to the HEAD baseline. BUILT notes added in-place under
+§8's stock-ledger and budget-lines bullets.
+
+- **Stock ledger lane** — `stock:`/`invest:` → `stock_transaction` proposal
+  (`nodes/stocks/llm.py`, llm_dispatch/local-first, dividend = TOTAL cash in
+  price with qty 0); NEW deterministic `looks_like_stock_transaction` gate
+  in drop_router routes unprefixed trade-shaped text ("bought 10 shares of
+  AAPL at 150") to the same lane BEFORE any model call, while "bought 10
+  apples at the store" still falls through to parse_journal_dump (whose
+  union stays unchanged — schema-size limit). Old /drop `investment_entry`
+  branch deleted; `structure_investment`/`/investments`/InvestmentStore
+  removal recorded as deferred cleanup.
+- **Habit/goal/budget lane** — `habit:`/`goal:`/`budget:` → `habit_entry`
+  proposal (`nodes/logs/habit_llm.py`), schema = HabitCreate's body exactly
+  (incl. the parallel agent's exercise_days metric and upsert semantics on
+  POST /logs/habits). Prefix-only, review-gated like everything else.
+- **Frontend plumbing** — ParsedStockTransaction/ParsedHabitEntry in the
+  union; BLANK + commitEntry (logStockTransaction / createHabit) +
+  graphIdFor (`stock_tx:<id>` / null); two EntryCard cases; MANUAL buttons:
+  "Investment" → "Stock trade", new "Goal / budget".
+
+
 ## 2026-10-19 — Chat-context wave: _kb_context rebuilt on retrieval, topic hydration, transcripts lane, "record that" (§3 decision 2 + §4, worktree agent)
 
 The last piece of the retrieval/conversational wave, built on `redone-UI`
