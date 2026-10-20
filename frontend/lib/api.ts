@@ -44,6 +44,20 @@ export const updateTodo = (
 
 // --- logs (activities / habits / meals) ---
 
+// A not-yet-active version appended by an edit/upsert — takes force on
+// effective_from (always a period boundary; the current period finishes
+// under the old target).
+export type HabitPending = {
+  effective_from: string;
+  target_amount: number;
+  target_period: string;
+  match_category: string | null;
+  match_kind?: string | null;
+  unit: string;
+  metric: string;
+  direction: "at_least" | "at_most";
+};
+
 export type Habit = {
   id: number;
   name: string;
@@ -57,6 +71,11 @@ export type Habit = {
   unit: string;
   metric: string;
   direction: "at_least" | "at_most";
+  // Versioned habits (additive): the flat values above are the version in
+  // force today; ended_on set = the habit's last judged date.
+  ended_on?: string | null;
+  effective_from?: string;
+  pending?: HabitPending | null;
 };
 
 export type HabitProgress = {
@@ -75,15 +94,65 @@ export type HabitProgress = {
   prorated_target: number;
 };
 
+export type HabitWrite = Omit<Habit, "id" | "ended_on" | "effective_from" | "pending">;
+
 export const listHabits = () => request<Habit[]>("/logs/habits");
-export const createHabit = (body: Omit<Habit, "id">) =>
-  request<Habit>("/logs/habits", { method: "POST", body: JSON.stringify(body) });
+// POST upserts by name: a new habit counts this period, an existing name gets
+// a version effective next period — the response says which happened.
+export const createHabit = (body: HabitWrite) =>
+  request<Habit & { updated: boolean; effective_from: string }>("/logs/habits", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+// Edit = version-append; takes force at effective_from (next period start).
+export const updateHabit = (id: number, body: Partial<HabitWrite>) =>
+  request<{ id: number; effective_from: string }>(`/logs/habits/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+// End-dates (current period still judged); never deletes history.
+export const endHabit = (id: number) =>
+  request<{ id: number; ended_on: string }>(`/logs/habits/${id}`, { method: "DELETE" });
 export const habitProgress = (id: number) => request<HabitProgress>(`/logs/habits/${id}/progress`);
 
 export type HabitHistoryPoint = { window: { start: string; end: string }; current: number; target: number; met: boolean };
 
 export const habitHistory = (id: number, periods = 8) =>
   request<HabitHistoryPoint[]>(`/logs/habits/${id}/history?periods=${periods}`);
+
+// --- habits ledger (the calendar's Habits view) — all numbers backend-computed ---
+
+export type LedgerCell = {
+  window: { start: string; end: string };
+  target: number | null;
+  actual: number | null;
+  met: boolean | null;
+  in_progress: boolean;
+  elapsed_days: number | null;
+  period_days: number | null;
+  prorated_target: number | null;
+  effective_from: string | null;
+  active: boolean;
+  // Only on day-period habits: the week's day-windows aggregated.
+  days_met?: number;
+  days_total?: number;
+};
+
+export type LedgerHabit = {
+  id: number;
+  name: string;
+  unit: string;
+  metric: string;
+  direction: "at_least" | "at_most";
+  cells: LedgerCell[];
+};
+
+export type HabitsLedger = {
+  weeks: { start: string; end: string }[]; // oldest first; last = current partial week
+  habits: LedgerHabit[];
+};
+
+export const getHabitsLedger = (weeks: number) => request<HabitsLedger>(`/logs/habits/ledger?weeks=${weeks}`);
 
 export const logActivity = (body: { date: string; category: string; description: string; hours: number }) =>
   request("/logs/activities", { method: "POST", body: JSON.stringify(body) });

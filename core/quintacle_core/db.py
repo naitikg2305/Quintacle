@@ -155,6 +155,13 @@ CREATE TABLE IF NOT EXISTS income_log (
     notes TEXT NOT NULL DEFAULT ''
 );
 
+-- Versioned habits (next-wave-plan §8, 2026-10-20): `habits` is IDENTITY
+-- only — id, name (unique), ended_on (NULL = live; set = the last date the
+-- habit is still judged). The value columns below (target_amount …) are the
+-- pre-versioning legacy shape: they stay physically (dropping columns is a
+-- table rebuild for no gain) and still receive the latest values on create,
+-- but NOTHING reads them after this wave — habit_versions is the only
+-- source of targets.
 CREATE TABLE IF NOT EXISTS habits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
@@ -165,6 +172,29 @@ CREATE TABLE IF NOT EXISTS habits (
     metric TEXT NOT NULL DEFAULT 'activity_hours',
     direction TEXT NOT NULL DEFAULT 'at_least'
 );
+
+-- Effective-dated versions of a habit's targets (next-wave-plan §8).
+-- effective_from is the PERIOD-START date this version takes force: a new
+-- habit starts at the current period's start (it counts this week), an edit
+-- at the NEXT period start (the current period finishes under the old
+-- target). Past windows are always judged against the version in force at
+-- their start. Rows are append-only — ties on effective_from resolve to the
+-- highest id (the latest edit wins), earlier rows stay as history.
+CREATE TABLE IF NOT EXISTS habit_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    habit_id INTEGER NOT NULL REFERENCES habits(id),
+    effective_from TEXT NOT NULL,
+    target_amount REAL NOT NULL,
+    target_period TEXT NOT NULL,
+    match_category TEXT,
+    unit TEXT NOT NULL DEFAULT '',
+    metric TEXT NOT NULL DEFAULT 'activity_hours',
+    direction TEXT NOT NULL DEFAULT 'at_least',
+    match_kind TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_habit_versions_habit_from ON habit_versions(habit_id, effective_from);
 
 -- Mirrors graph/edges/*.md (see quintacle_core/graph.py) — a derived,
 -- fast-query cache, never the source of truth. id is the edge file's
@@ -200,6 +230,20 @@ _MIGRATIONS = [
     # match_kind = one of the 7 expense kinds; match_category doubles as the
     # whole-word text-match terms for spend habits (see quotas.py).
     "ALTER TABLE habits ADD COLUMN match_kind TEXT",
+    # Versioned habits (next-wave-plan §8): NULL = live; a date = the last day
+    # the habit is still judged (end-dating never deletes the row).
+    "ALTER TABLE habits ADD COLUMN ended_on TEXT",
+    # Backfill: one initial version per pre-versioning habit, in force since
+    # forever ('0001-01-01'). Pre-versioning weeks are therefore judged
+    # against the targets current AT MIGRATION TIME — the only honest reading,
+    # since no edit history exists to reconstruct what they "really" were.
+    # Idempotent via the NOT IN guard (this list re-runs on every connect).
+    """INSERT INTO habit_versions
+         (habit_id, effective_from, target_amount, target_period, match_category,
+          unit, metric, direction, match_kind, created_at)
+       SELECT id, '0001-01-01', target_amount, target_period, match_category,
+              unit, metric, direction, match_kind, '0001-01-01'
+       FROM habits WHERE id NOT IN (SELECT habit_id FROM habit_versions)""",
 ]
 
 

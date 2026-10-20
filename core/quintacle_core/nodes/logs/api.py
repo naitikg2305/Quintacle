@@ -14,7 +14,7 @@ from .log_store import LogFileStore, rebuild_sqlite_index
 from .meal_composer import resolve_composition, suggest_meal_composition
 from .nutrition_llm import estimate_nutrition
 from .nutrition_targets import IS_LIMIT, rda_for, to_canonical_unit
-from .quotas import habit_history, habit_progress
+from .quotas import habit_history, habit_progress, weekly_ledger
 from .repository import LogsRepository
 from .routine_llm import resolve_workout_routine, suggest_workout_routine
 
@@ -421,16 +421,56 @@ def log_body_stat(body: BodyStatCreate) -> dict:
 
 @router.post("/habits")
 def create_habit(body: HabitCreate) -> dict:
-    habit_id = get_repo().add_habit(
+    """Upsert-by-name (versioned habits, next-wave-plan §8): a new name takes
+    force this period; an existing name appends a version effective next
+    period. Response keeps the original shape plus updated/effective_from."""
+    result = get_repo().add_habit(
         body.name, body.target_amount, body.target_period, body.match_category, body.unit, body.metric, body.direction,
         body.match_kind,
     )
-    return {"id": habit_id, **body.model_dump()}
+    return {**body.model_dump(), **result}
 
 
 @router.get("/habits")
 def list_habits() -> list[dict]:
-    return [dict(row) for row in get_repo().list_habits()]
+    # Flattened identity ⋈ version-in-force-today, additive keys only
+    # (ended_on, effective_from, pending) — see LogsRepository.list_habits.
+    return get_repo().list_habits()
+
+
+# Declared before the /habits/{habit_id} routes so "ledger" never parses as an id.
+@router.get("/habits/ledger")
+def get_habits_ledger(weeks: int = 8) -> dict:
+    """The goals-calendar feed: week-columns × habits, every cell judged
+    against the version in force on that week's Monday — all arithmetic in
+    code (see quotas.weekly_ledger)."""
+    return weekly_ledger(get_repo(), weeks)
+
+
+class HabitUpdate(BaseModel):
+    # All optional — given fields merge over the habit's latest version into
+    # a new version effective next period (quotas.next_period_start).
+    target_amount: float | None = None
+    target_period: str | None = None
+    match_category: str | None = None
+    unit: str | None = None
+    metric: str | None = None
+    direction: str | None = None
+    match_kind: str | None = None
+
+
+@router.patch("/habits/{habit_id}")
+def update_habit(habit_id: int, body: HabitUpdate) -> dict:
+    # exclude_unset: an omitted field keeps its value, an explicit null
+    # clears it (match_category/match_kind are legitimately nullable).
+    return get_repo().update_habit(habit_id, body.model_dump(exclude_unset=True))
+
+
+@router.delete("/habits/{habit_id}")
+def end_habit(habit_id: int) -> dict:
+    """End-dates (ended_on = the current period's last day) — the period in
+    progress is still judged; the row and its history are never deleted."""
+    return get_repo().end_habit(habit_id)
 
 
 @router.get("/habits/{habit_id}/progress")

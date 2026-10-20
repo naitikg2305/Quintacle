@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
+from ... import clock
 from ...graph import title_mentioned
 from ..journal.normalize import canonicalize_name
 from .log_store import IngredientPresetStore, LogFileStore, MealPresetStore, RoutineStore, summarize_sets as _summarize_sets
+from .quotas import next_period_start, period_window
 
 
 class LogsRepository:
@@ -411,6 +413,15 @@ class LogsRepository:
             "SELECT * FROM exercise_sets WHERE date = ? ORDER BY id", (entry_date.isoformat(),)
         ).fetchall()
 
+    def exercise_days_between(self, start: date, end: date) -> int:
+        """Distinct days with ANY exercise logged — the exercise_days habit
+        metric ("gym 4x/week"). Three lifts on one day = one day."""
+        row = self.conn.execute(
+            "SELECT COUNT(DISTINCT date) AS days FROM exercise_sets WHERE date >= ? AND date <= ?",
+            (start.isoformat(), end.isoformat()),
+        ).fetchone()
+        return row["days"]
+
     # --- body stats ---
 
     def log_body_stat(self, entry_date: date, metric: str, value: float, unit: str = "") -> int:
@@ -540,7 +551,41 @@ class LogsRepository:
         ).fetchone()
         return row["total"]
 
-    # --- habits / quotas ---
+    # --- habits / quotas (versioned — next-wave-plan §8, 2026-10-20) ---
+    # `habits` is identity (id, name, ended_on); every target lives in
+    # habit_versions, effective-dated by period start. The legacy value
+    # columns on `habits` still get written on create (they're NOT NULL) but
+    # nothing reads them anymore — version_in_force() is the source of truth.
+
+    def version_in_force(self, habit_id: int, on_date: date) -> sqlite3.Row | None:
+        """The version governing on_date: latest effective_from <= date; ties
+        (two edits landing on the same boundary) resolve to the latest row."""
+        return self.conn.execute(
+            """SELECT * FROM habit_versions WHERE habit_id = ? AND effective_from <= ?
+               ORDER BY effective_from DESC, id DESC LIMIT 1""",
+            (habit_id, on_date.isoformat()),
+        ).fetchone()
+
+    def latest_version(self, habit_id: int) -> sqlite3.Row | None:
+        """The newest version regardless of date — pending (future) included.
+        Edits merge onto this, so successive same-week edits compose."""
+        return self.conn.execute(
+            "SELECT * FROM habit_versions WHERE habit_id = ? ORDER BY effective_from DESC, id DESC LIMIT 1",
+            (habit_id,),
+        ).fetchone()
+
+    def _append_version(self, habit_id: int, effective_from: date, values: dict) -> None:
+        self.conn.execute(
+            """INSERT INTO habit_versions
+                 (habit_id, effective_from, target_amount, target_period, match_category,
+                  unit, metric, direction, match_kind, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                habit_id, effective_from.isoformat(), values["target_amount"], values["target_period"],
+                values["match_category"], values["unit"], values["metric"], values["direction"],
+                values["match_kind"], clock.now().isoformat(),
+            ),
+        )
 
     def add_habit(
         self,
@@ -552,14 +597,114 @@ class LogsRepository:
         metric: str = "activity_hours",
         direction: str = "at_least",
         match_kind: str | None = None,
-    ) -> int:
-        cur = self.conn.execute(
-            """INSERT INTO habits (name, target_amount, target_period, match_category, unit, metric, direction, match_kind)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (name, target_amount, target_period, match_category, unit, metric, direction, match_kind),
-        )
+        today: date | None = None,
+    ) -> dict:
+        """Upsert-by-name. A brand-new habit takes force at the CURRENT
+        period's start — it counts this week. Re-using an existing name
+        appends a version effective at the NEXT boundary of the NEW period
+        (the current period finishes under the old target; a version's
+        effective_from is always a boundary of its own period grid, so past
+        windows stay cleanly owned). Re-adding an end-dated habit revives it
+        (ended_on cleared) — the old history stays attached."""
+        today = today or clock.today()
+        values = {
+            "target_amount": target_amount, "target_period": target_period,
+            "match_category": match_category, "unit": unit, "metric": metric,
+            "direction": direction, "match_kind": match_kind,
+        }
+        existing = self.conn.execute("SELECT * FROM habits WHERE name = ?", (name,)).fetchone()
+        if existing is None:
+            cur = self.conn.execute(
+                """INSERT INTO habits (name, target_amount, target_period, match_category, unit, metric, direction, match_kind)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (name, target_amount, target_period, match_category, unit, metric, direction, match_kind),
+            )
+            habit_id = cur.lastrowid
+            effective = period_window(target_period, today)[0]
+            updated = False
+        else:
+            habit_id = existing["id"]
+            effective = next_period_start(target_period, today)
+            updated = True
+            self.conn.execute("UPDATE habits SET ended_on = NULL WHERE id = ?", (habit_id,))
+        self._append_version(habit_id, effective, values)
         self.conn.commit()
-        return cur.lastrowid
+        return {"id": habit_id, "effective_from": effective.isoformat(), "updated": updated}
 
-    def list_habits(self) -> list[sqlite3.Row]:
+    def update_habit(self, habit_id: int, fields: dict, today: date | None = None) -> dict:
+        """Edit = version-append, never in-place: the given fields merge over
+        the habit's latest version (pending included, so same-week edits
+        compose) into a new version effective at the next boundary of the
+        resulting period. History is never rewritten."""
+        today = today or clock.today()
+        base = self.latest_version(habit_id)
+        if base is None:
+            raise ValueError(f"no habit with id {habit_id}")
+        nullable = {"match_category", "match_kind"}  # an explicit None clears these
+        values = {
+            k: fields[k] if k in fields and (fields[k] is not None or k in nullable) else base[k]
+            for k in ("target_amount", "target_period", "match_category", "unit", "metric", "direction", "match_kind")
+        }
+        effective = next_period_start(values["target_period"], today)
+        self._append_version(habit_id, effective, values)
+        self.conn.commit()
+        return {"id": habit_id, "effective_from": effective.isoformat()}
+
+    def end_habit(self, habit_id: int, today: date | None = None) -> dict:
+        """End-date, never delete: ended_on = the CURRENT period's last day
+        (the period in progress is still judged — symmetric with edits taking
+        effect next period). The row and all versions stay as history."""
+        today = today or clock.today()
+        v = self.version_in_force(habit_id, today) or self.latest_version(habit_id)
+        if v is None:
+            raise ValueError(f"no habit with id {habit_id}")
+        ended_on = next_period_start(v["target_period"], today) - timedelta(days=1)
+        self.conn.execute("UPDATE habits SET ended_on = ? WHERE id = ?", (ended_on.isoformat(), habit_id))
+        self.conn.commit()
+        return {"id": habit_id, "ended_on": ended_on.isoformat()}
+
+    def all_habits(self) -> list[sqlite3.Row]:
+        """Every habit identity row, ended ones included — the ledger needs
+        them for past weeks; nothing is ever deleted."""
         return self.conn.execute("SELECT * FROM habits ORDER BY name").fetchall()
+
+    def list_habits(self, today: date | None = None) -> list[dict]:
+        """Identity ⋈ version-in-force-today, flattened to the original
+        response shape plus additive keys (ended_on, effective_from, pending)
+        — existing consumers of the flat shape keep working. End-dated habits
+        keep appearing until ended_on passes; after that they live only in
+        history (ledger/history still see them)."""
+        today = today or clock.today()
+        out = []
+        for habit in self.all_habits():
+            ended_on = habit["ended_on"]
+            if ended_on and date.fromisoformat(ended_on) < today:
+                continue
+            v = self.version_in_force(habit["id"], today) or self.latest_version(habit["id"])
+            if v is None:
+                continue  # unreachable via normal writes; defensive
+            pending_row = self.latest_version(habit["id"])
+            pending = None
+            if pending_row and pending_row["effective_from"] > today.isoformat():
+                pending = {
+                    k: pending_row[k]
+                    for k in ("effective_from", "target_amount", "target_period", "match_category",
+                              "unit", "metric", "direction", "match_kind")
+                }
+            out.append(
+                {
+                    "id": habit["id"],
+                    "name": habit["name"],
+                    "target_amount": v["target_amount"],
+                    "target_period": v["target_period"],
+                    "match_category": v["match_category"],
+                    "unit": v["unit"],
+                    "metric": v["metric"],
+                    "direction": v["direction"],
+                    "match_kind": v["match_kind"],
+                    "ended_on": ended_on,
+                    "effective_from": v["effective_from"],
+                    "pending": pending,
+                }
+            )
+        return out

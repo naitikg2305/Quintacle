@@ -25,7 +25,7 @@ def _seed_expenses(repo):
 def test_spend_habit_without_matcher_stays_total_spend(tmp_path):
     repo = _repo(tmp_path)
     _seed_expenses(repo)
-    habit_id = repo.add_habit("Total spend", 200, "week", None, unit="$", metric="spend", direction="at_most")
+    habit_id = repo.add_habit("Total spend", 200, "week", None, unit="$", metric="spend", direction="at_most", today=date(2026, 9, 10))["id"]
 
     progress = habit_progress(repo, habit_id, today=date(2026, 9, 10))
 
@@ -36,7 +36,7 @@ def test_spend_habit_without_matcher_stays_total_spend(tmp_path):
 def test_spend_habit_matches_by_kind(tmp_path):
     repo = _repo(tmp_path)
     _seed_expenses(repo)
-    habit_id = repo.add_habit("Food budget", 50, "week", None, unit="$", metric="spend", direction="at_most", match_kind="food")
+    habit_id = repo.add_habit("Food budget", 50, "week", None, unit="$", metric="spend", direction="at_most", match_kind="food", today=date(2026, 9, 10))["id"]
 
     progress = habit_progress(repo, habit_id, today=date(2026, 9, 10))
 
@@ -47,7 +47,7 @@ def test_spend_habit_matches_by_kind(tmp_path):
 def test_spend_habit_matches_by_whole_word_text(tmp_path):
     repo = _repo(tmp_path)
     _seed_expenses(repo)
-    habit_id = repo.add_habit("Creatine line", 20, "week", "creatine", unit="$", metric="spend", direction="at_most")
+    habit_id = repo.add_habit("Creatine line", 20, "week", "creatine", unit="$", metric="spend", direction="at_most", today=date(2026, 9, 10))["id"]
 
     progress = habit_progress(repo, habit_id, today=date(2026, 9, 10))
 
@@ -59,8 +59,9 @@ def test_spend_habit_kind_or_text_union(tmp_path):
     repo = _repo(tmp_path)
     _seed_expenses(repo)
     habit_id = repo.add_habit(
-        "Creatine + alcohol", 60, "week", "creatine", unit="$", metric="spend", direction="at_most", match_kind="alcohol"
-    )
+        "Creatine + alcohol", 60, "week", "creatine", unit="$", metric="spend", direction="at_most", match_kind="alcohol",
+        today=date(2026, 9, 10),
+    )["id"]
 
     progress = habit_progress(repo, habit_id, today=date(2026, 9, 10))
 
@@ -71,7 +72,7 @@ def test_spend_habit_kind_or_text_union(tmp_path):
 def test_text_match_is_whole_word_not_substring(tmp_path):
     repo = _repo(tmp_path)
     repo.log_expense(date(2026, 9, 10), 10.0, "Barnes & Noble", "", "", "shopping")
-    habit_id = repo.add_habit("Bars", 50, "week", "bar", unit="$", metric="spend", direction="at_most")
+    habit_id = repo.add_habit("Bars", 50, "week", "bar", unit="$", metric="spend", direction="at_most", today=date(2026, 9, 10))["id"]
 
     progress = habit_progress(repo, habit_id, today=date(2026, 9, 10))
 
@@ -80,7 +81,7 @@ def test_text_match_is_whole_word_not_substring(tmp_path):
 
 def test_progress_includes_time_proration_for_month(tmp_path):
     repo = _repo(tmp_path)
-    habit_id = repo.add_habit("Monthly cap", 310, "month", None, unit="$", metric="spend", direction="at_most")
+    habit_id = repo.add_habit("Monthly cap", 310, "month", None, unit="$", metric="spend", direction="at_most", today=date(2026, 9, 10))["id"]
 
     # Sept 10th: 10 of 30 days elapsed -> prorated cap 310 * 10/30
     progress = habit_progress(repo, habit_id, today=date(2026, 9, 10))
@@ -93,7 +94,7 @@ def test_progress_includes_time_proration_for_month(tmp_path):
 def test_activity_and_kcal_metrics_unchanged_by_matcher(tmp_path):
     repo = _repo(tmp_path)
     repo.log_activity(date(2026, 9, 10), "golf", "front nine", hours=2.0)
-    habit_id = repo.add_habit("Golf", 2, "week", "golf", unit="hrs")
+    habit_id = repo.add_habit("Golf", 2, "week", "golf", unit="hrs", today=date(2026, 9, 10))["id"]
 
     progress = habit_progress(repo, habit_id, today=date(2026, 9, 10))
 

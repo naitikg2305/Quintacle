@@ -468,9 +468,33 @@ First prod-testing session surfaced these; all decided same day:
   versions: an edit takes effect NEXT week (Monday-anchored; current week
   finishes under the old target); past weeks are always judged against the
   version in force then; delete = end-date, history preserved.
+
+  **BUILT (2026-10-20):** `habits` is identity (id, name, ended_on) +
+  `habit_versions` effective-dated by period start; migration backfills one
+  '0001-01-01' version per legacy row (pre-versioning weeks judged against
+  migration-time targets — the only honest reading). POST /logs/habits
+  upserts by name (new = counts this period; existing = version effective at
+  the NEXT boundary of the new version's own period — so a week→month edit
+  activates on the 1st); PATCH appends a version, DELETE end-dates at the
+  current period's last day. Progress/history judge every window by the
+  version in force at its start; history steps per era across period
+  changes. Bonus while in here: the `exercise_days` metric (distinct gym
+  days — "gym 4x/week"). Reference: `docs/reference/habits-versioning.md`.
+
 - **Goals calendar (third calendar view).** Habits render like recurring
   weekly meetings: grid colored met/missed/in-progress, week click drills
   into per-habit target-in-force vs actual vs pace. All arithmetic in code.
+
+  **BUILT (2026-10-20):** the calendar's third Segmented tab, **Habits** —
+  one row per Monday-anchored week overlapping the visible month, a status
+  chip per habit (word/icon + tone, never color alone); week click opens the
+  usual Panel/BottomSheet with target-in-force (its effective date shown
+  when it isn't the current version), actual, met/missed, and a pace line
+  for the current week. Fed by one `GET /logs/habits/ledger?weeks=N`
+  (`quotas.weekly_ledger`) — day-period habits aggregate to days_met/
+  days_total per week; the client only formats. The Habits page gained the
+  minimal edit/end/pending affordances in the meantime (per the
+  page-retires decision below, not gold-plated).
 - **The separate Habits page retires** — "we don't even need the goals page
   separately... it reduces a page." Define/update via drop/chat; track via
   the calendar; small edit/end affordances live in the week drill-in.

@@ -3,6 +3,46 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-20 — Versioned habits + goals calendar (§8, worktree agent)
+
+The versioned-habits lane of §8, built on `redone-UI` at `36fa600` (the
+drop_router `/drop` branches and the drop-page/scratchpad refactor are
+parallel agents' lanes — `api.py`, `drop_router.py`, `kb/page.tsx`,
+`entries.ts`, `EntryCard.tsx` untouched here). Suite **+13 tests, zero new
+failures** (this machine's venv shows 7 pre-existing retrieval/chat-context
+failures from its sqlite/FTS5 behavior, identical before and after, and
+run-to-run-varying skip counts — 446→459 passed on matched runs); frontend
+`tsc --noEmit` 0 errors, eslint: no new errors (the 2 flagged
+`set-state-in-effect` sites pre-exist at the same lines). Reference:
+`docs/reference/habits-versioning.md`; BUILT notes under §8's
+versioned-habits and calendar bullets.
+
+- **Schema**: `habits` → identity (id, name, ended_on) + append-only
+  `habit_versions` effective-dated by period start; idempotent migration
+  backfills one '0001-01-01' version per legacy row (pre-versioning weeks
+  judged against migration-time targets — the only honest reading; legacy
+  value columns stay physically but nothing reads them).
+- **Semantics shipped**: new habit counts THIS period; edit/upsert takes
+  force at the NEXT boundary of the new version's own period (week→Monday,
+  month→the 1st, day→tomorrow; 2weeks→next Monday by convention); end =
+  ended_on at the current period's last day, row never deleted, re-add
+  revives; every window judged by the version in force at its start;
+  history steps per era across period changes.
+- **Endpoints**: POST /logs/habits upserts (+updated/effective_from),
+  PATCH/DELETE /logs/habits/{id}, GET /logs/habits/ledger?weeks=N
+  (`quotas.weekly_ledger` — week-columns × habits, day-period cells
+  aggregate to days_met/days_total); GET /logs/habits gains
+  ended_on/effective_from/pending, flat shape otherwise unchanged. New
+  `exercise_days` metric (distinct gym days).
+- **Frontend**: Habits page gets minimal edit/end/pending (it retires per
+  §8); the calendar gets the third **Habits** tab — Monday-anchored week
+  rows with per-habit status chips, week drill-in with target-in-force vs
+  actual vs pace, all numbers backend-computed. `lib/date.ts` adds ET-safe
+  `mondayOfWeek`/`addDaysIso`.
+- Deliberately not done: drop/chat `habit:` parsing (another agent's lane),
+  any week drill-in edit affordances beyond the Habits page's (waits for
+  the page's actual retirement), renaming habits (name is identity).
+
 ## 2026-10-20 — Drop-types lane of §8: stock_transaction + habit_entry end to end (worktree agent)
 
 The drop-types slice of the §8 wave, built on `redone-UI` at `36fa600` in
