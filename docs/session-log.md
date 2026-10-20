@@ -8,10 +8,10 @@ Newest session at the top. Read this before picking the project back up.
 The versioned-habits lane of §8, built on `redone-UI` at `36fa600` (the
 drop_router `/drop` branches and the drop-page/scratchpad refactor are
 parallel agents' lanes — `api.py`, `drop_router.py`, `kb/page.tsx`,
-`entries.ts`, `EntryCard.tsx` untouched here). Suite **446 → 459 passed**
-on this machine (the stated 457 baseline shows 446 here: 7 pre-existing
-retrieval/chat-context failures + 4 extra skips from this venv's
-sqlite/FTS5 behavior — identical before and after, zero new); frontend
+`entries.ts`, `EntryCard.tsx` untouched here). Suite **+13 tests, zero new
+failures** (this machine's venv shows 7 pre-existing retrieval/chat-context
+failures from its sqlite/FTS5 behavior, identical before and after, and
+run-to-run-varying skip counts — 446→459 passed on matched runs); frontend
 `tsc --noEmit` 0 errors, eslint: no new errors (the 2 flagged
 `set-state-in-effect` sites pre-exist at the same lines). Reference:
 `docs/reference/habits-versioning.md`; BUILT notes under §8's
