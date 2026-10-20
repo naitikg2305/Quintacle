@@ -32,6 +32,7 @@ import {
   readKBEntry,
   recordThat,
   RecordThatProposal,
+  saveJournal,
   saveRecordThat,
   searchTranscripts,
   sortKBEntry,
@@ -41,7 +42,11 @@ import {
   suggestWorkoutRoutine,
 } from "@/lib/api";
 import { EntryReviewList, useParsedEntries } from "@/components/DropReview";
-import { commitTextEntries } from "@/lib/entries";
+import { AttachmentTray, extFor, STATEMENT_EXT, useDropAttachments } from "@/components/DropAttachments";
+import ManualAddGrid from "@/components/ManualAddGrid";
+import StillGoingPanel from "@/components/StillGoingPanel";
+import UnknownFacesPanel from "@/components/UnknownFacesPanel";
+import { commitDropEntries, DropSession, PendingFace } from "@/lib/entries";
 import { todayIso } from "@/lib/date";
 import MealCompositionEditor from "@/components/MealCompositionEditor";
 import OutfitEditor from "@/components/OutfitEditor";
@@ -51,6 +56,7 @@ import {
   Archive,
   ArchiveX,
   BookmarkPlus,
+  BookOpen,
   Database,
   Droplets,
   Dumbbell,
@@ -80,6 +86,9 @@ const CUSTOM_BEDROCK = "__custom_bedrock__";
 const CUSTOM_LOCAL = "__custom_local__";
 // The picker's default when no choice is stored yet — local-first.
 const DEFAULT_LOCAL_MODEL = "local:qwen3:8b";
+// Scratchpad text at/past this length auto-ticks "also save to journal" —
+// long text is almost always a day's narrative (same rule Drop had).
+const JOURNAL_AUTO_CHARS = 200;
 
 export default function KBPage() {
   return (
@@ -132,22 +141,40 @@ function KBPageInner() {
   // before the explicit save (propose→review→Save; nothing writes until then).
   const [recordProposal, setRecordProposal] = useState<RecordThatProposal | null>(null);
 
-  // Chat-drop parity (next-wave §8): the untargeted "Sort with AI" routes the
-  // scratchpad through THE SAME /drop text lane the Drop page uses — same
-  // proposals, same review cards, same commit endpoints. Chat messages are
-  // never scanned ("only the scratchpad"); only this button, only this text.
-  const { entries, setEntries, updateEntry, removeEntry, updateSet, addSet, removeSet } = useParsedEntries();
+  // Chat IS the drop lane now (next-wave §9): the untargeted "Sort with AI"
+  // routes the scratchpad — text AND attached files — through THE SAME
+  // multipart /drop call the retired Drop page used: same proposals, same
+  // review cards, same commit endpoints. Chat messages are never scanned
+  // ("only the scratchpad"); only this button, only this pad.
+  const { entries, setEntries, addManual, updateEntry, removeEntry, updateSet, addSet, removeSet } = useParsedEntries();
   const [meals, setMeals] = useState<Meal[]>([]);
   const [exerciseNames, setExerciseNames] = useState<string[]>([]);
   // Reference date for "yesterday" etc. in the scratchpad text — same role
   // as the Drop page's date picker, and the fallback day entries save under.
   const [dropDate, setDropDate] = useState(todayIso());
-  // Local-first ingest bookkeeping, same pattern as the Drop page: who served
-  // the last sort plus a snapshot of the ORIGINAL text — "Redo with cloud"
-  // re-sends that snapshot (a step back, never re-prompting over the local
-  // output) and REPLACES the current proposals.
+  // The pending drop attachments — primary file + extras, previews included
+  // (the Drop page's file machinery, extracted to components/DropAttachments).
+  const att = useDropAttachments();
+  // "Already-finished document" — AI only places it, never rewrites it.
+  const [keepAsIs, setKeepAsIs] = useState(false);
+  // Journal: also keep the raw scratchpad text verbatim as this day's journal
+  // entry. Long text is almost always a day's narrative worth keeping
+  // verbatim, so it defaults on past the threshold — until the user decides
+  // either way (their explicit choice wins; derived, so no effect needed).
+  const [journalChoice, setJournalChoice] = useState<boolean | null>(null);
+  const saveToJournal = journalChoice ?? scratchpad.trim().length >= JOURNAL_AUTO_CHARS;
+  // Unknown faces reported by saved photos (tag panel) and the single-note
+  // "Still going" keep-adding session — both moved here from the Drop page.
+  const [pendingFaces, setPendingFaces] = useState<PendingFace[]>([]);
+  const [activeSession, setActiveSession] = useState<DropSession | null>(null);
+  // Local-first ingest bookkeeping, same pattern as the Drop page had: who
+  // served the last sort plus a snapshot of the ORIGINAL input — "Redo with
+  // cloud" re-sends that snapshot (a step back, never re-prompting over the
+  // local output) and REPLACES the current proposals.
   const [providerUsed, setProviderUsed] = useState<ProviderUsed>(null);
-  const [lastSort, setLastSort] = useState<{ text: string; date: string } | null>(null);
+  const [lastSort, setLastSort] = useState<{ text: string; file: File | null; keepAsIs: boolean; extra: File | null; date: string } | null>(
+    null
+  );
 
   // The entity registries EntryCard grounds its pickers in — same loads as
   // the Drop page, so a scratchpad "had the usual burrito bowl" review card
@@ -302,13 +329,14 @@ function KBPageInner() {
   }
 
   async function sortWithAI() {
-    if (!scratchpad.trim()) return;
+    if (!scratchpad.trim() && !att.file) return;
     // Two lanes. A TARGETED sort (continuing on a note) stays the merge-update
     // sortKBEntry suggestion panel — that path is about rewriting ONE note.
     // Generate-image also stays exclusively on this old sortKBEntry → push()
     // lane (decided): a pending generated image needs the KB-suggestion panel
     // so push() can attach it the way a dropped photo would be.
     if (target || generatedImageFile) {
+      if (!scratchpad.trim()) return;
       setBusy(true);
       setStatus(target ? `updating "${target.title}"...` : "sorting...");
       try {
@@ -324,18 +352,32 @@ function KBPageInner() {
       setBusy(false);
       return;
     }
-    // No target: full drop parity — the same /drop text lane as the Drop page
-    // (prefix routing, journal-dump parsing, every type drop handles). A single
+    // No target: the full drop lane — the same multipart /drop call the Drop
+    // page made (prefix routing, journal-dump parsing, EXIF/vision file
+    // classification, statement files, every type drop handles). A single
     // kb_entry proposal just renders as a normal review card like any other
     // entry; the KB suggestion panel above serves the target-note path only.
-    // Nothing is written until Save.
+    // Nothing is written until Save. Classification only ever reads at most
+    // two images together (the vision call needs just enough to recognize
+    // what this is, not every page) — extraPhotos beyond the first are still
+    // attached in full at save time, they just aren't part of what AI looks
+    // at here.
     setBusy(true);
     setStatus("sorting...");
     try {
-      const { entries: proposed, provider_used } = await proposeDrop(scratchpad, null, false, null, dropDate);
+      const { entries: proposed, provider_used } = await proposeDrop(scratchpad, att.file, keepAsIs, att.extraPhotos[0] ?? null, dropDate);
+      // A CSV/OFX statement proposal keeps the raw file text client-side so
+      // the review card can re-parse after a column-mapping correction
+      // without re-dropping the file.
+      if (att.file && STATEMENT_EXT.includes(extFor(att.file))) {
+        const raw = await att.file.text();
+        for (const p of proposed) {
+          if (p.type === "statement_import") p.raw_text = raw;
+        }
+      }
       setEntries((prev) => [...prev, ...proposed]);
       setProviderUsed(provider_used);
-      setLastSort({ text: scratchpad, date: dropDate });
+      setLastSort({ text: scratchpad, file: att.file, keepAsIs, extra: att.extraPhotos[0] ?? null, date: dropDate });
       setSuggestion(null);
       setMealSuggestion(null);
       setOutfitSuggestion(null);
@@ -348,15 +390,22 @@ function KBPageInner() {
     setBusy(false);
   }
 
-  // The step-back redo, same pattern as the Drop page: re-runs the
-  // classification from the ORIGINAL scratchpad snapshot with provider=cloud,
-  // replacing (not appending to) the current proposals.
+  // The step-back redo: re-runs the classification from the ORIGINAL input
+  // snapshot (text AND files) with provider=cloud, replacing (not appending
+  // to) the current proposals. Nothing commits until Save, same as always.
   async function redoWithCloud() {
     if (!lastSort) return;
     setBusy(true);
     setStatus("redoing with cloud...");
     try {
-      const { entries: proposed, provider_used } = await proposeDrop(lastSort.text, null, false, null, lastSort.date, "cloud");
+      const { entries: proposed, provider_used } = await proposeDrop(
+        lastSort.text,
+        lastSort.file,
+        lastSort.keepAsIs,
+        lastSort.extra,
+        lastSort.date,
+        "cloud"
+      );
       setEntries(proposed);
       setProviderUsed(provider_used);
       setStatus(`${proposed.length} entr${proposed.length === 1 ? "y" : "ies"} re-proposed via cloud — review below`);
@@ -366,20 +415,47 @@ function KBPageInner() {
     setBusy(false);
   }
 
-  // The scratchpad's Save: same per-entry commits + same-event linking as
-  // Drop's (commitTextEntries wraps the shared loop), text-only by
-  // construction — no files ride along from here.
+  // The journal store appends a timestamped block on every save (it never
+  // overwrites), so just send the new text — re-sending existing content
+  // would duplicate it.
+  async function saveJournalOnly() {
+    if (!scratchpad.trim()) return;
+    setBusy(true);
+    setStatus("saving to journal...");
+    try {
+      await saveJournal(dropDate, scratchpad.trim());
+      setStatus(`saved to your ${dropDate} journal`);
+      setScratchpad("");
+      setJournalChoice(null);
+    } catch (e) {
+      setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setBusy(false);
+  }
+
+  // The scratchpad's Save — Drop's FULL save semantics, now shared
+  // (lib/entries.ts commitDropEntries): per-entry commits with the attached
+  // file(s) riding along on asset-carrying types, same-event linking,
+  // statement summary, unknown-faces queueing, single-note "Still going"
+  // session — plus the optional verbatim journal append.
   async function saveEntries() {
     if (entries.length === 0) return;
     setBusy(true);
     setStatus("saving...");
     try {
-      const { warning } = await commitTextEntries(dropDate, entries);
-      setStatus(warning ?? `saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
+      if (saveToJournal && scratchpad.trim()) await saveJournal(dropDate, scratchpad.trim());
+      const files = att.file ? [att.file, ...att.extraPhotos] : [];
+      const { warning, stmtSummary, session, faces } = await commitDropEntries(dropDate, entries, files);
+      setStatus(warning ?? stmtSummary ?? `saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
       setScratchpad("");
+      setJournalChoice(null);
       setEntries([]);
       setProviderUsed(null);
       setLastSort(null);
+      att.onFileChosen(null);
+      setKeepAsIs(false);
+      setActiveSession(session);
+      if (faces.length > 0) setPendingFaces((prev) => [...prev, ...faces]);
     } catch (e) {
       setStatus(`save failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -641,6 +717,15 @@ function KBPageInner() {
     setScratchpad((prev) => (prev ? `${prev}\n\n${text}` : text));
   }
 
+  // The conversation → drop bridge (next-wave §9): a photo discussed in a
+  // chat message (or a generated image) joins the scratchpad's pending
+  // attachments and flows through /drop like any dropped file.
+  function addFileToDrop(f: File) {
+    att.addFile(f);
+    setPane("scratch");
+    setStatus(`attached ${f.name} — Sort with AI sends it through the drop lane`);
+  }
+
   const label = "font-mono text-[10px] uppercase tracking-[0.14em] text-muted";
   const suggestionButtons = [
     { onClick: suggestMeal, icon: Utensils, text: "Meal" },
@@ -782,6 +867,7 @@ function KBPageInner() {
               messages={chatLog}
               busy={chatBusy}
               onAddToScratchpad={addToScratchpad}
+              onAddAttachmentToDrop={addFileToDrop}
               onEscalate={escalate}
               escalateModels={models.filter((m) => m.provider !== "local").map((m) => ({ id: m.id, label: m.label }))}
             />
@@ -876,11 +962,44 @@ function KBPageInner() {
             <div className="mt-2 space-y-1">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={generatedImagePreviewUrl} alt="" className="max-w-full rounded-lg border border-line" />
-              <button onClick={clearGeneratedImage} className="flex items-center gap-1 text-xs text-muted hover:text-foreground">
-                <X size={12} /> remove generated image
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <button onClick={clearGeneratedImage} className="flex items-center gap-1 text-xs text-muted hover:text-foreground">
+                  <X size={12} /> remove generated image
+                </button>
+                <button
+                  onClick={() => {
+                    if (generatedImageFile) {
+                      addFileToDrop(generatedImageFile);
+                      clearGeneratedImage();
+                    }
+                  }}
+                  title="Queue it as a pending drop attachment instead — it gets sorted and saved through the drop lane like any dropped photo"
+                  className="text-xs text-accent/80 hover:text-accent hover:underline"
+                >
+                  → add to drop attachments
+                </button>
+              </div>
             </div>
           )}
+
+          {/* The drop lane's file side (next-wave §9): attachments ride the
+              same multipart /drop sort and attach to asset-carrying entries
+              at save time — exactly what the retired Drop page did. */}
+          <div className="mt-2">
+            <AttachmentTray att={att} />
+          </div>
+          {att.file && (
+            <label className="mt-1.5 flex cursor-pointer items-center gap-2 text-xs text-muted">
+              <input
+                type="checkbox"
+                checked={keepAsIs}
+                onChange={(e) => setKeepAsIs(e.target.checked)}
+                className="accent-[var(--color-accent)]"
+              />
+              Already-finished document — don&apos;t let AI rewrite it, just suggest where it goes
+            </label>
+          )}
+
           <div className="mt-2 space-y-2">
             <label className="flex items-center gap-2">
               <span className={label}>Date</span>
@@ -892,9 +1011,30 @@ function KBPageInner() {
                 title='Reference date for "yesterday" etc. in the scratchpad — also the day entries without their own date save under'
               />
             </label>
-            <Button variant="primary" className="w-full" onClick={sortWithAI} disabled={busy || !scratchpad.trim()}>
+            {!target && (
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+                <input
+                  type="checkbox"
+                  checked={saveToJournal}
+                  onChange={(e) => setJournalChoice(e.target.checked)}
+                  className="accent-[var(--color-accent)]"
+                />
+                Also save this text to my journal for {dropDate}
+              </label>
+            )}
+            <Button variant="primary" className="w-full" onClick={sortWithAI} disabled={busy || (!scratchpad.trim() && !att.file)}>
               <Sparkles size={16} /> {target ? "Update with AI" : "Sort with AI"}
             </Button>
+            {!target && saveToJournal && scratchpad.trim() && (
+              <Button
+                className="w-full"
+                onClick={saveJournalOnly}
+                disabled={busy}
+                title="Keep the text as this day's journal without parsing it into entries"
+              >
+                <BookOpen size={16} /> Save to journal only
+              </Button>
+            )}
             <div className="grid grid-cols-3 gap-2">
               {suggestionButtons.map((b) => (
                 <Button key={b.text} size="sm" onClick={b.onClick} disabled={busy || !scratchpad.trim()} title={`Suggest ${b.text.toLowerCase()} from the scratchpad`}>
@@ -911,10 +1051,13 @@ function KBPageInner() {
                 <ImagePlus size={14} /> Generate image
               </Button>
             </div>
+            {/* Every type a drop can produce, added by hand as a blank review
+                card — the Drop page's manual grid, compact (next-wave §9). */}
+            <ManualAddGrid onAdd={addManual} />
           </div>
 
-          {/* Drop-parity review: the proposed entries from the untargeted
-              sort, same cards + same commit endpoints as the Drop page. */}
+          {/* The drop review: the proposed entries from the untargeted sort,
+              same cards + same commit endpoints the Drop page used. */}
           {entries.length > 0 && (
             <div className="mt-3 space-y-3 border-t border-line pt-3">
               <EntryReviewList
@@ -929,6 +1072,7 @@ function KBPageInner() {
               />
               <Button variant="primary" className="w-full" onClick={saveEntries} disabled={busy}>
                 Save {entries.length} entr{entries.length === 1 ? "y" : "ies"}
+                {saveToJournal && scratchpad.trim() ? " + journal" : ""}
               </Button>
             </div>
           )}
@@ -1087,12 +1231,26 @@ function KBPageInner() {
                 <button
                   onClick={redoWithCloud}
                   disabled={busy}
-                  title="Not happy with the local sort? Re-run from the original scratchpad text on the cloud API — replaces these proposals."
+                  title="Not happy with the local sort? Re-run from the original input on the cloud API — replaces these proposals."
                   className="text-xs text-accent hover:underline disabled:opacity-40"
                 >
                   Redo with cloud ↻
                 </button>
               )}
+            </div>
+          )}
+
+          {/* Post-save follow-ups, moved here from the retired Drop page
+              (next-wave §9): optional face tagging for saved photos, and the
+              keep-adding session on a just-saved single note. */}
+          {pendingFaces.length > 0 && (
+            <div className="mt-3">
+              <UnknownFacesPanel faces={pendingFaces} setFaces={setPendingFaces} />
+            </div>
+          )}
+          {activeSession && (
+            <div className="mt-3">
+              <StillGoingPanel session={activeSession} onEnd={() => setActiveSession(null)} />
             </div>
           )}
         </div>
