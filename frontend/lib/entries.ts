@@ -3,6 +3,7 @@ import {
   createCreditCard,
   createDocument,
   createExperience,
+  createHabit,
   createGroomingItem,
   createGroomingRoutine,
   createHomeItem,
@@ -24,6 +25,7 @@ import {
   logExercise,
   logExpense,
   logFood,
+  logStockTransaction,
   logSubstance,
   ParsedEntry,
   pushKBEntry,
@@ -135,6 +137,28 @@ export const BLANK: Record<ParsedEntry["type"], ParsedEntry> = {
     purchase_date: null,
     notes: "",
   },
+  stock_transaction: {
+    type: "stock_transaction",
+    action: "buy",
+    symbol: "",
+    qty: 0,
+    price: 0,
+    fees: 0,
+    account: "",
+    entry_date: null,
+    notes: "",
+  },
+  habit_entry: {
+    type: "habit_entry",
+    name: "",
+    target_amount: 0,
+    target_period: "week",
+    metric: "activity_hours",
+    direction: "at_least",
+    unit: "hrs",
+    match_category: null,
+    match_kind: null,
+  },
 };
 
 const has = <K extends string>(r: unknown, key: K): r is Record<K, unknown> =>
@@ -170,6 +194,12 @@ export function graphIdFor(entry: ParsedEntry, result: unknown): string | null {
       return has(result, "folder") && has(result, "slug") ? `experience:${result.folder}/${result.slug}` : null;
     case "person_entry":
       return has(result, "folder") ? `note:${result.folder}/profile` : null;
+    case "stock_transaction":
+      // Matches the retrieval-index id the POST /stocks/transactions hook writes.
+      return has(result, "id") ? `stock_tx:${result.id}` : null;
+    case "habit_entry":
+      // Habits have no graph node today — same as grooming/document/etc. below.
+      return null;
     // Structural nodes /graph already synthesizes from SQLite/stores:
     case "ingredient_preset":
       return has(result, "id") ? `ingredient:${result.id}` : null;
@@ -424,6 +454,32 @@ export async function commitEntry(date: string, entry: ParsedEntry, assets: File
         account: entry.account,
         purchase_date: entry.purchase_date,
         notes: entry.notes,
+      });
+    case "stock_transaction":
+      // §8: a real ledger row (markdown + SQLite index via /stocks/transactions),
+      // not the retired static investment record.
+      return logStockTransaction({
+        date: entry.entry_date ?? date,
+        action: entry.action,
+        symbol: entry.symbol,
+        qty: entry.qty,
+        price: entry.price,
+        fees: entry.fees,
+        account: entry.account,
+        notes: entry.notes,
+      });
+    case "habit_entry":
+      // POST /logs/habits upserts by name — the same call creates a new goal
+      // AND updates an existing one's target/matcher.
+      return createHabit({
+        name: entry.name,
+        target_amount: entry.target_amount,
+        target_period: entry.target_period,
+        match_category: entry.match_category,
+        match_kind: entry.match_kind,
+        unit: entry.unit,
+        metric: entry.metric,
+        direction: entry.direction,
       });
   }
 }

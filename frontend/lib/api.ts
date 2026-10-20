@@ -475,6 +475,35 @@ export type ParsedInvestmentEntry = {
   notes: string;
 };
 
+// §8: the "stock:" prefix (and the unprefixed stock gate) proposes a REAL
+// ledger transaction — committed via logStockTransaction, not the retired
+// static investment lane. Mirrors StockTransactionEstimate in core.
+export type ParsedStockTransaction = {
+  type: "stock_transaction";
+  action: StockAction;
+  symbol: string;
+  qty: number;
+  price: number;
+  fees: number;
+  account: string;
+  entry_date: string | null;
+  notes: string;
+};
+
+// §8: "habit:"/"goal:"/"budget:" drops propose a habit line — committed via
+// createHabit (POST /logs/habits, upsert by name). Mirrors HabitEstimate in core.
+export type ParsedHabitEntry = {
+  type: "habit_entry";
+  name: string;
+  target_amount: number;
+  target_period: string;
+  metric: string;
+  direction: "at_least" | "at_most";
+  unit: string;
+  match_category: string | null;
+  match_kind: string | null;
+};
+
 export type ParsedEntry =
   | ParsedActivity
   | ParsedFood
@@ -499,6 +528,8 @@ export type ParsedEntry =
   | ParsedOutfitPhoto
   | ParsedCreditCardEntry
   | ParsedInvestmentEntry
+  | ParsedStockTransaction
+  | ParsedHabitEntry
   | ParsedIncome
   | ParsedStatementImport;
 
