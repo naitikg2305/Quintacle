@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import EntryCard from "@/components/EntryCard";
+import { EntryReviewList, useParsedEntries } from "@/components/DropReview";
 import ScribblePad from "@/components/ScribblePad";
 import {
   addKBEntryAsset,
-  ExerciseSet,
   listExerciseNames,
   listMeals,
   listPeople,
@@ -60,7 +59,7 @@ import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
 import { EmptyState, PageHeader, Panel } from "@/components/ui/Panel";
 import { cn } from "@/lib/cn";
-import { BLANK, commitEntry, graphIdFor, linkBatchAsEvent } from "@/lib/entries";
+import { commitEntry, graphIdFor, linkBatchAsEvent } from "@/lib/entries";
 import { todayIso } from "@/lib/date";
 
 const IMAGE_EXT = ["jpg", "jpeg", "png", "gif", "webp"];
@@ -123,7 +122,10 @@ export default function DropPage() {
   // entry type keeps all of them (see commitEntry).
   const [extraPhotos, setExtraPhotos] = useState<File[]>([]);
   const [extraPreviewUrls, setExtraPreviewUrls] = useState<string[]>([]);
-  const [entries, setEntries] = useState<ParsedEntry[]>([]);
+  // Proposed-entries state + per-entry edit handlers now live in the shared
+  // review hook (components/DropReview.tsx) — same orchestration the chat
+  // scratchpad uses (next-wave §8 chat-drop parity).
+  const { entries, setEntries, addManual, updateEntry, removeEntry, updateSet, addSet, removeSet } = useParsedEntries();
   const [meals, setMeals] = useState<Meal[]>([]);
   const [exerciseNames, setExerciseNames] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -287,45 +289,6 @@ export default function DropPage() {
       setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     setBusy(false);
-  }
-
-  function addManual(type: ParsedEntry["type"]) {
-    setEntries((prev) => [...prev, { ...BLANK[type] }]);
-  }
-
-  function updateEntry(i: number, patch: Partial<ParsedEntry>) {
-    setEntries((prev) => prev.map((e, idx) => (idx === i ? ({ ...e, ...patch } as ParsedEntry) : e)));
-  }
-
-  function removeEntry(i: number) {
-    setEntries((prev) => prev.filter((_, idx) => idx !== i));
-  }
-
-  function updateSet(entryIndex: number, setIndex: number, patch: Partial<ExerciseSet>) {
-    setEntries((prev) =>
-      prev.map((e, idx) => {
-        if (idx !== entryIndex || e.type !== "exercise") return e;
-        return { ...e, sets: e.sets.map((s, si) => (si === setIndex ? { ...s, ...patch } : s)) };
-      })
-    );
-  }
-
-  function addSet(entryIndex: number) {
-    setEntries((prev) =>
-      prev.map((e, idx) =>
-        idx === entryIndex && e.type === "exercise"
-          ? { ...e, sets: [...e.sets, { reps: null, weight: null, weight_unit: "lb", duration_min: null, distance: null, distance_unit: "mi", calories_burned: null }] }
-          : e
-      )
-    );
-  }
-
-  function removeSet(entryIndex: number, setIndex: number) {
-    setEntries((prev) =>
-      prev.map((e, idx) =>
-        idx === entryIndex && e.type === "exercise" ? { ...e, sets: e.sets.filter((_, si) => si !== setIndex) } : e
-      )
-    );
   }
 
   async function saveAll() {
@@ -652,20 +615,16 @@ export default function DropPage() {
       {entries.length > 0 && (
         <Panel title="Review before saving" className={cn("border-line-strong")}>
           <div className="space-y-3">
-            {entries.map((entry, i) => (
-              <EntryCard
-                key={i}
-                entry={entry}
-                index={i}
-                meals={meals}
-                exerciseNames={exerciseNames}
-                onUpdate={updateEntry}
-                onRemove={removeEntry}
-                onUpdateSet={updateSet}
-                onAddSet={addSet}
-                onRemoveSet={removeSet}
-              />
-            ))}
+            <EntryReviewList
+              entries={entries}
+              meals={meals}
+              exerciseNames={exerciseNames}
+              onUpdate={updateEntry}
+              onRemove={removeEntry}
+              onUpdateSet={updateSet}
+              onAddSet={addSet}
+              onRemoveSet={removeSet}
+            />
             <Button variant="primary" className="w-full" onClick={saveAll} disabled={busy}>
               Save {entries.length} entr{entries.length === 1 ? "y" : "ies"}
               {saveToJournal && text.trim() ? " + journal" : ""}

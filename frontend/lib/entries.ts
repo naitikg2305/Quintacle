@@ -206,6 +206,21 @@ export async function linkBatchAsEvent(members: (string | null)[], date: string)
   }
 }
 
+// The chat scratchpad's Save (next-wave §8 chat-drop parity): the same
+// per-entry commits + same-event linking as Drop's saveAll, minus everything
+// file-bound (assets, journal append, face tagging, keep-adding sessions —
+// those stay Drop-page concerns; the scratchpad lane is text-only by
+// construction). Returns the non-blocking event-link warning, if any, for
+// the caller's status line — the entries themselves are already saved.
+export async function commitTextEntries(date: string, entries: ParsedEntry[]): Promise<{ warning: string | null }> {
+  const eventMembers: (string | null)[] = [];
+  for (const entry of entries) {
+    const result = await commitEntry(date, entry, []);
+    eventMembers.push(graphIdFor(entry, result));
+  }
+  return { warning: await linkBatchAsEvent(eventMembers, date) };
+}
+
 // Shared by the Journal page's nightly dump and the general Drop page — both
 // ultimately produce the same ParsedEntry union (parse_journal_dump now
 // covers finance/kb_entry too), so both commit through the exact same logic.
