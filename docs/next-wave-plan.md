@@ -580,6 +580,20 @@ carrying the endeavor dimension.
   hydrated into context.
 - **Home-page regroup**: Me · Life (Daily Log, PD, Organisation, People) ·
   Productivity (Career, Projects, Knowledge) · Fun.
+  - **BUILT 2026-10-20** (worktree agent, home-regroup lane; `app/page.tsx`
+    + `components/AppShell.tsx` only — presentation, no routes changed).
+    Home: greeting/stats kept; **Me** = two small pills at top (Me →
+    browse-at-`Me/`, Profile); Chat stays above the clusters as the big
+    primary tile (2-of-3 cols, Browse beside it); then three Panels —
+    **Life** (Journal, Calendar, Todos, Dashboard, Wardrobe, Finance, Home,
+    Documents, People), **Productivity** (Career/Projects/Knowledge as
+    browse-at-root tiles, Stocks, Goals calendar → `/day` Habits tab),
+    **Fun** (Travel, Gallery). Folder tiles reuse the existing
+    `/kb/browse?path=` surface — no new pages. Nav mirrored by splitting
+    the sidebar's Life group: Core · Life · Productivity (Stocks) · Fun
+    (Travel, Gallery) · Tools; phone bottom tabs untouched, the More sheet
+    flattens all four groups. Phone: tile grids are `grid-cols-2` (3 cols
+    only ≥lg), blurbs hide below `sm`, hero row stacks to one column.
 - **Clickable deep links**: chat answers link into notes and their assets.
 - **Add-to-scratchpad on chat TEXT output**: drafted CSVs/itineraries become
   files in the tray — one funnel (images got the button in §9).
