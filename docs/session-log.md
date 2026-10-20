@@ -3,6 +3,42 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-20 — §8 scratchpad-parity lane: shared drop review + chat scratchpad through /drop (worktree agent)
+
+One of three parallel §8 lanes, built on `redone-UI` at `36fa600`. Frontend
+only — `core/` untouched by design (verified: empty diff; suite failures are
+pre-existing in this environment and identical on the untouched main
+checkout: 446 passed / 9 skipped / 7 failed in `test_retrieval.py` +
+`test_chat_context.py`, same set either way). `tsc --noEmit` 0 errors,
+eslint identical to baseline (41 problems, all pre-existing), `npm run
+build` green.
+
+- **`components/DropReview.tsx` (new)** — the Drop page's review
+  orchestration, extracted verbatim: `useParsedEntries()` (entries state +
+  updateEntry/removeEntry/updateSet/addSet/removeSet/addManual) and the
+  presentational `<EntryReviewList>` (the mapped-EntryCard block). Both
+  deliberately generic over the ParsedEntry union — the parallel drop-types
+  lane adds union members + EntryCard cases without touching this file.
+- **`lib/entries.ts#commitTextEntries(date, entries)`** — the text-only
+  commit loop (per-entry `commitEntry(date, entry, [])`, `graphIdFor`
+  collection, `linkBatchAsEvent`), returns the non-blocking event-link
+  warning. Drop's own saveAll (assets/journal/faces/sessions) untouched.
+- **Drop page** — mechanical swap onto the hook + list; zero behavior
+  change (saveAll, journal append, face tagging, keep-adding sessions,
+  statement import, redo-with-cloud, provider chip byte-identical).
+- **Chat scratchpad (app/kb/page.tsx), additive** — untargeted "Sort with
+  AI" now routes through the SAME `proposeDrop` /drop text lane: proposals
+  land as normal review cards in the scratchpad column, "Save N entries"
+  commits via commitTextEntries; reference-date input above Sort; provider
+  chip + step-back "Redo with cloud ↻" (re-sends the ORIGINAL scratchpad
+  snapshot, replaces proposals). Chat messages are never scanned. Kept:
+  target-note Update-with-AI (sortKBEntry merge — the KB suggestion panel
+  now serves ONLY that path, plus the generate-image lane, which stays
+  exclusively on sortKBEntry → push() so the image can attach), the four
+  suggesters, record-that.
+- Commits: `8f01bed` (extraction + swap), `1183115` (scratchpad wiring),
+  plus this docs commit. Not pushed (lane rule).
+
 ## 2026-10-19 — Chat-context wave: _kb_context rebuilt on retrieval, topic hydration, transcripts lane, "record that" (§3 decision 2 + §4, worktree agent)
 
 The last piece of the retrieval/conversational wave, built on `redone-UI`

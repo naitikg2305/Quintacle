@@ -417,6 +417,24 @@ First prod-testing session surfaced these; all decided same day:
   stops being KB-note-only and routes through THE SAME `/drop` text lane —
   every type drop handles, same review gate, same commit endpoints.
   Chat messages themselves are never scanned ("only the scratchpad").
+  - **BUILT 2026-10-20** (worktree agent, scratchpad-parity lane). The Drop
+    page's review orchestration is extracted into shared
+    `frontend/components/DropReview.tsx` (`useParsedEntries()` hook +
+    `<EntryReviewList>`, moved verbatim — both generic over the whole
+    ParsedEntry union, so new drop types are additive) and
+    `lib/entries.ts#commitTextEntries` (the text-only commit loop: per-entry
+    `commitEntry` + `graphIdFor` + `linkBatchAsEvent`; Drop's own saveAll
+    untouched). Untargeted scratchpad "Sort with AI" calls `proposeDrop`
+    (text-only) with a reference-date input, renders the same review cards
+    in the scratchpad column, and "Save N entries" commits through the same
+    endpoints with same-event linking; provider chip + step-back "Redo with
+    cloud ↻" copied from Drop. Kept as-is by decision: target-note
+    Update-with-AI (sortKBEntry merge), the meal/outfit/grooming/workout
+    suggesters, record-that, and generate-image (stays exclusively on the
+    sortKBEntry → push() lane, which also still serves a pending generated
+    image without a target so push() can attach it). A single kb_entry
+    proposal from /drop renders as a normal review card; the old KB
+    suggestion panel serves the target-note path only.
 - **Stock ledger from both surfaces**: `stock:` prefix (and cheap natural
   parse) proposes a real ledger transaction (review → POST
   /stocks/transactions); the old static investment-entry lane retires.
