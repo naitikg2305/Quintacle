@@ -343,8 +343,10 @@ def rebuild_sqlite_index(
     for category in store.all_categories_for("activity"):
         for e in store.all_entries("activity", category):
             conn.execute(
-                "INSERT INTO activity_log (date, category, description, hours) VALUES (?, ?, ?, ?)",
-                (e["date"], e.get("category", category), e.get("description", ""), e.get("hours", 0)),
+                "INSERT INTO activity_log (date, category, description, hours, source) VALUES (?, ?, ?, ?, ?)",
+                # `source` survives rebuilds via frontmatter — the work-log
+                # importer's dedupe-by-tag (worklog.py) depends on it.
+                (e["date"], e.get("category", category), e.get("description", ""), e.get("hours", 0), e.get("source", "")),
             )
             n += 1
     counts["activity_log"] = n
