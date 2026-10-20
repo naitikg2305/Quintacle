@@ -409,5 +409,30 @@ to the mounted drive (auto-detects a single /run/media mount), with a
 
 ---
 
-## 8. (next topic as it comes to mind)
+## 8. Chat–drop parity, versioned goals, the goals calendar (2026-10-20)
+
+First prod-testing session surfaced these; all decided same day:
+
+- **Chat scratchpad = full drop parity.** The scratchpad's "Sort with AI"
+  stops being KB-note-only and routes through THE SAME `/drop` text lane —
+  every type drop handles, same review gate, same commit endpoints.
+  Chat messages themselves are never scanned ("only the scratchpad").
+- **Stock ledger from both surfaces**: `stock:` prefix (and cheap natural
+  parse) proposes a real ledger transaction (review → POST
+  /stocks/transactions); the old static investment-entry lane retires.
+- **Budget lines / habits / goals set by drop or chat** (`budget:`,
+  `habit:`, `goal:` + classification): "eating out $200/month" parses into
+  the habit shape, review-gated.
+- **Versioned habits.** Habits/budget lines become effective-dated
+  versions: an edit takes effect NEXT week (Monday-anchored; current week
+  finishes under the old target); past weeks are always judged against the
+  version in force then; delete = end-date, history preserved.
+- **Goals calendar (third calendar view).** Habits render like recurring
+  weekly meetings: grid colored met/missed/in-progress, week click drills
+  into per-habit target-in-force vs actual vs pace. All arithmetic in code.
+- **The separate Habits page retires** — "we don't even need the goals page
+  separately... it reduces a page." Define/update via drop/chat; track via
+  the calendar; small edit/end affordances live in the week drill-in.
+
+## 9. (next topic as it comes to mind)
 
