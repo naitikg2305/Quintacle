@@ -88,6 +88,72 @@ function MarkdownLink({ href, children }: { href?: string; children?: ReactNode 
   return <span>{children}</span>;
 }
 
+// --- chat TEXT → a file in the scratchpad tray (next-wave §10) --------------
+// Images/PDFs got this bridge in §9; this is the same funnel for drafted
+// text: the message becomes a real File among the pending drop attachments
+// and flows through /drop like any dropped file.
+
+// Fenced-block languages that name a real text-file format — a block tagged
+// with one of these gets attached as that kind of file (contents only, no
+// fence), so a drafted CSV lands in the tray as a usable .csv.
+const LANG_EXT: Record<string, string> = {
+  csv: "csv",
+  tsv: "tsv",
+  json: "json",
+  yaml: "yaml",
+  yml: "yaml",
+  xml: "xml",
+  html: "html",
+  css: "css",
+  markdown: "md",
+  md: "md",
+  text: "txt",
+  txt: "txt",
+  python: "py",
+  py: "py",
+  javascript: "js",
+  js: "js",
+  typescript: "ts",
+  ts: "ts",
+  sql: "sql",
+  sh: "sh",
+  bash: "sh",
+};
+
+type FencedBlock = { lang: string; ext: string; body: string; whole: boolean };
+
+// Fenced code blocks with a known text-format language, parsed from the raw
+// markdown (NOT the rendered tree — rehype-highlight has already shredded
+// that into spans). `whole` marks a message that IS exactly one block.
+function fencedBlocks(trimmedText: string): FencedBlock[] {
+  const out: FencedBlock[] = [];
+  const re = /```([^\n]*)\n([\s\S]*?)```/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(trimmedText))) {
+    const ext = LANG_EXT[m[1].trim().toLowerCase()];
+    if (!ext) continue;
+    out.push({
+      lang: m[1].trim().toLowerCase(),
+      ext,
+      body: m[2].replace(/\n$/, ""),
+      whole: m.index === 0 && m.index + m[0].length === trimmedText.length,
+    });
+  }
+  return out;
+}
+
+// The whole message as a File: default .md with the full text — unless the
+// message IS one fenced block with a known format, then only the block's
+// contents with that extension.
+function messageToFile(text: string): File {
+  const t = text.trim();
+  const blocks = fencedBlocks(t);
+  if (blocks.length === 1 && blocks[0].whole) {
+    return new File([blocks[0].body], `chat-draft.${blocks[0].ext}`, { type: "text/plain" });
+  }
+  return new File([t], "chat-draft.md", { type: "text/markdown" });
+}
+
 // Rebuild the File behind a message's image/PDF block so a photo DISCUSSED in
 // chat can hop into the scratchpad's pending drop attachments (next-wave §9)
 // and flow through /drop like any dropped file.
@@ -167,6 +233,10 @@ export default function ChatLog({
       {messages.map((m, i) => {
         const blocks = typeof m.content === "string" ? [] : m.content.filter((b) => b.type !== "text");
         const text = chatMessageText(m.content);
+        // Fenced blocks with a known text format, for the per-block attach
+        // buttons — a message that IS one block is covered by "attach as
+        // file" (which then uses the block's format), so it gets no extra button.
+        const codeBlocks = m.role === "assistant" && onAddAttachmentToDrop ? fencedBlocks(text.trim()).filter((b) => !b.whole) : [];
         return (
           <div key={i} className={m.role === "user" ? "text-right" : ""}>
             <div
@@ -186,7 +256,7 @@ export default function ChatLog({
               ) : (
                 <p className="whitespace-pre-wrap">{text}</p>
               )}
-              {m.role === "assistant" && (m.model || onAddToScratchpad) && (
+              {m.role === "assistant" && (m.model || onAddToScratchpad || onAddAttachmentToDrop) && (
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
                   {m.model && (
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted" title="Which model wrote this answer">
@@ -198,6 +268,25 @@ export default function ChatLog({
                       → add to scratchpad
                     </button>
                   )}
+                  {onAddAttachmentToDrop && text.trim() && (
+                    <button
+                      onClick={() => onAddAttachmentToDrop(messageToFile(text))}
+                      title="Turn this answer into a file in the scratchpad's attachment tray — Sort with AI sends it through the drop lane like any dropped file"
+                      className="text-xs text-accent/80 hover:text-accent hover:underline"
+                    >
+                      → attach as file
+                    </button>
+                  )}
+                  {codeBlocks.map((b, bi) => (
+                    <button
+                      key={bi}
+                      onClick={() => onAddAttachmentToDrop!(new File([b.body], `chat-draft.${b.ext}`, { type: "text/plain" }))}
+                      title={`Attach only this ${b.lang} block as a .${b.ext} file in the scratchpad's attachment tray`}
+                      className="text-xs text-accent/80 hover:text-accent hover:underline"
+                    >
+                      → attach .{b.ext} block
+                    </button>
+                  ))}
                   {onEscalate && !!escalateModels?.length && m.model?.startsWith("local:") && (
                     <button
                       onClick={() => setEscalatingIndex(escalatingIndex === i ? null : i)}
