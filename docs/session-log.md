@@ -3,6 +3,31 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-20 — Home-page regroup: Me · Life · Productivity · Fun (§10, worktree agent)
+
+Built on `redone-UI` at `61adbc4`. Presentation only, two files:
+`frontend/app/page.tsx` and `frontend/components/AppShell.tsx` — no routes,
+folders or backend touched (suite 488/0/0 trivially green; `tsc --noEmit`
+0 errors; eslint no new findings; `npm run build` green).
+
+- **Home**: greeting + todo stats kept. **Me** surfaces small at top — two
+  pills beside the greeting: *Me* (browse surface at `Me/`) and *Profile*.
+  **Chat stays the primary tile**, above the clusters (hero row, 2 of 3
+  columns, Browse beside it). Below, three Panels in the app's heading
+  idiom: **Life** = Journal · Calendar · Todos · Dashboard · Wardrobe ·
+  Finance · Home · Documents · People; **Productivity** = Career ·
+  Projects · Knowledge (all three as `/kb/browse?path=` tiles — the
+  existing surface, no new pages) · Stocks · Goals calendar (→ `/day`,
+  where §8's Habits tab lives); **Fun** = Travel · Gallery.
+- **Nav**: the sidebar already had sections, so its Life group split the
+  same way — Core · Life · Productivity (Stocks) · Fun (Travel, Gallery) ·
+  Tools. Phone bottom tabs (Core + More) untouched; the More sheet
+  flattens Life + Productivity + Fun + Tools.
+- **Phone stacking**: cluster grids are `grid-cols-2` (3 columns only at
+  `lg`), tile blurbs hide below `sm`, the Chat/Browse hero collapses to
+  one column below `sm`, and the Me pills wrap under the greeting.
+- Docs: dated BUILT sub-note under §10's home-page-regroup bullet.
+
 ## 2026-10-20 — Chat absorbs drop: the Drop page retires (§9, worktree agent)
 
 Built on `redone-UI` at `5c568b5`. Frontend-only — zero `core/` changes
