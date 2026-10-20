@@ -42,18 +42,25 @@ const CORE: NavItem[] = [
   { href: "/day", label: "Calendar", icon: CalendarDays },
 ];
 
+// §10 home-page regroup, mirrored here: Life · Productivity · Fun.
 const LIFE: NavItem[] = [
   { href: "/journal", label: "Journal", icon: BookOpen },
   { href: "/todos", label: "Todos", icon: ListChecks },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/wardrobe", label: "Wardrobe", icon: Shirt },
   { href: "/home", label: "Home", icon: House },
-  { href: "/travel", label: "Travel", icon: Plane },
   { href: "/finance", label: "Finance", icon: Wallet },
-  { href: "/stocks", label: "Stocks", icon: TrendingUp },
   { href: "/people", label: "People", icon: Users },
-  { href: "/gallery", label: "Gallery", icon: ImageIcon },
   { href: "/profile", label: "Profile", icon: User },
+];
+
+const PRODUCTIVITY: NavItem[] = [
+  { href: "/stocks", label: "Stocks", icon: TrendingUp },
+];
+
+const FUN: NavItem[] = [
+  { href: "/travel", label: "Travel", icon: Plane },
+  { href: "/gallery", label: "Gallery", icon: ImageIcon },
 ];
 
 const TOOLS: NavItem[] = [
@@ -154,7 +161,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     setMoreOpen(false);
   }, [path]);
 
-  const moreActive = [...LIFE, ...TOOLS].some((i) => isActive(i, path));
+  const moreActive = [...LIFE, ...PRODUCTIVITY, ...FUN, ...TOOLS].some((i) => isActive(i, path));
 
   return (
     <div className="min-h-dvh">
@@ -166,6 +173,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <nav className="flex-1 overflow-y-auto">
           <SidebarGroup label="Core" items={CORE} path={path} />
           <SidebarGroup label="Life" items={LIFE} path={path} />
+          <SidebarGroup label="Productivity" items={PRODUCTIVITY} path={path} />
+          <SidebarGroup label="Fun" items={FUN} path={path} />
           <SidebarGroup label="Tools" items={TOOLS} path={path} />
         </nav>
         <StatusReadout className="border-t border-line px-3 pt-3" />
@@ -205,7 +214,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
       <BottomSheet open={moreOpen} onClose={() => setMoreOpen(false)} title="All sections">
         <div className="grid grid-cols-3 gap-2">
-          {[...LIFE, ...TOOLS].map((item) => (
+          {[...LIFE, ...PRODUCTIVITY, ...FUN, ...TOOLS].map((item) => (
             <Link
               key={item.href}
               href={item.href}
