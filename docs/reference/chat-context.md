@@ -11,6 +11,45 @@ deterministically per turn by `_system_text(store, use_kb, folder, slug,
 messages)` — the same assembly for every provider, so escalating to a cloud
 model transfers the identical context.
 
+## Assembly order (extended 2026-10-20 — next-wave-plan §10)
+
+Code-derived from `chat._system_text` + the new
+`core/quintacle_core/nodes/kb/day_context.py`. The system text is now, in
+order:
+
+1. **The Now line** — `Now: Tuesday 2026-10-20, 7:45 PM (America/New_York).`
+   (`chat._now_line`, Eastern via clock.py). ALWAYS first, for every
+   provider; with `use_kb=false` it's the entire system text (chat knows now
+   even with the KB off — `_system_text` no longer returns None).
+2. **`## About the user`** — `day_context.me_context(store)`: every note in
+   the KB folder `Me` (capped ~3,000 chars) + live facts computed from SQL
+   at ask-time (strength PRs from `exercise_sets.sets_json` via `json_each`,
+   this month's income/spend/savings rate from `income_log`/`expense_log`,
+   latest `body_stats` per metric), each with an as-of date and a
+   never-recalculate instruction line. Present in ALL scopes (the Me lane is
+   §10's "chat always hydrates it" decision); both halves empty → the block
+   is omitted entirely. Never stored — recomputed per turn.
+3. **The scope's KB block** — unchanged mechanics (retrieval / topic
+   hydration / folder dump, see below), with `_LINK_RULES` now appended to
+   the grounding rules: the model links notes as
+   `[Title](/kb/browse?path=<folder>&open=<slug>)` and file assets as
+   `[name](/kb/asset?folder=<folder>&path=<asset path>)` — the frontend's
+   real routes (browse deep-link params; `kbAssetUrl` shape), only for
+   ids/paths already present in context.
+4. **Day bundles** — when `day_context.detect_dates` finds date words in the
+   newest user message (explicit forms + relative words, year inference =
+   most recent past occurrence, `today = clock.today()`), up to 3 dates each
+   hydrate `## <date> — that day's record`: the journal (incl. auto
+   photo-journal who-with lines), every SQLite log row as its
+   already-computed one-liner (`retrieval.log_row_title_and_summary`), todos
+   due/completed, and the day's events + 1-hop people/place edge labels —
+   capped ~6,000 chars/day, truncated last-section-first. Pure code, zero
+   model calls. Unscoped + note-scoped chats only; the folder-only scope
+   keeps its "can't cite outside the folder" contract (no bundles there).
+
+Every §10 addition degrades silently (stores not wired / SQL error → the
+section drops), never a 500. Tests: `core/tests/test_day_context.py`.
+
 ## The three scopes
 
 | Scope | Context |

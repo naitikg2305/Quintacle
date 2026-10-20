@@ -3,6 +3,44 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-20 — Time grounding + the Me lane in chat context (§10, worktree agent)
+
+Built on `redone-UI` at `61adbc4`. Backend-only: `nodes/kb/chat.py` context
+assembly + the new `nodes/kb/day_context.py` + `tests/test_day_context.py`
+(28 new). Suite 516 passed / 0 skipped / 0 failed (baseline 488). Three
+parallel agents own `nodes/logs/` and the frontend halves — untouched here.
+
+- **Chat always knows now**: `_system_text` opens with a deterministic
+  `Now: <weekday> <date>, <h:mm AM/PM> (America/New_York).` line (clock.py),
+  for EVERY provider — and it's the whole system text when the KB is off
+  (`use_kb=false` no longer returns None).
+- **Date words resolve in code** (`day_context.detect_dates`): explicit
+  ("April 14", "4/14", "2026-04-14", "oct 7th", "14th of April",
+  "Oct 7, 2024") and relative ("today", "yesterday", "day before
+  yesterday", "tomorrow", "last tuesday", "3 days ago", "two weeks ago",
+  "last week" → that Mon–Sun) — year inference picks the most recent past
+  occurrence (Feb 29 walks back to the last real leap day). Up to 3 dates
+  hydrate `## <date> — that day's record` blocks (`day_context.day_bundle`:
+  journal incl. photo who-with lines, log rows as
+  `retrieval.log_row_title_and_summary` one-liners, todos, events + 1-hop
+  people/place edge labels; ~6,000-char cap) alongside normal retrieval —
+  unscoped + note-scoped chats; folder scope keeps its contract. Zero model
+  calls; shares the edges-table queries style with day_bundle.py, no MCP
+  imports.
+- **Me hydration, always** (`day_context.me_context`): curated = all notes
+  in KB folder `Me` (~3,000-char cap); computed LIVE from SQL at ask-time,
+  never stored — strength PRs (max weight per exercise via `json_each` over
+  `sets_json`), this month's income/spend/savings rate, latest body stat per
+  metric, all finished one-liners with as-of dates. Prepended under
+  `## About the user` with a never-recalculate instruction; empty halves
+  omit silently (block absent on a fresh store).
+- **Deep-link instruction** (`chat._LINK_RULES`, the system-text half; render
+  is the frontend agent's lane): notes →
+  `[Title](/kb/browse?path=<folder>&open=<slug>)`, files →
+  `[name](/kb/asset?folder=<folder>&path=<asset path>)` — the app's real
+  routes, only for ids/paths already in context.
+- Docs: §10 BUILT sub-notes, chat-context.md assembly-order section.
+
 ## 2026-10-20 — Chat absorbs drop: the Drop page retires (§9, worktree agent)
 
 Built on `redone-UI` at `5c568b5`. Frontend-only — zero `core/` changes
