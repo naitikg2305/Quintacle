@@ -18,10 +18,15 @@ import {
   generateImage,
   KBSuggestion,
   listChatModels,
+  listExerciseNames,
+  listMeals,
+  Meal,
   ParsedGroomingRoutineComposition,
   ParsedMealComposition,
   ParsedOutfitComposition,
   ParsedWorkoutRoutine,
+  proposeDrop,
+  ProviderUsed,
   pushKBEntry,
   pushKBEntryWithAsset,
   readKBEntry,
@@ -35,6 +40,9 @@ import {
   suggestOutfitComposition,
   suggestWorkoutRoutine,
 } from "@/lib/api";
+import { EntryReviewList, useParsedEntries } from "@/components/DropReview";
+import { commitTextEntries } from "@/lib/entries";
+import { todayIso } from "@/lib/date";
 import MealCompositionEditor from "@/components/MealCompositionEditor";
 import OutfitEditor from "@/components/OutfitEditor";
 import GroomingRoutineEditor from "@/components/GroomingRoutineEditor";
@@ -123,6 +131,31 @@ function KBPageInner() {
   // "Record that" review state — the proposed dated append, edited here
   // before the explicit save (propose→review→Save; nothing writes until then).
   const [recordProposal, setRecordProposal] = useState<RecordThatProposal | null>(null);
+
+  // Chat-drop parity (next-wave §8): the untargeted "Sort with AI" routes the
+  // scratchpad through THE SAME /drop text lane the Drop page uses — same
+  // proposals, same review cards, same commit endpoints. Chat messages are
+  // never scanned ("only the scratchpad"); only this button, only this text.
+  const { entries, setEntries, updateEntry, removeEntry, updateSet, addSet, removeSet } = useParsedEntries();
+  const [meals, setMeals] = useState<Meal[]>([]);
+  const [exerciseNames, setExerciseNames] = useState<string[]>([]);
+  // Reference date for "yesterday" etc. in the scratchpad text — same role
+  // as the Drop page's date picker, and the fallback day entries save under.
+  const [dropDate, setDropDate] = useState(todayIso());
+  // Local-first ingest bookkeeping, same pattern as the Drop page: who served
+  // the last sort plus a snapshot of the ORIGINAL text — "Redo with cloud"
+  // re-sends that snapshot (a step back, never re-prompting over the local
+  // output) and REPLACES the current proposals.
+  const [providerUsed, setProviderUsed] = useState<ProviderUsed>(null);
+  const [lastSort, setLastSort] = useState<{ text: string; date: string } | null>(null);
+
+  // The entity registries EntryCard grounds its pickers in — same loads as
+  // the Drop page, so a scratchpad "had the usual burrito bowl" review card
+  // offers the same real meal presets drop's would.
+  useEffect(() => {
+    listMeals().then(setMeals);
+    listExerciseNames().then(setExerciseNames);
+  }, []);
 
   useEffect(() => {
     listChatModels().then((list) => {
@@ -270,17 +303,85 @@ function KBPageInner() {
 
   async function sortWithAI() {
     if (!scratchpad.trim()) return;
+    // Two lanes. A TARGETED sort (continuing on a note) stays the merge-update
+    // sortKBEntry suggestion panel — that path is about rewriting ONE note.
+    // Generate-image also stays exclusively on this old sortKBEntry → push()
+    // lane (decided): a pending generated image needs the KB-suggestion panel
+    // so push() can attach it the way a dropped photo would be.
+    if (target || generatedImageFile) {
+      setBusy(true);
+      setStatus(target ? `updating "${target.title}"...` : "sorting...");
+      try {
+        setSuggestion(await sortKBEntry(scratchpad, target ? { folder: target.folder, slug: target.slug } : undefined));
+        setMealSuggestion(null);
+        setOutfitSuggestion(null);
+        setGroomingSuggestion(null);
+        setWorkoutSuggestion(null);
+        setStatus(null);
+      } catch (e) {
+        setStatus(`sort failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      setBusy(false);
+      return;
+    }
+    // No target: full drop parity — the same /drop text lane as the Drop page
+    // (prefix routing, journal-dump parsing, every type drop handles). A single
+    // kb_entry proposal just renders as a normal review card like any other
+    // entry; the KB suggestion panel above serves the target-note path only.
+    // Nothing is written until Save.
     setBusy(true);
-    setStatus(target ? `updating "${target.title}"...` : "sorting...");
+    setStatus("sorting...");
     try {
-      setSuggestion(await sortKBEntry(scratchpad, target ? { folder: target.folder, slug: target.slug } : undefined));
+      const { entries: proposed, provider_used } = await proposeDrop(scratchpad, null, false, null, dropDate);
+      setEntries((prev) => [...prev, ...proposed]);
+      setProviderUsed(provider_used);
+      setLastSort({ text: scratchpad, date: dropDate });
+      setSuggestion(null);
       setMealSuggestion(null);
       setOutfitSuggestion(null);
       setGroomingSuggestion(null);
       setWorkoutSuggestion(null);
-      setStatus(null);
+      setStatus(`${proposed.length} entr${proposed.length === 1 ? "y" : "ies"} proposed — review below`);
     } catch (e) {
       setStatus(`sort failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setBusy(false);
+  }
+
+  // The step-back redo, same pattern as the Drop page: re-runs the
+  // classification from the ORIGINAL scratchpad snapshot with provider=cloud,
+  // replacing (not appending to) the current proposals.
+  async function redoWithCloud() {
+    if (!lastSort) return;
+    setBusy(true);
+    setStatus("redoing with cloud...");
+    try {
+      const { entries: proposed, provider_used } = await proposeDrop(lastSort.text, null, false, null, lastSort.date, "cloud");
+      setEntries(proposed);
+      setProviderUsed(provider_used);
+      setStatus(`${proposed.length} entr${proposed.length === 1 ? "y" : "ies"} re-proposed via cloud — review below`);
+    } catch (e) {
+      setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setBusy(false);
+  }
+
+  // The scratchpad's Save: same per-entry commits + same-event linking as
+  // Drop's (commitTextEntries wraps the shared loop), text-only by
+  // construction — no files ride along from here.
+  async function saveEntries() {
+    if (entries.length === 0) return;
+    setBusy(true);
+    setStatus("saving...");
+    try {
+      const { warning } = await commitTextEntries(dropDate, entries);
+      setStatus(warning ?? `saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
+      setScratchpad("");
+      setEntries([]);
+      setProviderUsed(null);
+      setLastSort(null);
+    } catch (e) {
+      setStatus(`save failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     setBusy(false);
   }
@@ -781,6 +882,16 @@ function KBPageInner() {
             </div>
           )}
           <div className="mt-2 space-y-2">
+            <label className="flex items-center gap-2">
+              <span className={label}>Date</span>
+              <Input
+                type="date"
+                value={dropDate}
+                onChange={(e) => setDropDate(e.target.value)}
+                className="w-auto py-1 text-xs"
+                title='Reference date for "yesterday" etc. in the scratchpad — also the day entries without their own date save under'
+              />
+            </label>
             <Button variant="primary" className="w-full" onClick={sortWithAI} disabled={busy || !scratchpad.trim()}>
               <Sparkles size={16} /> {target ? "Update with AI" : "Sort with AI"}
             </Button>
@@ -801,6 +912,26 @@ function KBPageInner() {
               </Button>
             </div>
           </div>
+
+          {/* Drop-parity review: the proposed entries from the untargeted
+              sort, same cards + same commit endpoints as the Drop page. */}
+          {entries.length > 0 && (
+            <div className="mt-3 space-y-3 border-t border-line pt-3">
+              <EntryReviewList
+                entries={entries}
+                meals={meals}
+                exerciseNames={exerciseNames}
+                onUpdate={updateEntry}
+                onRemove={removeEntry}
+                onUpdateSet={updateSet}
+                onAddSet={addSet}
+                onRemoveSet={removeSet}
+              />
+              <Button variant="primary" className="w-full" onClick={saveEntries} disabled={busy}>
+                Save {entries.length} entr{entries.length === 1 ? "y" : "ies"}
+              </Button>
+            </div>
+          )}
 
           {mealSuggestion && (
             <div className="mt-3 space-y-2 border-t border-line pt-3">
@@ -944,7 +1075,26 @@ function KBPageInner() {
             </div>
           )}
 
-          {status && <p className="mt-2 text-sm text-muted">{status}</p>}
+          {status && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted">
+              <span>{status}</span>
+              {providerUsed && entries.length > 0 && (
+                <span className="rounded-full border border-line px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em]">
+                  {providerUsed === "local" ? "sorted locally" : providerUsed === "cloud" ? "sorted via cloud" : "sorted locally + cloud"}
+                </span>
+              )}
+              {providerUsed === "local" && entries.length > 0 && (
+                <button
+                  onClick={redoWithCloud}
+                  disabled={busy}
+                  title="Not happy with the local sort? Re-run from the original scratchpad text on the cloud API — replaces these proposals."
+                  className="text-xs text-accent hover:underline disabled:opacity-40"
+                >
+                  Redo with cloud ↻
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
