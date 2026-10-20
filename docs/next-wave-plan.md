@@ -674,3 +674,47 @@ carrying the endeavor dimension.
     highlighted render tree is never scraped).
 
 **Dumped for now:** STL-grade artifact generation (future agentic-tool wave).
+
+## 11. The seamless agent (2026-10-20, planned — not yet fired)
+
+**The ask:** "I talk to my seamless agent, it does stuff, and I can keep
+talking like it never leaves even after navigating me to a certain page."
+
+**Design (agreed):**
+- **Resident companion shell**: the conversation lifts out of /kb into the
+  AppShell layer — a persistent dock above the router that survives all
+  navigation; /kb stays as the full-screen view of the SAME session.
+  `navigate(route)` becomes a tool; the agent is told what page the user is
+  on. §4 semantics unchanged: alive while in use, archives on close, no
+  thread list.
+- **Loop runner**: backend agent endpoint — model + tool schemas + capped
+  loop (~6 turns); Ollama tool-calling locally, Bedrock/Anthropic tool use
+  on escalation (same runner, provider-swapped mid-conversation per the
+  context-transfer principle). Every call code-validated before execution;
+  every write through the MCP-grade WriteSession (one ledger entry, staged
+  undo). Local handles short chains; hard/long chains = user-chosen cloud.
+- **Action-chip UX**: each tool action renders in the conversation as a
+  chip — "✓ lamb bowl logged (undo)" — wired to its ledger id.
+- **Two-class tool contract (the principled line):**
+  - *Internal + undoable* (logs, notes, todos, navigation): auto-commit +
+    undo chip. The ledger machinery earns auto-commit.
+  - *Outward + irreversible* (call, SMS, email — anything leaving the
+    machine): agent PREPARES (drafts, resolves the number via the People
+    graph — registries, never guessed), then one-tap confirm. The only
+    place propose→review survives in seamless mode: the blast radius you
+    can't take back.
+- **Tool tiers**: v1 internal (retrieve, read note, day bundle, structured
+  writes, record-append, navigate, positions, habit status; NEVER vault or
+  bulk deletes; statement import keeps its review card) → v2 device layer
+  (phone: termux-api — telephony-call/sms-send/contact-list/notification,
+  straight from the Termux backend; desktop: KDE Connect bridge + xdg-open)
+  → v3 accounts (SMTP send with creds in the Vault — its first real
+  consumer; CalDAV calendar; maybe IMAP read) → vN external MCP servers
+  (the tool layer doubles as an MCP client). Entire chain can run with
+  zero external AI — local Jarvis, literally.
+
+**Open (owner to answer before firing):** dock shape (slim bottom bar —
+voice-ready — vs side rail); write contract (pure auto-commit+undo vs a
+soft 3-second confirm tier for new notes); sequencing (build dark behind a
+toggle now vs after the two-week real-use test, which the owner's own
+seamless-mode.md sequencing prefers).
