@@ -29,6 +29,7 @@ from .nodes.drop_router import (
     entry_type_for_image_kind,
     extension,
     extract_finance_from_receipt,
+    looks_like_stock_transaction,
     parse_income_text,
     parse_prefix,
     parse_routine_definition,
@@ -94,10 +95,12 @@ from .nodes.finance.api import (
     get_investment_store,
     parse_statement_text,
 )
-from .nodes.finance.llm import extract_statement_transactions, structure_credit_card, structure_investment
+from .nodes.finance.llm import extract_statement_transactions, structure_credit_card
 from .nodes.finance.statements import STATEMENT_EXTENSIONS, annotate_duplicates, normalize_vision_transactions
 from .nodes.stocks.api import init_store as init_stocks_store, get_stocks_repo, router as stocks_router
+from .nodes.stocks.llm import structure_stock_transaction
 from .nodes.stocks.store import holding_node_id
+from .nodes.logs.habit_llm import structure_habit
 from .nodes.vault.api import init_store as init_vault_store, router as vault_router
 from .perception import perceive_photo
 from .sync import init_sync, router as sync_router
@@ -475,11 +478,21 @@ def create_app() -> FastAPI:
             estimate = structure_credit_card(get_description(), provider=provider)
             entries = [{"type": "credit_card_entry", **estimate.model_dump()}]
             experience_check_text = None
-        elif entry_type == "investment_entry":
-            # Explicit "invest:"/"stock:" prefix — a holding isn't a place or
-            # a person, so no additive Experience/Person check needed.
-            estimate = structure_investment(get_description(), provider=provider)
-            entries = [{"type": "investment_entry", **estimate.model_dump()}]
+        elif entry_type == "stock_transaction":
+            # Explicit "stock:"/"invest:" prefix — §8's ledger lane (the old
+            # static investment_entry lane retired): proposes a real
+            # transaction, review → POST /stocks/transactions. A trade isn't
+            # a place or a person, so no additive Experience check needed.
+            estimate = structure_stock_transaction(get_description(), reference_date, provider=provider)
+            entries = [{"type": "stock_transaction", **estimate.model_dump()}]
+            experience_check_text = None
+        elif entry_type == "habit_entry":
+            # Explicit "habit:"/"goal:"/"budget:" prefix — §8's goals-by-drop
+            # lane: parses into the exact HabitCreate shape, review → POST
+            # /logs/habits (upsert by name). Prefix-only, no natural-
+            # classification gate — a goal is a deliberate statement.
+            estimate = structure_habit(rest, provider=provider)
+            entries = [{"type": "habit_entry", **estimate.model_dump()}]
             experience_check_text = None
         elif entry_type == "ingredient_preset":
             known_ingredient_names = [i["name"] for i in get_logs_repo().list_ingredients()]
@@ -573,6 +586,15 @@ def create_app() -> FastAPI:
             # — type already fixed deterministically; AI only extracts fields.
             parsed = parse_journal_dump(rest, known_meals, reference_date, forced_type=entry_type, known_routines=known_routines, provider=provider)
             entries = [e.model_dump() for e in parsed]
+        elif looks_like_stock_transaction(rest):
+            # §8's "cheap natural parse": unprefixed but unambiguously a stock
+            # trade (deterministic regex gate, drop_router.py) — route to the
+            # same ledger lane the "stock:" prefix uses. parse_journal_dump's
+            # union must NEVER grow a stock type (schema-size limit — see the
+            # drop_router._ReceiptExtraction note).
+            estimate = structure_stock_transaction(rest, reference_date, provider=provider)
+            entries = [{"type": "stock_transaction", **estimate.model_dump()}]
+            experience_check_text = None
         else:
             # No prefix, no file — plain text with no deterministic signal at
             # all. Only path that hits full multi-type AI classification.
