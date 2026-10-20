@@ -434,5 +434,20 @@ First prod-testing session surfaced these; all decided same day:
   separately... it reduces a page." Define/update via drop/chat; track via
   the calendar; small edit/end affordances live in the week drill-in.
 
-## 9. (next topic as it comes to mind)
+## 9. Chat absorbs drop — the Seamless face arrives early (2026-10-20)
+
+**Direction agreed** (same idea as seamless-mode.md's Drop+chat single
+surface, reached independently during testing): once §8's scratchpad
+parity lands, chat IS the drop lane for text — the remaining gap is files.
+Follow-up wave moves drop's file affordances onto the scratchpad
+(attachments through the same multipart /drop call, EXIF/vision
+classification, unknown-faces panel, "Still going" lecture sessions,
+statement review), after which **the drop page retires** — one place to
+retrieve and drop everything, and the natural mouth for the voice plan.
+
+**Gate (owner's own sequencing):** test drop's file flows for real first
+(lecture session, faces, statements) — relocate them knowing what they
+feel like, not blind. Fire after §8 merges + that test pass.
+
+## 10. (next topic as it comes to mind)
 
