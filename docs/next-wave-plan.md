@@ -581,7 +581,28 @@ carrying the endeavor dimension.
 - **Home-page regroup**: Me · Life (Daily Log, PD, Organisation, People) ·
   Productivity (Career, Projects, Knowledge) · Fun.
 - **Clickable deep links**: chat answers link into notes and their assets.
+  - **BUILT 2026-10-20** (chat-frontend lane): `ChatLog.tsx` renders markdown
+    links through one `MarkdownLink` component (react-markdown `components`
+    override — no raw HTML, no new deps). Root-relative hrefs matching a REAL
+    app page (the full `app/**/page.tsx` set, `/vault` deliberately excluded)
+    → Next `<Link>` client-side nav; the note shape is
+    `/kb/browse?path=<folder>&open=<slug>` (what Browse already reads).
+    Backend asset hrefs (`/kb/asset`, `/documents/asset`, `/wardrobe/asset`,
+    `/wardrobe/outfits/asset`, `/grooming/asset`, `/home/asset`) → plain
+    anchor prefixed with `API_BASE` at render time (Capacitor isn't
+    same-origin), target `_blank`. External http(s) → new tab. Everything
+    else (javascript:, data:, `//host`, unknown routes) renders as text.
+    Applies everywhere ChatLog renders (kb chat, folder chat, ReadOnlyChat).
 - **Add-to-scratchpad on chat TEXT output**: drafted CSVs/itineraries become
   files in the tray — one funnel (images got the button in §9).
+  - **BUILT 2026-10-20** (chat-frontend lane): each assistant message gets
+    "→ attach as file" beside §9's image button, reusing the SAME
+    `onAddAttachmentToDrop` → `addFileToDrop` bridge (tray + pane flip to
+    scratch, zero new plumbing in `app/kb/page.tsx`). Whole message →
+    `chat-draft.md`; a message that IS one fenced block with a known text
+    format (csv/tsv/json/yaml/… map in ChatLog's `LANG_EXT`) → only the
+    block's contents as `chat-draft.<ext>`; mixed prose+block messages also
+    get a per-block "→ attach .csv block" button (raw-markdown parse — the
+    highlighted render tree is never scraped).
 
 **Dumped for now:** STL-grade artifact generation (future agentic-tool wave).

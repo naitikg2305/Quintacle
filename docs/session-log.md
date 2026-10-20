@@ -3,6 +3,40 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-20 — §10 chat-frontend lane: deep links + attach-as-file (worktree agent)
+
+Built on `redone-UI` at `61adbc4`. Frontend-only, two files
+(`components/ChatLog.tsx` + the §10 doc notes) — zero `core/` changes, zero
+`app/kb/page.tsx` changes needed (the §9 bridge already did the pane flip).
+`tsc --noEmit` 0 errors; eslint on touched files 0 findings;
+`npm run build` green (all 25 routes); suite 488/0/0 untouched.
+
+- **Clickable deep links in chat answers** (`ChatLog.tsx#MarkdownLink`, wired
+  via react-markdown's `components={{ a }}` — no new dependency, no raw
+  HTML). Root-relative hrefs whose pathname is a real app page become Next
+  `<Link>`s (client-side nav); the note deep-link shape is
+  `/kb/browse?path=<folder>&open=<slug>`, exactly what Browse reads on
+  mount. Hrefs to the backend file endpoints (`/kb/asset` and the other
+  five `*AssetUrl` paths) become plain anchors prefixed with `API_BASE` at
+  render time (the Capacitor build is NOT same-origin) opening in a new
+  tab. External http(s) stays a new-tab anchor. Anything else — other
+  schemes, protocol-relative `//host`, routes that don't exist, `/vault` —
+  renders as plain text. NOTE for merge with the backend §10 lane: chat.py's
+  system text should instruct exactly these two shapes.
+- **Chat TEXT → scratchpad file**: assistant messages get "→ attach as
+  file" next to §9's image button, reusing the same
+  `onAddAttachmentToDrop`/`addFileToDrop` path. Whole message →
+  `chat-draft.md`; a message that IS a single fenced block with a known
+  text format → only the block's contents as `chat-draft.<ext>`
+  (`LANG_EXT`: csv, tsv, json, yaml, xml, html, css, md, txt, py, js, ts,
+  sql, sh); prose+block messages additionally get per-block
+  "→ attach .csv block" buttons, parsed from the RAW markdown (the
+  rehype-highlight render tree is never scraped). Files land in the tray
+  and sort/save through the normal drop lane.
+- Every existing chat behavior untouched: retrieval, escalate, record-that,
+  transcripts, image/PDF bridges, suggesters, pane switcher — the footer row
+  and renderer only gained affordances.
+
 ## 2026-10-20 — Chat absorbs drop: the Drop page retires (§9, worktree agent)
 
 Built on `redone-UI` at `5c568b5`. Frontend-only — zero `core/` changes
