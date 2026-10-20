@@ -2,14 +2,15 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { CalendarDays, FolderTree, Inbox, LayoutDashboard, MessageSquare } from "lucide-react";
+import { CalendarDays, FolderTree, LayoutDashboard, MessageSquare } from "lucide-react";
 import { listTodos, Todo } from "@/lib/api";
 import { Panel, Stat } from "@/components/ui/Panel";
 import { todayIso } from "@/lib/date";
 
+// Drop retired into Chat (next-wave §9): the chat page's scratchpad is the
+// drop lane now — text, photos, PDFs, statements — so one tile covers both.
 const SURFACES = [
-  { href: "/kb/drop", label: "Drop", icon: Inbox, blurb: "Dump anything — text, photos, PDFs. It gets sorted for you." },
-  { href: "/kb", label: "Chat", icon: MessageSquare, blurb: "Talk to your knowledge base, with the web and any model." },
+  { href: "/kb", label: "Chat", icon: MessageSquare, blurb: "Talk to your knowledge base — and drop anything: text, photos, PDFs get sorted for you." },
   { href: "/kb/browse", label: "Browse", icon: FolderTree, blurb: "Everything you've stored, folder by folder." },
   { href: "/habits", label: "Dashboard", icon: LayoutDashboard, blurb: "Habits, targets and how the week is going." },
   { href: "/day", label: "Calendar", icon: CalendarDays, blurb: "What's due, and what actually happened, by day." },

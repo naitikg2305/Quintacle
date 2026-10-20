@@ -11,7 +11,6 @@ import {
   FolderTree,
   House,
   Image as ImageIcon,
-  Inbox,
   KeyRound,
   Layers,
   LayoutDashboard,
@@ -33,10 +32,11 @@ import { BottomSheet } from "@/components/ui/BottomSheet";
 
 type NavItem = { href: string; label: string; icon: LucideIcon; match?: (path: string) => boolean };
 
-// The five surfaces the app is built around — also the phone's bottom tabs.
+// The four surfaces the app is built around — also the phone's bottom tabs.
+// Drop retired into Chat (next-wave §9): the chat page's scratchpad is the
+// drop lane now; /kb/drop redirects there.
 const CORE: NavItem[] = [
-  { href: "/kb/drop", label: "Drop", icon: Inbox },
-  { href: "/kb", label: "Chat", icon: MessageSquare, match: (p) => p === "/kb" },
+  { href: "/kb", label: "Chat", icon: MessageSquare, match: (p) => p === "/kb" || p.startsWith("/kb/drop") },
   { href: "/kb/browse", label: "Browse", icon: FolderTree, match: (p) => p.startsWith("/kb/browse") || p.startsWith("/kb/folder") },
   { href: "/habits", label: "Dashboard", icon: LayoutDashboard },
   { href: "/day", label: "Calendar", icon: CalendarDays },
@@ -180,7 +180,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <main className="px-4 py-4 pb-28 md:ml-60 md:px-6 md:py-6 md:pb-8">{children}</main>
 
       {/* Phone: bottom tab bar */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line-strong bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-line-strong bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden">
         {CORE.map((item) => {
           const active = isActive(item, path);
           return (

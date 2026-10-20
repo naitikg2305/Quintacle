@@ -28,6 +28,7 @@ import {
   logStockTransaction,
   logSubstance,
   ParsedEntry,
+  PerceptionSummary,
   pushKBEntry,
   pushKBEntryWithAsset,
 } from "./api";
@@ -236,19 +237,106 @@ export async function linkBatchAsEvent(members: (string | null)[], date: string)
   }
 }
 
-// The chat scratchpad's Save (next-wave §8 chat-drop parity): the same
-// per-entry commits + same-event linking as Drop's saveAll, minus everything
-// file-bound (assets, journal append, face tagging, keep-adding sessions —
-// those stay Drop-page concerns; the scratchpad lane is text-only by
-// construction). Returns the non-blocking event-link warning, if any, for
-// the caller's status line — the entries themselves are already saved.
-export async function commitTextEntries(date: string, entries: ParsedEntry[]): Promise<{ warning: string | null }> {
+// An unrecognized face a just-committed photo reported back — queued for the
+// optional "who is this?" tag flow (components/UnknownFacesPanel). Tagging is
+// never required for the save; the photo is already committed by the time a
+// PendingFace exists.
+export type PendingFace = {
+  embeddingId: string;
+  suggestedName: string | null;
+  photo: { folder: string; slug: string };
+  photoTitle: string;
+  pick: string; // dropdown choice ("" = type a new name)
+  newName: string;
+};
+
+// A "Still going" keep-adding target: the single kb_entry a save produced,
+// kept open so a lecture / live trip record can fold in more rounds
+// (components/StillGoingPanel) without a fresh drop + classification.
+export type DropSession = { folder: string; slug: string; title: string };
+
+export type CommitBatchResult = {
+  // Non-blocking event-link failure, if any — the entries are already saved.
+  warning: string | null;
+  // The statement-import endpoint's written/deduped summary, if the batch
+  // contained one — richer than the generic "saved N entries" line.
+  stmtSummary: string | null;
+  // Set when the batch was exactly ONE kb_entry (the "one note, maybe more
+  // to add later" case) — the caller may open a keep-adding session on it.
+  session: DropSession | null;
+  // Unmatched faces reported by committed photo notes — for the tag panel.
+  faces: PendingFace[];
+};
+
+// Drop's FULL save semantics, shared (next-wave §9 — chat absorbs drop):
+// per-entry commits with the dropped file(s) attached to asset-carrying
+// types, statement summary, single-note session detection, unknown-faces
+// queueing, and same-event linking. Extracted verbatim from the Drop page's
+// saveAll; the journal append stays caller-side (it needs the raw text and
+// the user's toggle, not the parsed entries).
+export async function commitDropEntries(date: string, entries: ParsedEntry[], files: File[] = []): Promise<CommitBatchResult> {
+  // The dropped file attaches to kb_entry/document_entry/wardrobe_item/
+  // grooming_item/home_item proposals — those keep the photo (what does
+  // this thing actually look like stays useful). ingredient_preset/finance
+  // extract structured data and don't need the file itself. A drop only
+  // ever produces one entry when a file was involved, so this attaches to
+  // the right one unambiguously.
+  const ASSET_TYPES = new Set(["kb_entry", "document_entry", "wardrobe_item", "grooming_item", "home_item", "outfit_photo"]);
+  // A single kb_entry drop is the common "one note, maybe more to add
+  // later" case — capture where it landed so a keep-adding session can
+  // target it. Multiple entries (a journal dump exploding into several
+  // things) don't have one obvious entry to keep extending, so no session.
+  const singleNote = entries.length === 1 && entries[0].type === "kb_entry" ? entries[0] : null;
+  let session: DropSession | null = null;
+  const faces: PendingFace[] = [];
+  // This batch came from ONE capture, so its committed records are one
+  // real-world event — collect each commit's graph id (incl. a committed
+  // photo note's) and link them after the saves (see linkBatchAsEvent).
   const eventMembers: (string | null)[] = [];
+  let stmtSummary: string | null = null;
   for (const entry of entries) {
-    const result = await commitEntry(date, entry, []);
+    const assets = ASSET_TYPES.has(entry.type) && files.length > 0 ? files : [];
+    const result = await commitEntry(date, entry, assets);
     eventMembers.push(graphIdFor(entry, result));
+    if (entry.type === "statement_import" && result && typeof result === "object" && "written" in result) {
+      const r = result as { written: number; skipped_duplicates: number };
+      stmtSummary = `statement imported: ${r.written} transaction${r.written === 1 ? "" : "s"} written${
+        r.skipped_duplicates > 0 ? `, ${r.skipped_duplicates} duplicate${r.skipped_duplicates === 1 ? "" : "s"} skipped` : ""
+      }`;
+    }
+    if (singleNote && result && typeof result === "object" && "slug" in result) {
+      const r = result as { folder: string; slug: string };
+      session = { folder: r.folder, slug: r.slug, title: singleNote.title };
+    }
+    // A committed photo reports faces it couldn't match — queue them for
+    // the optional tag flow (never blocks the save, which is done).
+    if (result && typeof result === "object" && "perception" in result) {
+      const r = result as { folder: string; slug: string; perception: PerceptionSummary };
+      for (const f of r.perception?.unknown_faces ?? []) {
+        faces.push({
+          embeddingId: f.embedding_id,
+          suggestedName: f.suggested_name ?? null,
+          photo: { folder: r.folder, slug: r.slug },
+          photoTitle: entry.type === "kb_entry" ? entry.title : r.slug,
+          pick: f.suggested_name ?? "",
+          newName: "",
+        });
+      }
+    }
   }
-  return { warning: await linkBatchAsEvent(eventMembers, date) };
+  // Never blocking: the saves above already happened; a failed event link
+  // only downgrades the status line to a warning.
+  const warning = await linkBatchAsEvent(eventMembers, date);
+  return { warning, stmtSummary, session, faces };
+}
+
+// Text-only callers (the Journal page's nightly dump): a thin wrapper over
+// the full batch commit with no files riding along. Kept for its simpler
+// return shape; the chat scratchpad now calls commitDropEntries directly
+// (next-wave §9 — it carries files, faces and sessions like Drop did).
+export async function commitTextEntries(date: string, entries: ParsedEntry[]): Promise<{ warning: string | null }> {
+  const { warning } = await commitDropEntries(date, entries, []);
+  return { warning };
 }
 
 // Shared by the Journal page's nightly dump and the general Drop page — both

@@ -5,21 +5,55 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
-import { ChatContentBlock, ChatMessage, chatMessageText } from "@/lib/api";
+import { base64ToFile, ChatContentBlock, ChatMessage, chatMessageText } from "@/lib/api";
 
-function Attachment({ block }: { block: ChatContentBlock }) {
+// Rebuild the File behind a message's image/PDF block so a photo DISCUSSED in
+// chat can hop into the scratchpad's pending drop attachments (next-wave §9)
+// and flow through /drop like any dropped file.
+function blockToFile(block: ChatContentBlock): File | null {
+  if (block.type === "image") {
+    const ext = block.source.media_type.split("/")[1] ?? "png";
+    return base64ToFile(block.source.data, block.source.media_type, `chat-photo.${ext === "jpeg" ? "jpg" : ext}`);
+  }
+  if (block.type === "document") {
+    return base64ToFile(block.source.data, block.source.media_type, "chat-attachment.pdf");
+  }
+  return null;
+}
+
+function Attachment({ block, onAddToDrop }: { block: ChatContentBlock; onAddToDrop?: (file: File) => void }) {
+  const addButton = onAddToDrop && (
+    <button
+      onClick={() => {
+        const f = blockToFile(block);
+        if (f) onAddToDrop(f);
+      }}
+      title="Queue this attachment on the scratchpad — it gets sorted and saved through the drop lane like any dropped file"
+      className="mb-1 block text-xs text-accent/80 hover:text-accent hover:underline"
+    >
+      → add to scratchpad
+    </button>
+  );
   if (block.type === "image") {
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={`data:${block.source.media_type};base64,${block.source.data}`}
-        alt=""
-        className="mb-1 max-h-40 rounded-lg border border-line"
-      />
+      <div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={`data:${block.source.media_type};base64,${block.source.data}`}
+          alt=""
+          className="mb-1 max-h-40 rounded-lg border border-line"
+        />
+        {addButton}
+      </div>
     );
   }
   if (block.type === "document") {
-    return <p className="mb-1 text-xs text-muted">📎 PDF attached</p>;
+    return (
+      <div>
+        <p className="mb-1 text-xs text-muted">📎 PDF attached</p>
+        {addButton}
+      </div>
+    );
   }
   return null;
 }
@@ -28,12 +62,16 @@ export default function ChatLog({
   messages,
   busy,
   onAddToScratchpad,
+  onAddAttachmentToDrop,
   onEscalate,
   escalateModels,
 }: {
   messages: ChatMessage[];
   busy?: boolean;
   onAddToScratchpad?: (text: string) => void;
+  // Next-wave §9: a photo/PDF attached to a chat MESSAGE (the discussion
+  // lane) can hop into the scratchpad's pending drop attachments.
+  onAddAttachmentToDrop?: (file: File) => void;
   // Local-first chat: a reply that came from a `local:` model (known
   // client-side via message.model) gets an "Escalate ↗" affordance — pick a
   // cloud model and the SAME conversation up to that reply is re-sent to it,
@@ -56,7 +94,7 @@ export default function ChatLog({
               }`}
             >
               {blocks.map((b, bi) => (
-                <Attachment key={bi} block={b} />
+                <Attachment key={bi} block={b} onAddToDrop={onAddAttachmentToDrop} />
               ))}
               {m.role === "assistant" ? (
                 <div className="prose prose-sm dark:prose-invert max-w-none prose-img:rounded-lg prose-a:text-accent">
