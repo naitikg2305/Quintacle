@@ -1,6 +1,6 @@
 "use client";
 
-import { ExerciseSet, FINANCE_KINDS, Meal, ParsedEntry } from "@/lib/api";
+import { ExerciseSet, FINANCE_KINDS, Meal, ParsedEntry, STOCK_ACTIONS } from "@/lib/api";
 import MealCompositionEditor from "./MealCompositionEditor";
 import StatementImportCard from "./StatementImportCard";
 import OutfitEditor from "./OutfitEditor";
@@ -14,6 +14,9 @@ const PEOPLE_CATEGORIES = ["friend", "dating", "family", "coworker", "acquaintan
 
 const ACTIVITY_CATEGORIES = ["productivity", "social", "leisure", "yourself", "emotional"];
 const MEAL_TYPES = ["breakfast", "lunch", "dinner", "snack"];
+// Mirror the habits page's form vocabulary (PERIODS + the quota engine's metrics).
+const HABIT_PERIODS = ["day", "week", "2weeks", "month"];
+const HABIT_METRICS = ["activity_hours", "food_kcal", "spend", "exercise_days"];
 
 type Props = {
   entry: ParsedEntry;
@@ -966,6 +969,156 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
             value={entry.notes}
             onChange={(e) => onUpdate(i, { notes: e.target.value })}
           />
+        </div>
+      )}
+
+      {entry.type === "stock_transaction" && (
+        <div className="flex-1 space-y-1">
+          <div className="flex gap-2">
+            <select
+              className="border rounded px-2 py-1 text-sm"
+              value={entry.action}
+              onChange={(e) => onUpdate(i, { action: e.target.value as (typeof STOCK_ACTIONS)[number] })}
+            >
+              {STOCK_ACTIONS.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+            <input
+              className="border rounded px-2 py-1 text-sm w-24"
+              placeholder="ticker"
+              value={entry.symbol}
+              onChange={(e) => onUpdate(i, { symbol: e.target.value })}
+            />
+            <input
+              className="border rounded px-2 py-1 text-sm flex-1"
+              placeholder="account"
+              value={entry.account}
+              onChange={(e) => onUpdate(i, { account: e.target.value })}
+            />
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="number"
+              className="border rounded px-2 py-1 text-sm flex-1"
+              placeholder="qty (0 for dividend)"
+              value={entry.qty}
+              onChange={(e) => onUpdate(i, { qty: Number(e.target.value) })}
+            />
+            <input
+              type="number"
+              step="0.01"
+              className="border rounded px-2 py-1 text-sm flex-1"
+              placeholder="price / share ($ total for dividend)"
+              title="Dollars per share for a buy/sell; the TOTAL cash received for a dividend"
+              value={entry.price}
+              onChange={(e) => onUpdate(i, { price: Number(e.target.value) })}
+            />
+            <input
+              type="number"
+              step="0.01"
+              className="border rounded px-2 py-1 text-sm w-24"
+              placeholder="fees"
+              value={entry.fees}
+              onChange={(e) => onUpdate(i, { fees: Number(e.target.value) })}
+            />
+          </div>
+          <textarea
+            className="w-full border rounded p-2 text-sm"
+            rows={2}
+            placeholder="notes"
+            value={entry.notes}
+            onChange={(e) => onUpdate(i, { notes: e.target.value })}
+          />
+        </div>
+      )}
+
+      {entry.type === "habit_entry" && (
+        <div className="flex-1 space-y-1">
+          <div className="flex gap-2">
+            <input
+              className="border rounded px-2 py-1 text-sm flex-1"
+              placeholder="goal name"
+              value={entry.name}
+              onChange={(e) => onUpdate(i, { name: e.target.value })}
+            />
+            <input
+              type="number"
+              step="0.5"
+              className="border rounded px-2 py-1 text-sm w-24"
+              placeholder="target"
+              value={entry.target_amount}
+              onChange={(e) => onUpdate(i, { target_amount: Number(e.target.value) })}
+            />
+            <select
+              className="border rounded px-2 py-1 text-sm"
+              value={entry.target_period}
+              onChange={(e) => onUpdate(i, { target_period: e.target.value })}
+            >
+              {HABIT_PERIODS.map((p) => (
+                <option key={p} value={p}>
+                  per {p}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <select
+              className="border rounded px-2 py-1 text-sm"
+              value={entry.metric}
+              onChange={(e) => onUpdate(i, { metric: e.target.value })}
+            >
+              {HABIT_METRICS.map((m) => (
+                <option key={m} value={m}>
+                  {m.replace("_", " ")}
+                </option>
+              ))}
+            </select>
+            <select
+              className="border rounded px-2 py-1 text-sm"
+              value={entry.direction}
+              onChange={(e) => onUpdate(i, { direction: e.target.value as "at_least" | "at_most" })}
+            >
+              <option value="at_least">at least</option>
+              <option value="at_most">at most</option>
+            </select>
+            <input
+              className="border rounded px-2 py-1 text-sm w-20"
+              placeholder="unit"
+              value={entry.unit}
+              onChange={(e) => onUpdate(i, { unit: e.target.value })}
+            />
+          </div>
+          <div className="flex gap-2">
+            <select
+              className="border rounded px-2 py-1 text-sm"
+              title="Budget lines (metric=spend): narrow to one expense kind — blank matches every kind"
+              value={entry.match_kind ?? ""}
+              onChange={(e) => onUpdate(i, { match_kind: e.target.value || null })}
+            >
+              <option value="">any kind</option>
+              {FINANCE_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {k.replace("_", " ")}
+                </option>
+              ))}
+            </select>
+            <input
+              className="border rounded px-2 py-1 text-sm flex-1"
+              placeholder="match terms (activity category, or comma-separated merchant/category words)"
+              title="activity_hours: one activity category. spend: comma-separated whole-word terms over merchant/category/notes — blank = total spend"
+              list="entry-card-habit-categories"
+              value={entry.match_category ?? ""}
+              onChange={(e) => onUpdate(i, { match_category: e.target.value || null })}
+            />
+            <datalist id="entry-card-habit-categories">
+              {ACTIVITY_CATEGORIES.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+          </div>
         </div>
       )}
 

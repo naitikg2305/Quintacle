@@ -48,6 +48,7 @@ import {
   Shirt,
   Sparkles,
   Tag,
+  Target,
   TrendingUp,
   Upload,
   User,
@@ -90,7 +91,8 @@ const MANUAL: { type: ParsedEntry["type"]; label: string; icon: LucideIcon }[] =
   { type: "experience_entry", label: "Experience", icon: MapPin },
   { type: "person_entry", label: "Person", icon: User },
   { type: "credit_card_entry", label: "Credit card", icon: CreditCard },
-  { type: "investment_entry", label: "Investment", icon: TrendingUp },
+  { type: "stock_transaction", label: "Stock trade", icon: TrendingUp },
+  { type: "habit_entry", label: "Goal / budget", icon: Target },
   { type: "income", label: "Income", icon: Banknote },
 ];
 

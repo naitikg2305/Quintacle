@@ -438,9 +438,32 @@ First prod-testing session surfaced these; all decided same day:
 - **Stock ledger from both surfaces**: `stock:` prefix (and cheap natural
   parse) proposes a real ledger transaction (review → POST
   /stocks/transactions); the old static investment-entry lane retires.
+  - **BUILT 2026-10-20** (drop-types lane): `stock:`/`invest:` prefixes now
+    map to a `stock_transaction` proposal (`nodes/stocks/llm.py`'s
+    `structure_stock_transaction` via llm_dispatch — dividend = TOTAL cash
+    in `price`, qty 0, matching store.py's row semantics); unprefixed text
+    passes `drop_router.looks_like_stock_transaction` (deterministic,
+    conservative: trade verb AND share/stock word or `TICKER at/@ price`)
+    before any model call, and routes to the same lane — never into
+    parse_journal_dump's union (schema-size limit). Frontend: EntryCard
+    stock case, commit via `logStockTransaction`, graph id `stock_tx:<id>`.
+    The `invest:` prefix folded in here; the /drop `investment_entry` branch
+    and api.py's `structure_investment` import are gone. DEFERRED cleanup:
+    `InvestmentStore`, `finance/llm.py`'s `structure_investment`, the
+    `/investments` endpoints, and the investments page still exist.
 - **Budget lines / habits / goals set by drop or chat** (`budget:`,
   `habit:`, `goal:` + classification): "eating out $200/month" parses into
   the habit shape, review-gated.
+  - **BUILT 2026-10-20** (drop-types lane): `habit:`/`goal:`/`budget:`
+    prefixes → a `habit_entry` proposal (`nodes/logs/habit_llm.py`'s
+    `structure_habit`, prompt pinned to the exact shapes the habits page's
+    submit() produced: activity_hours/at_least/hrs, food_kcal/at_most/kcal,
+    spend/at_most/$ with kind+match-terms, plus the exercise_days count
+    metric). Prefix-only — no natural-classification gate; a goal is a
+    deliberate statement. Review commits through POST /logs/habits (upsert
+    by name per the versioned-habits lane, so the same drop creates AND
+    updates). Frontend: EntryCard habit case mirroring the habits-page form
+    controls; "Goal / budget" manual button on the drop page.
 - **Versioned habits.** Habits/budget lines become effective-dated
   versions: an edit takes effect NEXT week (Monday-anchored; current week
   finishes under the old target); past weeks are always judged against the

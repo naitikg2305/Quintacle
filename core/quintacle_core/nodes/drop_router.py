@@ -74,8 +74,13 @@ PREFIX_TYPES = {
     "friend": "person_entry",
     "creditcard": "credit_card_entry",
     "card": "credit_card_entry",
-    "invest": "investment_entry",
-    "stock": "investment_entry",
+    # §8: the old static investment-entry lane retired — "invest:"/"stock:"
+    # now propose a REAL ledger transaction (review → POST /stocks/transactions).
+    "invest": "stock_transaction",
+    "stock": "stock_transaction",
+    "habit": "habit_entry",
+    "goal": "habit_entry",
+    "budget": "habit_entry",
 }
 
 _PREFIX_RE = re.compile(r"^\s*([a-zA-Z]+)\s*:\s*(.*)$", re.DOTALL)
@@ -134,6 +139,32 @@ def parse_income_text(text: str) -> dict:
         "notes": "",
         "entry_date": entry_date,
     }
+
+
+# §8's "cheap natural parse" gate for unprefixed stock text: deterministic,
+# local, no API call — same philosophy as the prefix table above. CONSERVATIVE
+# on purpose: a missed match just falls through to parse_journal_dump (where
+# the text still lands somewhere sensible), but a false positive would hijack
+# an ordinary journal line into the stock lane. Requires BOTH a trade verb and
+# an unmistakably stock-shaped object: the word share(s)/stock(s), or an
+# all-caps ticker-like token right before "at $N" / "@ N". "bought 10 apples
+# at the store" has a verb but neither object; "stocked up on rice" has
+# neither (\bstock\b doesn't match "stocked", and there's no trade verb).
+_STOCK_VERB_RE = re.compile(r"\b(bought|buy|buying|sold|sell|selling|purchased)\b", re.IGNORECASE)
+_STOCK_SHARES_RE = re.compile(r"\b(shares?|stocks?)\b", re.IGNORECASE)
+# Deliberately case-SENSITIVE: tickers are typed uppercase ("AAPL at $150",
+# "VOO @ 420"); a lowercase word before "at ..." is ordinary prose.
+_STOCK_TICKER_AT_PRICE_RE = re.compile(r"\b[A-Z]{1,5}\b\s*(?:at\s+\$|@\s*\$?)\s*\d")
+
+
+def looks_like_stock_transaction(text: str) -> bool:
+    """True only when unprefixed text is unambiguously a stock trade — the
+    /drop fall-through branch routes it to the stock lane instead of
+    parse_journal_dump (whose union must NOT grow a stock type — see the
+    schema-size note on _ReceiptExtraction below)."""
+    if not _STOCK_VERB_RE.search(text):
+        return False
+    return bool(_STOCK_SHARES_RE.search(text) or _STOCK_TICKER_AT_PRICE_RE.search(text))
 
 
 _ROUTINE_RE = re.compile(r"^\s*(.+?)\s*=\s*(.+)$", re.DOTALL)
