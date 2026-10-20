@@ -2,6 +2,19 @@
 
 Derived from code at commit `884d057` on 2026-10-15.
 
+> **Correction (2026-10-20, next-wave §9 — chat absorbs drop):** the Drop
+> PAGE retired; the chat page (`frontend/app/kb/page.tsx`) is the drop
+> surface now. Everything below about the `/drop` ENDPOINT, the router, the
+> describers, and the review/commit semantics is still accurate — only the
+> UI moved: the scratchpad carries the file tray
+> (`components/DropAttachments.tsx`), the review cards, the manual grid
+> (`components/ManualAddGrid.tsx`), the unknown-faces panel
+> (`components/UnknownFacesPanel.tsx`) and the "Still going" session
+> (`components/StillGoingPanel.tsx`); the full save semantics live in
+> `lib/entries.ts#commitDropEntries`. Mentions of
+> `frontend/app/kb/drop/page.tsx` below describe the pre-§9 surface (the
+> route is now a redirect stub to `/kb`).
+
 Drop is the one general capture endpoint: `POST /drop` in
 [core/quintacle_core/api.py](../../core/quintacle_core/api.py) (the
 `propose_drop` handler), the deterministic router in

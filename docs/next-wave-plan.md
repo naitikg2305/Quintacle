@@ -514,5 +514,39 @@ retrieve and drop everything, and the natural mouth for the voice plan.
 (lecture session, faces, statements) — relocate them knowing what they
 feel like, not blind. Fire after §8 merges + that test pass.
 
-## 10. (next topic as it comes to mind)
+**BUILT (2026-10-20, worktree agent):** chat IS the drop surface now; the
+Drop page retired — the second page retired today, after Habits. Zero
+backend changes (the `/drop` ENDPOINT is the engine and stays; only the
+surface moved).
+
+- **Scratchpad = full file lane.** The Drop page's file machinery is
+  extracted to `frontend/components/DropAttachments.tsx`
+  (`useDropAttachments()` + `<AttachmentTray>`: drag-drop, choose-file,
+  scribble pad, image/video previews, unlimited extra attachments) and
+  lives under the scratchpad. Untargeted "Sort with AI" sends text + files
+  through the SAME multipart `proposeDrop` (file/file2 semantics, keep-as-is
+  checkbox, statement CSV/OFX raw_text re-attach for the correction card);
+  "Redo with cloud" snapshots the ORIGINAL text+files. Saving uses Drop's
+  FULL semantics, now shared: `lib/entries.ts#commitDropEntries` (assets on
+  asset-carrying types, statement summary, single-note session detection,
+  unknown-faces queueing, same-event linking — extracted verbatim from
+  Drop's saveAll); `commitTextEntries` stays as a thin text-only wrapper.
+  Journal append rode along too (auto-suggest ≥200 chars, derived — not an
+  effect; "Save to journal only" button).
+- **Faces + "Still going" moved** into `components/UnknownFacesPanel.tsx`
+  and `components/StillGoingPanel.tsx` (verbatim logic, self-contained
+  state), rendered in the scratchpad column after saves.
+- **Conversation → drop bridges:** a photo/PDF on a chat MESSAGE gets
+  "→ add to scratchpad" (ChatLog rebuilds the File from its base64 block);
+  a GENERATED image gets "→ add to drop attachments" alongside its existing
+  push() lane. Both land in the pending attachments and flow through /drop.
+- **Manual grid** (all 23 types) extracted to
+  `components/ManualAddGrid.tsx`, collapsible on the scratchpad.
+- **Retirement:** Drop removed from nav + home tiles (Chat tile covers it;
+  phone bottom bar back to 5 slots); finance's statement link points at
+  chat; `/kb/drop` is a client-side redirect stub to `/kb` (client-side so
+  the Capacitor static export works — no server to serve a 307). All chat
+  behaviors kept: retrieval, escalate, record-that, transcripts
+  (archive-on-close), don't-keep, suggesters, target-note lane,
+  generate-image, phone pane switcher.
 

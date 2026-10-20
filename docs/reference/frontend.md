@@ -2,6 +2,16 @@
 
 Derived from code at commit `884d057` on 2026-10-15.
 
+> **Correction (2026-10-20, next-wave §9 — chat absorbs drop):** `/kb/drop`
+> is a redirect stub to `/kb` now; the chat page IS the drop surface (file
+> tray + previews, statement correction flow, unknown-faces panel, "Still
+> going" session, manual type grid, journal append — all on the scratchpad
+> side, extracted into `components/DropAttachments.tsx`,
+> `UnknownFacesPanel.tsx`, `StillGoingPanel.tsx`, `ManualAddGrid.tsx`, with
+> Drop's full save semantics shared via `lib/entries.ts#commitDropEntries`).
+> Core nav is four surfaces (Chat, Browse, Dashboard, Calendar); the page
+> map and AppShell sections below describe the pre-§9 layout.
+
 Next.js 16 (App Router, all pages `"use client"`), React 19, Tailwind 4.
 Everything lives under [frontend/](../../frontend/): `app/` (pages),
 `lib/` (API client + shared logic), `components/` (shared views + UI kit).

@@ -3,6 +3,44 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-20 — Chat absorbs drop: the Drop page retires (§9, worktree agent)
+
+Built on `redone-UI` at `5c568b5`. Frontend-only — zero `core/` changes
+(the `/drop` endpoint is the engine and stays; only the surface moved).
+Suite 488 passed / 0 skipped / 0 failed; `tsc --noEmit` 0 errors; eslint
+strictly FEWER findings than baseline (the retired page's 3 went away, none
+added); `npm run build` green. Second page retired today, after Habits.
+
+- **Shared save layer**: Drop's `saveAll` extracted verbatim into
+  `lib/entries.ts#commitDropEntries` (assets on asset-carrying types,
+  statement written/deduped summary, single-kb_entry session detection,
+  unknown-faces queueing, same-event linking); `commitTextEntries` is now a
+  thin wrapper over it. `PendingFace`/`DropSession` types live there too.
+- **Scratchpad = full drop**: `components/DropAttachments.tsx`
+  (`useDropAttachments` + `AttachmentTray`: drag-drop, choose-file, scribble,
+  image/video previews, unlimited extras) under the scratchpad; untargeted
+  Sort sends text+files through the same multipart `proposeDrop`
+  (keep-as-is, statement raw_text re-attach for the correction card); Redo
+  with cloud snapshots the original text+files; Save runs journal append
+  (derived auto-suggest ≥200 chars — a value, not an effect, so no new
+  set-state-in-effect lint) + `commitDropEntries`, then opens faces/session
+  panels. "Save to journal only" ported.
+- **Moved panels**: `components/UnknownFacesPanel.tsx` and
+  `components/StillGoingPanel.tsx` (self-contained state, same endpoints),
+  rendered in the scratchpad column after saves. Manual grid (23 types) →
+  `components/ManualAddGrid.tsx`, collapsible.
+- **Bridges**: ChatLog image/PDF blocks get "→ add to scratchpad"
+  (base64 → File → pending attachments); generated images get "→ add to
+  drop attachments" beside the kept push() lane.
+- **Retirement**: `/kb/drop` = client-side redirect stub to `/kb`
+  (client-side so the Capacitor static export keeps working); Drop removed
+  from AppShell Core (phone bar grid-cols-5) and home tiles; finance's
+  import link → chat. All chat behaviors untouched: retrieval, escalate,
+  record-that, transcripts archive-on-close, don't-keep, suggesters,
+  target-note Update-with-AI, generate-image, phone pane switcher.
+- Docs: §9 BUILT note; dated correction headers on
+  `docs/reference/drop-pipeline.md` + `frontend.md` (history kept).
+
 ## 2026-10-20 — Versioned habits + goals calendar (§8, worktree agent)
 
 The versioned-habits lane of §8, built on `redone-UI` at `36fa600` (the
