@@ -150,6 +150,13 @@ class _VectorLane:
     def _ensure_extension(self) -> bool:
         if self._available is not None:
             return self._available
+        # QUINTACLE_VECTOR_LANE=off: hard off-switch (the vector sibling of
+        # QUINTACLE_SUMMARY_PROVIDER=off) — the test suite pins it so results
+        # stay deterministic on a dev machine where sqlite-vec IS installed
+        # and Ollama IS running; FTS5+graph behavior is what the suite judges.
+        if os.environ.get("QUINTACLE_VECTOR_LANE", "").strip().lower() == "off":
+            self._available = False
+            return False
         try:
             import sqlite_vec  # requirements-retrieval.txt, never in requirements.txt
         except ImportError:

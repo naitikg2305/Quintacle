@@ -10,3 +10,7 @@ def _deterministic_prose_summaries(monkeypatch):
     output is never valid test evidence (CLAUDE.md's model-quality rule).
     Tests that exercise the model seam itself monkeypatch past this."""
     monkeypatch.setenv("QUINTACLE_SUMMARY_PROVIDER", "off")
+    # Same determinism for the vector lane: with sqlite-vec installed and
+    # Ollama up (a dev machine after the real-data backfill), live embeddings
+    # would otherwise join FTS results and reshuffle rankings mid-suite.
+    monkeypatch.setenv("QUINTACLE_VECTOR_LANE", "off")
