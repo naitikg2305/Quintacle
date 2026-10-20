@@ -570,6 +570,15 @@ carrying the endeavor dimension.
 - **Me/ lane**: quick-reference self — curated facts written there (injuries,
   dating, friends, preferences); live numbers (PRs, income, savings rate)
   COMPUTED from SQL at ask-time, never copied; chat always hydrates it.
+  - *BUILT 2026-10-20 (chat half)*: `me_context()` in
+    `core/quintacle_core/nodes/kb/day_context.py` — every note in the KB
+    folder `Me` (capped ~3,000 chars) + live SQL facts computed at ask-time,
+    never stored: strength PRs (max weight per exercise via `json_each` over
+    `exercise_sets.sets_json`), this month's income/spend totals + savings
+    rate (`income_log`/`expense_log` SUMs), latest `body_stats` row per
+    metric — all finished one-liners with as-of dates. Prepended to EVERY
+    chat context (all providers, all scopes) under `## About the user` with
+    a never-recalculate instruction; empty store omits sections silently.
 - **Work logs**: all days, one home — `Daily Log/Work Logs` — edges to every
   project/employer mentioned ("what did I do for Minfy this year" = walk edges).
   - **BUILT 2026-10-20** (worktree agent, work-log lane):
@@ -603,6 +612,19 @@ carrying the endeavor dimension.
 - **Time/date always**: chat knows now (ET); date words in questions resolve
   IN CODE to that day's bundle (journal, rows, photo who-with lines, people)
   hydrated into context.
+  - *BUILT 2026-10-20*: `_system_text` now opens with a deterministic
+    `Now: Tuesday 2026-10-20, 7:45 PM (America/New_York).` line (clock.py,
+    every provider — escalation carries it identically, and it's present
+    even with the KB toggled off). `detect_dates(text, today)` in
+    day_context.py resolves explicit ("April 14", "4/14", "2026-04-14",
+    "oct 7th", "14th of April") and relative ("today", "yesterday", "last
+    tuesday", "two weeks ago", "last week" → that Mon–Sun) forms, year
+    inference = most recent past occurrence; `day_bundle(d)` assembles the
+    day's journal + log-row one-liners (`retrieval.log_row_title_and_summary`)
+    + todos + events/people/place edge labels, capped ~6,000 chars. Max 3
+    dates hydrate per turn as `## <date> — that day's record`, alongside
+    normal retrieval (unscoped + note-scoped chats; the folder-only scope
+    keeps its can't-cite-outside contract). Zero model calls anywhere.
 - **Home-page regroup**: Me · Life (Daily Log, PD, Organisation, People) ·
   Productivity (Career, Projects, Knowledge) · Fun.
   - **BUILT 2026-10-20** (worktree agent, home-regroup lane; `app/page.tsx`
@@ -632,6 +654,13 @@ carrying the endeavor dimension.
     same-origin), target `_blank`. External http(s) → new tab. Everything
     else (javascript:, data:, `//host`, unknown routes) renders as text.
     Applies everywhere ChatLog renders (kb chat, folder chat, ReadOnlyChat).
+  - *BUILT 2026-10-20 (system-text half)*: `_LINK_RULES` in chat.py instructs
+    the model to emit the app's REAL routes as root-relative markdown links —
+    notes: `[Title](/kb/browse?path=<folder>&open=<slug>)` (the browse page's
+    own deep-link params), files: `[name](/kb/asset?folder=<folder>&path=<asset
+    path>)` (lib/api.ts `kbAssetUrl` shape) — only for ids/paths already in
+    context (`note:<folder>/<slug>` carries folder/slug). The frontend render
+    half (markdown link → in-app navigation) is the other agent's lane.
 - **Add-to-scratchpad on chat TEXT output**: drafted CSVs/itineraries become
   files in the tray — one funnel (images got the button in §9).
   - **BUILT 2026-10-20** (chat-frontend lane): each assistant message gets

@@ -11,6 +11,7 @@ import urllib.request
 import anthropic
 from openai import OpenAI
 
+from ... import clock
 from ...llm_config import DEFAULT_MODEL, RESEARCH_MODEL
 from .store import KBStore
 
@@ -353,6 +354,75 @@ def resolve_model(model: str | None, research: bool) -> dict:
     return entry
 
 
+# --- §10 time grounding + Me lane + deep links (2026-10-20) -------------------
+
+
+def _now_line() -> str:
+    """The deterministic first line of EVERY system text, every provider —
+    chat always knows now, in Eastern Time via clock.py (never the host
+    zone). Escalating to a cloud model carries the identical line."""
+    dt = clock.now()
+    hour = dt.hour % 12 or 12
+    ampm = "AM" if dt.hour < 12 else "PM"
+    return f"Now: {dt.strftime('%A')} {dt.date().isoformat()}, {hour}:{dt.minute:02d} {ampm} (America/New_York)."
+
+
+# Deep links (§10): the chat frontend renders root-relative markdown links as
+# in-app navigation, so the href formats here are the app's REAL routes:
+#   note view:   /kb/browse?path=<URL-encoded folder>&open=<URL-encoded slug>
+#                (frontend/app/kb/browse/page.tsx's own deep-link params)
+#   file/asset:  /kb/asset?folder=<URL-encoded folder>&path=<URL-encoded asset path>
+#                (the backend asset route, same shape as lib/api.ts kbAssetUrl)
+# Folder/slug derive from the retrieval ids already in context ("note:<folder>/<slug>").
+_LINK_RULES = (
+    "When you refer to a note or file from the material below that the user could "
+    "open, make its name a markdown link to the real app route: a note whose id is "
+    "\"note:<folder>/<slug>\" links as [Title](/kb/browse?path=<folder>&open=<slug>), "
+    "and a file or photo asset path within a folder links as "
+    "[name](/kb/asset?folder=<folder>&path=<asset path>). URL-encode spaces and "
+    "special characters in each query value (slashes may stay). Only link ids and "
+    "asset paths that actually appear in the material — never invent one."
+)
+
+_MAX_DAY_BUNDLES = 3  # at most this many date mentions hydrate per turn
+
+
+def _me_block(store: KBStore) -> str | None:
+    """The §10 Me lane — prepended to every KB-grounded context. Any failure
+    (stores not wired, SQL hiccup) silently drops the block, never the chat."""
+    try:
+        from .day_context import me_context
+
+        return me_context(store)
+    except Exception:
+        return None
+
+
+def _day_blocks(messages: list[dict]) -> str | None:
+    """§10 time grounding: date words in the newest user message resolve IN
+    CODE (day_context.detect_dates, today = clock.today()) and each resolved
+    day hydrates its full deterministic record alongside normal retrieval,
+    clearly headed. Max 3 dates; any failure degrades to no blocks."""
+    query = _last_user_text(messages)
+    if not query:
+        return None
+    try:
+        from .day_context import day_bundle, detect_dates
+
+        dates = detect_dates(query, clock.today())[:_MAX_DAY_BUNDLES]
+    except Exception:
+        return None
+    blocks: list[str] = []
+    for d in dates:
+        try:
+            bundle = day_bundle(d)
+        except Exception:
+            continue
+        if bundle:
+            blocks.append(f"## {d.isoformat()} — that day's record\n\n{bundle}")
+    return "\n\n".join(blocks) if blocks else None
+
+
 _GROUNDING_RULES = (
     "Ground your answers in the material below when relevant — reference it "
     "naturally, don't just recite it back. If something isn't covered below, say so "
@@ -368,33 +438,49 @@ _GROUNDING_RULES = (
 
 
 def _system_text(store: KBStore, use_kb: bool, folder: str | None, slug: str | None, messages: list[dict]) -> str | None:
-    """The KB-grounding block, or None when the KB is switched off.
+    """The system context for every provider — identical assembly whether the
+    turn runs local, on Bedrock, or on a direct cloud API (escalation carries
+    the SAME text). Order (extended 2026-10-20, next-wave-plan §10):
 
-    REBUILT 2026-10-19 (owner opened the chat-context logic — next-wave-plan
-    §3 decision 2): the default path is index→select→fetch over the retrieval
-    engine instead of dumping every note. Three scopes:
+    1. the Now line — current Eastern datetime, ALWAYS present (even with the
+       KB switched off: chat always knows now);
+    2. `## About the user` — the Me lane (curated Me-folder notes + live
+       SQL-computed facts), on every KB-grounded turn in every scope;
+    3. the KB-grounding block (REBUILT 2026-10-19, §3 decision 2 —
+       index→select→fetch over the retrieval engine). Three scopes:
 
     - folder + slug (a chat continued ON a note): topic hydration — that
       node's full current content + its graph neighborhood labels, prepended,
-      plus retrieval hits for the latest question. No transcript is ever
-      loaded automatically (second-tier by decision).
-    - folder only (the per-folder chat): UNCHANGED — context stays exactly
-      that folder's entries; this scope's whole contract is that the answer
-      can't come from somewhere it can't cite, so no global retrieval here.
+      plus retrieval hits for the latest question. No saved conversation is
+      ever loaded automatically (second-tier by decision).
+    - folder only (the per-folder chat): context stays exactly that folder's
+      entries; this scope's whole contract is that the answer can't come
+      from somewhere it can't cite, so no global retrieval (and no §10 day
+      bundles) here.
     - no scope: retrieval hits for the latest question.
+
+    4. day bundles (§10): date words in the newest user message resolve in
+       code and hydrate those days' full records alongside retrieval (max 3),
+       each headed `## <date> — that day's record`.
 
     Degradation (never a 500): retrieval uninitialized / empty / erroring
     falls back to the legacy behavior — the folder's entries when scoped,
-    the old dump-everything context otherwise."""
+    the old dump-everything context otherwise; Me/day sections just drop."""
     if not use_kb:
-        return None
+        return _now_line()  # §10: chat always knows now, even with the KB off
+
+    parts: list[str] = [_now_line()]
+    me = _me_block(store)
+    if me:
+        parts.append(me)
 
     if folder and not slug:
         intro = (
             f"You're chatting with the user about notes filed under \"{folder}\" specifically — "
             "not their whole knowledge base. Only the notes below exist for this conversation."
         )
-        return f"{intro} {_GROUNDING_RULES}\n\n{_kb_context_for_folder(store, folder)}"
+        parts.append(f"{intro} {_GROUNDING_RULES} {_LINK_RULES}\n\n{_kb_context_for_folder(store, folder)}")
+        return "\n\n".join(parts)
 
     topic = _topic_context(store, folder, slug) if folder and slug else None
 
@@ -405,6 +491,7 @@ def _system_text(store: KBStore, use_kb: bool, folder: str | None, slug: str | N
             retrieved = _kb_context(store, query, exclude_id=f"note:{folder}/{slug}" if topic else None)
         except Exception:
             retrieved = None  # uninitialized / empty / any retrieval error → legacy fallback
+    day_blocks = _day_blocks(messages)
 
     if topic is not None:
         intro = (
@@ -412,14 +499,17 @@ def _system_text(store: KBStore, use_kb: bool, folder: str | None, slug: str | N
             "personal knowledge base — its note's current state is below, with its "
             "connections. Anything else retrieved for their latest question follows it."
         )
-        parts = [topic]
+        body = [topic]
         if retrieved is not None:
-            parts.append("## Retrieved for the latest question\n\n" + retrieved)
+            body.append("## Retrieved for the latest question\n\n" + retrieved)
         elif folder:
             # Retrieval down: the topic note still hydrates; its folder's
             # entries stand in for retrieval (the legacy scoped behavior).
-            parts.append(_kb_context_for_folder(store, folder))
-        return f"{intro} {_GROUNDING_RULES}\n\n" + "\n\n".join(parts)
+            body.append(_kb_context_for_folder(store, folder))
+        if day_blocks:
+            body.append(day_blocks)
+        parts.append(f"{intro} {_GROUNDING_RULES} {_LINK_RULES}\n\n" + "\n\n".join(body))
+        return "\n\n".join(parts)
 
     intro = "You're chatting with the user about their own personal knowledge base."
     if retrieved is not None:
@@ -430,7 +520,10 @@ def _system_text(store: KBStore, use_kb: bool, folder: str | None, slug: str | N
         context = retrieved
     else:
         context = _kb_context_everything(store)
-    return f"{intro} {_GROUNDING_RULES}\n\n{context}"
+    if day_blocks:
+        context = f"{context}\n\n{day_blocks}"
+    parts.append(f"{intro} {_GROUNDING_RULES} {_LINK_RULES}\n\n{context}")
+    return "\n\n".join(parts)
 
 
 def _run_anthropic(model: str, messages: list[dict], kb_text: str | None) -> str:
