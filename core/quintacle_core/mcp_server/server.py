@@ -19,6 +19,7 @@ from ..nodes.kb.drop import _IMAGE_MIME, describe_images
 from ..nodes.kb.store import KBStore
 from ..nodes.logs.log_store import LogFileStore, home_for
 from ..nodes.logs.repository import LogsRepository
+from ..nodes.logs.worklog import import_work_log as worklog_import
 from ..nodes.stocks.positions import compute_positions
 from ..nodes.stocks.store import ACTIONS as STOCK_ACTIONS, StocksRepository, StockTransactionStore
 from ..nodes.schedule.models import Priority, Todo, apply_todo_updates
@@ -230,6 +231,39 @@ def log_expense(
     retrieval.safe_index_log_row(f"expense:{expense_id}")  # failure-isolated
     ledger_id = session.commit(result={"expense_id": expense_id, "date": entry_date.isoformat()})
     return {"expense_id": expense_id, "date": entry_date.isoformat(), "ledger_id": ledger_id}
+
+
+@mcp.tool()
+def import_work_log(for_date: str, content: str) -> dict:
+    """Import one day's work log (the ~/work-logs/YYYY-MM-DD.md markdown,
+    passed verbatim) — the standing lane for pushing session logs into
+    Quintacle (next-wave-plan §10). Deterministic, zero AI: writes the full
+    text as the KB note `Daily Log/Work Logs / Work log - YYYY-MM-DD` (with
+    graph edges to every Career/Projects entity note whose title the log
+    mentions, plus the usual people/experience keyword links), and derives
+    one "productivity" activity row per `## Session` block whose header has
+    a computable start–end time (hours computed in code; sessions without
+    parseable times are skipped, never guessed). Re-importing the same date
+    replaces the note AND exactly its own previously auto-emitted rows
+    (tagged source=worklog-auto) — manually logged rows are never touched.
+    Commits as ONE ledger entry; undo restores the prior note, rows, files
+    and edges together."""
+    entry_date = date.fromisoformat(for_date)
+    session = _session("logs.import_work_log", f"Imported work log for {entry_date.isoformat()}")
+    result = worklog_import(
+        entry_date,
+        content,
+        kb_store=kb_store,
+        conn=db_conn,
+        log_store=log_file_store,
+        link_note=lambda note_id, title, text, links: link_new_entry(
+            "kb_note", note_id, f"{title}\n{text}", session=session, links=links
+        ),
+        staging=session,
+        db_path=_db_path,
+    )
+    ledger_id = session.commit(result=result)
+    return {**result, "ledger_id": ledger_id}
 
 
 @mcp.tool()
