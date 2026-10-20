@@ -392,8 +392,8 @@ export default function FinancePage() {
         <a href="/finance/investments" className="underline hover:opacity-80">
           Investments (what you actually hold) →
         </a>
-        <a href="/kb/drop" className="underline hover:opacity-80" title="Drop a CSV/OFX/QFX export (or a PDF with a 'statement:' note) — parsed, deduped, and reviewed before anything is written">
-          Import a statement (via Drop) →
+        <a href="/kb" className="underline hover:opacity-80" title="Attach a CSV/OFX/QFX export (or a PDF with a 'statement:' note) on the chat scratchpad — parsed, deduped, and reviewed before anything is written">
+          Import a statement (via Chat) →
         </a>
       </div>
 
