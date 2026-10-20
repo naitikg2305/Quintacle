@@ -14,6 +14,20 @@ Derived from code at commit `884d057` on 2026-10-15.
 > embedding vectors never cross MCP) — so the count is now **17**
 > (verified: 17 `@mcp.tool()` decorators in `server.py`). See
 > `reference/perception-and-autojournal.md`.*
+>
+> *Moved again, 2026-10-20 (work-log lane, §10): `import_work_log(for_date,
+> content)` — one day's ~/work-logs markdown pushed verbatim into
+> `Daily Log/Work Logs` plus deterministic per-session productivity rows
+> (hours computed in code from the `**Session:**` header; re-import replaces
+> exactly its own `source=worklog-auto` rows, manual rows untouched). Goes
+> through the same WriteSession staging as every other write: the note file,
+> each replaced row's before-snapshot, each new file/row, and the edges all
+> commit as ONE ledger entry and undo together. This is how the main session
+> pushes its work logs from now on. Count: 22 → **23** (verified: 23
+> `@mcp.tool()` decorators — the intervening retrieval/stocks/event waves
+> had already added `search_index`, `log_stock_transaction`,
+> `stock_positions` and `link_event` without a note here). See
+> `core/quintacle_core/nodes/logs/worklog.py` for the parser/import rules.*
 
 Code: [core/quintacle_core/mcp_server/](../../core/quintacle_core/mcp_server/)
 — `server.py` (tools), `ledger.py` (the write log), `undo.py` (snapshots +

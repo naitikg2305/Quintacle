@@ -3,6 +3,44 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-20 — Work logs live in Quintacle (§10 work-log lane, worktree agent)
+
+Built on `redone-UI` at `61adbc4`. Backend-only — no frontend or chat.py
+changes (parallel agents own those). Suite 488 → **506 passed** / 0 skipped.
+
+- **Deterministic session parser** (`core/quintacle_core/nodes/logs/worklog.py`):
+  `parse_work_log(text, file_date)` — pure, zero model calls, grounded by
+  reading the real ~/work-logs files (read-only). Handles `## Session N`
+  blocks and unnumbered whole-file logs; header times with `~` prefixes,
+  en-dash/hyphen/`→` separators, past-midnight ranges (+24h); any
+  missing/unparseable start or end → `hours=None`, never guessed. One-liner
+  = the Summary's first sentence (`**Summary**` block, inline
+  `**Summary.**`, or `## Summary`; fallback: first non-empty line after the
+  header); Where → location list + project (first `…/code/<name>`). Dry-run
+  verified against all 7 real files.
+- **Import** (`import_work_log`): verbatim KB note `Daily Log/Work Logs /
+  Work log - YYYY-MM-DD` (fields `{date, kind: work-log}`,
+  overwrite-by-title) through the same graph-sync + retrieval calls as the
+  KB create path; links = every `Career/*`/`Projects/*` note title the log
+  mentions (`title_mentioned`) → entity-hub edges (Minfy, Quintacle). Auto
+  productivity rows: one per session with computable hours,
+  project-prefixed description, markdown-first + SQLite + retrieval;
+  dedupe is delete-by-tag (`source=worklog-auto`, new `activity_log.source`
+  column + migration, rebuild preserves it) — manual rows never touched;
+  activity filenames now take max-seq+1 in this lane so a refilled gap
+  can't overwrite a surviving manual file.
+- **Two doors**: `POST /logs/worklog/import {date, content}` (lazy kb.api
+  import to dodge the profile-api cycle) and MCP `import_work_log(for_date,
+  content)` — tool count 22 → 23 — one staged WriteSession per import, so
+  note + replaced rows + new files + edges undo as one ledger entry
+  (two-level undo proven in tests).
+- Tests: `core/tests/test_worklog.py` (18) — parser matrix on real-shaped
+  fixtures, exact hours arithmetic, mentions edges to seeded hubs,
+  re-import dedupe, manual-row survival, rebuild-tag survival, retrieval
+  hits, undo, REST round trip. All in sandboxed tmp stores.
+- Docs: §10 BUILT sub-notes (next-wave-plan.md), mcp-server.md dated count
+  note (also records the 4 tools earlier waves added without a note).
+
 ## 2026-10-20 — Chat absorbs drop: the Drop page retires (§9, worktree agent)
 
 Built on `redone-UI` at `5c568b5`. Frontend-only — zero `core/` changes
