@@ -2,16 +2,53 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, CircleCheck, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { PageHeader, Panel } from "@/components/ui/Panel";
+import { Badge, PageHeader, Panel } from "@/components/ui/Panel";
 import { Segmented } from "@/components/ui/Segmented";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { cn } from "@/lib/cn";
-import { DayDetail, formatSets, getDayCounts, getDayDetail, getNutritionForDate, kbAssetUrl, listTodos, NutritionForDate, Todo } from "@/lib/api";
-import { calendarIso, currentMonthStart, todayIso } from "@/lib/date";
+import {
+  DayDetail,
+  formatSets,
+  getDayCounts,
+  getDayDetail,
+  getHabitsLedger,
+  getNutritionForDate,
+  HabitsLedger,
+  kbAssetUrl,
+  LedgerCell,
+  LedgerHabit,
+  listTodos,
+  NutritionForDate,
+  Todo,
+} from "@/lib/api";
+import { addDaysIso, calendarIso, currentMonthStart, mondayOfWeek, todayIso } from "@/lib/date";
 
-type Tab = "regular" | "action";
+type Tab = "regular" | "action" | "habits";
+
+// Status is never color alone (same convention as the habits page's
+// GoalStatus): a word — and an icon on settled states — rides with the tone.
+function CellStatus({ cell, direction }: { cell: LedgerCell; direction: LedgerHabit["direction"] }) {
+  if (cell.in_progress) return <Badge tone="muted">in progress</Badge>;
+  if (cell.met)
+    return (
+      <Badge tone="ok">
+        <CircleCheck size={11} className="mr-1" /> {direction === "at_most" ? "under cap" : "met"}
+      </Badge>
+    );
+  return (
+    <Badge tone="danger">
+      <TriangleAlert size={11} className="mr-1" /> {direction === "at_most" ? "over cap" : "missed"}
+    </Badge>
+  );
+}
+
+function cellNumbers(cell: LedgerCell, habit: LedgerHabit): string {
+  // Formatting only — every number here was computed by the backend.
+  if (cell.days_total !== undefined) return `${cell.days_met}/${cell.days_total} days`;
+  return `${cell.actual} / ${cell.target} ${habit.unit}`;
+}
 
 const IMAGE_EXT = ["jpg", "jpeg", "png", "gif", "webp"];
 
@@ -33,6 +70,7 @@ export default function DayViewPage() {
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<DayDetail | null>(null);
   const [expandedNutrition, setExpandedNutrition] = useState<NutritionForDate | null>(null);
+  const [ledger, setLedger] = useState<HabitsLedger | null>(null);
 
   const monthStart = useMemo(
     () => new Date(monthCursor.getFullYear(), monthCursor.getMonth(), 1),
@@ -49,6 +87,17 @@ export default function DayViewPage() {
     setExpandedDate(null);
     setExpandedDetail(null);
   }, [monthStart, monthEnd]);
+
+  useEffect(() => {
+    if (tab !== "habits") return;
+    // One ledger call sized to reach back past the visible month: weeks
+    // between today's Monday and the month's first Monday, plus slack. The
+    // backend owns all habit arithmetic; this is only a request size.
+    const diffWeeks = Math.round(
+      (Date.parse(mondayOfWeek(todayIso())) - Date.parse(mondayOfWeek(calendarIso(monthStart)))) / (7 * 86400000)
+    );
+    getHabitsLedger(Math.max(2, diffWeeks + 6)).then(setLedger);
+  }, [tab, monthStart]);
 
   const todosByDate = useMemo(() => {
     const map: Record<string, Todo[]> = {};
@@ -83,9 +132,32 @@ export default function DayViewPage() {
     setExpandedDate(dateStr);
     setExpandedDetail(null);
     setExpandedNutrition(null);
+    if (tab === "habits") return; // a week row — the ledger is already loaded
     getDayDetail(dateStr).then(setExpandedDetail);
     getNutritionForDate(dateStr).then(setExpandedNutrition);
   }
+
+  function switchTab(next: Tab) {
+    setTab(next);
+    setExpandedDate(null);
+    setExpandedDetail(null);
+    setExpandedNutrition(null);
+  }
+
+  // Monday-anchored weeks overlapping the visible month, each mapped to its
+  // column in the ledger (null = a week the ledger doesn't cover, i.e. future).
+  const weekRows = useMemo(() => {
+    if (!ledger) return [];
+    const monthEndIso = calendarIso(monthEnd);
+    const idxByStart = new Map(ledger.weeks.map((w, i) => [w.start, i]));
+    const rows: { start: string; end: string; idx: number | null }[] = [];
+    for (let ws = mondayOfWeek(calendarIso(monthStart)); ws <= monthEndIso; ws = addDaysIso(ws, 7)) {
+      rows.push({ start: ws, end: addDaysIso(ws, 6), idx: idxByStart.get(ws) ?? null });
+    }
+    return rows;
+  }, [ledger, monthStart, monthEnd]);
+
+  const currentWeekStart = ledger?.weeks[ledger.weeks.length - 1]?.start;
 
   const expandedActivitiesByCategory = useMemo(() => {
     if (!expandedDetail) return {};
@@ -101,6 +173,69 @@ export default function DayViewPage() {
 
   const detail = expandedDate ? (
     <div className="space-y-3">
+
+    {tab === "habits" && ledger && (
+      <>
+        {(() => {
+          const idx = weekRows.find((w) => w.start === expandedDate)?.idx ?? null;
+          if (idx === null) return <p className="text-sm text-muted">No habit data for this week yet.</p>;
+          const rows = ledger.habits
+            .map((h) => ({ habit: h, cell: h.cells[idx] }))
+            .filter((r) => r.cell?.active);
+          if (rows.length === 0) return <p className="text-sm text-muted">No habits were active this week.</p>;
+          return (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left font-mono text-[10px] uppercase tracking-[0.14em] text-muted">
+                  <th className="py-1 pr-2 font-normal">Habit</th>
+                  <th className="py-1 pr-2 font-normal">Target in force</th>
+                  <th className="py-1 pr-2 font-normal">Actual</th>
+                  <th className="py-1 font-normal">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({ habit, cell }) => {
+                  // A target that isn't the habit's current one gets its
+                  // effective date shown — the week was judged under it.
+                  const currentCell = currentWeekStart ? habit.cells[ledger.weeks.length - 1] : undefined;
+                  const oldVersion = currentCell && cell.effective_from !== currentCell.effective_from;
+                  return (
+                    <tr key={habit.id} className="border-t border-line align-top">
+                      <td className="py-1.5 pr-2">{habit.name}</td>
+                      <td className="py-1.5 pr-2">
+                        <span className="font-mono">
+                          {habit.direction === "at_most" ? "≤" : "≥"} {cell.target} {habit.unit}
+                        </span>
+                        {cell.days_total !== undefined && <span className="text-muted"> /day</span>}
+                        {cell.window.start !== expandedDate && (
+                          <p className="text-xs text-muted">
+                            {cell.window.start} → {cell.window.end}
+                          </p>
+                        )}
+                        {oldVersion && cell.effective_from && (
+                          <p className="text-xs text-muted">in force since {cell.effective_from}</p>
+                        )}
+                      </td>
+                      <td className="py-1.5 pr-2 font-mono">{cellNumbers(cell, habit)}</td>
+                      <td className="py-1.5">
+                        <CellStatus cell={cell} direction={habit.direction} />
+                        {cell.in_progress && cell.prorated_target !== null && (
+                          <p className="mt-1 text-xs text-muted">
+                            pace: <span className="font-mono text-foreground">{cell.actual}</span> vs{" "}
+                            <span className="font-mono text-foreground">{cell.prorated_target}</span> by day{" "}
+                            {cell.elapsed_days}/{cell.period_days}
+                          </p>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          );
+        })()}
+      </>
+    )}
 
     {tab === "regular" && (
       <>
@@ -356,10 +491,11 @@ export default function DayViewPage() {
         actions={
           <Segmented
             value={tab}
-            onChange={setTab}
+            onChange={switchTab}
             options={[
               { value: "regular", label: "Regular" },
               { value: "action", label: "Action" },
+              { value: "habits", label: "Habits" },
             ]}
           />
         }
@@ -384,6 +520,51 @@ export default function DayViewPage() {
         </Button>
       </div>
 
+      {/* Habits view: one row per Monday-anchored week overlapping the month —
+          goals render like recurring weekly meetings (next-wave-plan §8). */}
+      {tab === "habits" && (
+        <div className="space-y-1.5">
+          {!ledger && <p className="text-sm text-muted">Loading...</p>}
+          {ledger && ledger.habits.length === 0 && <p className="text-sm text-muted">No habits yet.</p>}
+          {ledger &&
+            ledger.habits.length > 0 &&
+            weekRows.map(({ start, end, idx }) => {
+              const isExpanded = expandedDate === start;
+              const isCurrent = start === currentWeekStart;
+              return (
+                <button
+                  key={start}
+                  onClick={() => toggleExpanded(start)}
+                  aria-label={`Week of ${start}`}
+                  className={cn(
+                    "flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border p-2 text-left transition-colors",
+                    isExpanded ? "border-accent shadow-glow" : isCurrent ? "border-accent/60" : "border-line hover:border-accent/40"
+                  )}
+                >
+                  <span className={cn("shrink-0 font-mono text-xs", isCurrent ? "text-accent" : "text-muted")}>
+                    {start.slice(5)} → {end.slice(5)}
+                  </span>
+                  {idx === null ? (
+                    <span className="text-xs text-muted">upcoming</span>
+                  ) : (
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      {ledger.habits
+                        .filter((h) => h.cells[idx]?.active)
+                        .map((h) => (
+                          <span key={h.id} className="inline-flex items-center gap-1 text-xs text-foreground/80">
+                            {h.name}
+                            <CellStatus cell={h.cells[idx]} direction={h.direction} />
+                          </span>
+                        ))}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+        </div>
+      )}
+
+      {tab !== "habits" && (
       <div>
         <div className="mb-1 grid grid-cols-7 gap-1 text-center font-mono text-[10px] uppercase tracking-wider text-muted">
           {WEEKDAYS.map((w) => (
@@ -421,17 +602,22 @@ export default function DayViewPage() {
           })}
         </div>
       </div>
+      )}
 
-      {/* Desktop: the day opens inline under the grid */}
+      {/* Desktop: the day (or habits week) opens inline under the grid */}
       {expandedDate && (
         <div className="hidden md:block">
-          <Panel title={expandedDate}>{detail}</Panel>
+          <Panel title={tab === "habits" ? `Week of ${expandedDate}` : expandedDate}>{detail}</Panel>
         </div>
       )}
 
       {/* Phone: the same detail as a bottom sheet */}
       <div className="md:hidden">
-        <BottomSheet open={!!expandedDate} onClose={() => toggleExpanded(expandedDate as string)} title={expandedDate ?? ""}>
+        <BottomSheet
+          open={!!expandedDate}
+          onClose={() => toggleExpanded(expandedDate as string)}
+          title={expandedDate ? (tab === "habits" ? `Week of ${expandedDate}` : expandedDate) : ""}
+        >
           {detail}
         </BottomSheet>
       </div>

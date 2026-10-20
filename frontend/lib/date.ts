@@ -28,3 +28,22 @@ export function currentMonthStart(): Date {
   const [y, m] = todayIso().split("-").map(Number);
   return new Date(y, m - 1, 1);
 }
+
+// YYYY-MM-DD shifted by whole days — pure UTC field arithmetic on the given
+// calendar date, so no local-zone `new Date()` drift can touch it.
+export function addDaysIso(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return dt.toISOString().slice(0, 10);
+}
+
+// Monday (YYYY-MM-DD) of the week containing the given YYYY-MM-DD — the
+// backend's habit weeks are Monday-anchored (quotas.period_window), and this
+// mirrors that grid client-side for layout only. ET-safe: operates on the
+// date string's own fields in UTC, never on the browser's local clock.
+export function mondayOfWeek(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const sinceMonday = (dt.getUTCDay() + 6) % 7; // Monday = 0
+  return addDaysIso(iso, -sinceMonday);
+}

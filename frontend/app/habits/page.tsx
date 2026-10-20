@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import ReadOnlyChat from "@/components/ReadOnlyChat";
 import Link from "next/link";
-import { ChevronDown, ChevronUp, CircleCheck, LayoutDashboard, MessageSquare, Plus, TriangleAlert } from "lucide-react";
+import { Ban, ChevronDown, ChevronUp, CircleCheck, LayoutDashboard, MessageSquare, Pencil, Plus, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Field";
 import { Badge, PageHeader, Panel, Stat } from "@/components/ui/Panel";
@@ -11,6 +11,7 @@ import { Segmented } from "@/components/ui/Segmented";
 import { cn } from "@/lib/cn";
 import {
   createHabit,
+  endHabit,
   getNutritionHistory,
   getTargets,
   habitHistory,
@@ -18,16 +19,25 @@ import {
   Habit,
   HabitHistoryPoint,
   HabitProgress,
+  HabitWrite,
   listHabits,
   NutritionHistoryPoint,
   Targets,
+  updateHabit,
 } from "@/lib/api";
 
 const CATEGORIES = ["productivity", "social", "leisure", "yourself", "emotional"];
 const PERIODS = ["day", "week", "2weeks", "month"];
 const EXPENSE_KINDS = ["subscription", "food", "alcohol", "experience", "shopping", "big_purchase", "regular"];
 
-type GoalType = "time" | "amount_cap" | "budget";
+type GoalType = "time" | "amount_cap" | "budget" | "exercise";
+
+const METRIC_TO_GOAL_TYPE: Record<string, GoalType> = {
+  activity_hours: "time",
+  food_kcal: "amount_cap",
+  spend: "budget",
+  exercise_days: "exercise",
+};
 type Row = { habit: Habit; progress: HabitProgress; history: HabitHistoryPoint[] };
 
 // One accent for "target met", a quiet neutral for "not yet" — the mark carries
@@ -133,6 +143,9 @@ export default function HabitsPage() {
   const [budgetTerms, setBudgetTerms] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [askOpen, setAskOpen] = useState(false);
+  // Editing an existing habit reuses the add form; the PATCH appends a
+  // version that takes effect next period (the backend decides the date).
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   async function refresh() {
     const habits = await listHabits();
@@ -152,48 +165,69 @@ export default function HabitsPage() {
     refresh();
   }, []);
 
-  async function submit() {
-    if (!name || !target) return;
-    setStatus("saving...");
-    await createHabit(
-      goalType === "time"
-        ? {
-            name,
-            target_amount: Number(target),
-            target_period: period,
-            match_category: category,
-            unit: "hrs",
-            metric: "activity_hours",
-            direction: "at_least",
-          }
-        : goalType === "amount_cap"
-          ? {
-              name,
-              target_amount: Number(target),
-              target_period: period,
-              match_category: null,
-              unit: "kcal",
-              metric: "food_kcal",
-              direction: "at_most",
-            }
-          : {
-              // Named budget line: the quota engine's spend metric with the
-              // kind/text matcher; blank matcher = total spend, the original quota.
-              name,
-              target_amount: Number(target),
-              target_period: period,
-              match_category: budgetTerms.trim() || null,
-              match_kind: budgetKind || null,
-              unit: "$",
-              metric: "spend",
-              direction: "at_most",
-            }
-    );
+  function buildBody(): HabitWrite {
+    const common = { name, target_amount: Number(target), target_period: period };
+    if (goalType === "time")
+      return { ...common, match_category: category, unit: "hrs", metric: "activity_hours", direction: "at_least" };
+    if (goalType === "amount_cap")
+      return { ...common, match_category: null, unit: "kcal", metric: "food_kcal", direction: "at_most" };
+    if (goalType === "exercise")
+      // Distinct gym days in the window ("gym 4x/week") — backend counts.
+      return { ...common, match_category: null, unit: "sessions", metric: "exercise_days", direction: "at_least" };
+    // Named budget line: the quota engine's spend metric with the
+    // kind/text matcher; blank matcher = total spend, the original quota.
+    return {
+      ...common,
+      match_category: budgetTerms.trim() || null,
+      match_kind: budgetKind || null,
+      unit: "$",
+      metric: "spend",
+      direction: "at_most",
+    };
+  }
+
+  function clearForm() {
     setName("");
     setTarget("");
     setBudgetKind("");
     setBudgetTerms("");
-    setStatus("goal added");
+    setEditingId(null);
+  }
+
+  async function submit() {
+    if (!name || !target) return;
+    setStatus("saving...");
+    if (editingId !== null) {
+      const res = await updateHabit(editingId, buildBody());
+      setStatus(`updated — takes effect ${res.effective_from}`);
+    } else {
+      const res = await createHabit(buildBody());
+      setStatus(res.updated ? `existing goal updated — takes effect ${res.effective_from}` : "goal added — counts this period");
+    }
+    clearForm();
+    await refresh();
+  }
+
+  function startEdit(habit: Habit) {
+    // Prefill from the PENDING version when one exists, so a second edit
+    // composes on top of the first instead of silently reverting it.
+    const v = habit.pending ?? habit;
+    setEditingId(habit.id);
+    setGoalType(METRIC_TO_GOAL_TYPE[v.metric] ?? "time");
+    setName(habit.name);
+    setTarget(String(v.target_amount));
+    setPeriod(v.target_period);
+    if (v.metric === "activity_hours") setCategory(v.match_category ?? CATEGORIES[0]);
+    setBudgetKind(v.metric === "spend" ? (v.match_kind ?? "") : "");
+    setBudgetTerms(v.metric === "spend" ? (v.match_category ?? "") : "");
+    setStatus(null);
+  }
+
+  async function endGoal(habit: Habit) {
+    setStatus("ending...");
+    const res = await endHabit(habit.id);
+    setStatus(`"${habit.name}" ends ${res.ended_on} — this period still counts`);
+    if (editingId === habit.id) clearForm();
     await refresh();
   }
 
@@ -310,12 +344,34 @@ export default function HabitsPage() {
                   </span>
                 </div>
               )}
+              {habit.pending && (
+                <p className="text-xs text-warn">
+                  changing to{" "}
+                  <span className="font-mono">
+                    {habit.pending.target_amount} {habit.pending.unit} per {habit.pending.target_period}
+                  </span>{" "}
+                  from {habit.pending.effective_from}
+                </p>
+              )}
+              {habit.ended_on && (
+                <p className="text-xs text-danger">ends {habit.ended_on} — this period still counts</p>
+              )}
+              <div className="flex gap-2">
+                <Button size="sm" variant="ghost" onClick={() => startEdit(habit)}>
+                  <Pencil size={13} /> Edit
+                </Button>
+                {!habit.ended_on && (
+                  <Button size="sm" variant="ghost" onClick={() => endGoal(habit)}>
+                    <Ban size={13} /> End
+                  </Button>
+                )}
+              </div>
             </Panel>
           );
         })}
       </div>
 
-      <Panel title="Add a goal" bodyClassName="space-y-3">
+      <Panel title={editingId !== null ? `Edit "${name}" (takes effect next ${period})` : "Add a goal"} bodyClassName="space-y-3">
         <Segmented
           value={goalType}
           onChange={setGoalType}
@@ -323,18 +379,29 @@ export default function HabitsPage() {
             { value: "time", label: "Time-based (hours)" },
             { value: "amount_cap", label: "Amount cap (kcal)" },
             { value: "budget", label: "Budget line ($)" },
+            { value: "exercise", label: "Gym days" },
           ]}
         />
         <Input
-          placeholder={goalType === "time" ? "e.g. Golf" : goalType === "amount_cap" ? "e.g. Daily calorie cap" : "e.g. Food budget, Winery weekend"}
+          placeholder={
+            goalType === "time"
+              ? "e.g. Golf"
+              : goalType === "amount_cap"
+                ? "e.g. Daily calorie cap"
+                : goalType === "exercise"
+                  ? "e.g. Gym 4x a week"
+                  : "e.g. Food budget, Winery weekend"
+          }
           value={name}
           onChange={(e) => setName(e.target.value)}
+          disabled={editingId !== null}
+          title={editingId !== null ? "Name is the habit's identity — end it and add a new one to rename" : undefined}
         />
         <div className="flex flex-wrap gap-2">
           <Input
             type="number"
             className="w-28"
-            placeholder={goalType === "time" ? "hours" : goalType === "amount_cap" ? "kcal" : "$"}
+            placeholder={goalType === "time" ? "hours" : goalType === "amount_cap" ? "kcal" : goalType === "exercise" ? "days" : "$"}
             value={target}
             onChange={(e) => setTarget(e.target.value)}
           />
@@ -380,9 +447,30 @@ export default function HabitsPage() {
             blank for a total-spend cap.
           </p>
         )}
-        <Button variant="primary" onClick={submit} disabled={!name || !target}>
-          <Plus size={16} /> Add goal
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="primary" onClick={submit} disabled={!name || !target}>
+            {editingId !== null ? (
+              <>
+                <Pencil size={16} /> Save change
+              </>
+            ) : (
+              <>
+                <Plus size={16} /> Add goal
+              </>
+            )}
+          </Button>
+          {editingId !== null && (
+            <Button variant="ghost" onClick={clearForm}>
+              Cancel
+            </Button>
+          )}
+        </div>
+        {editingId === null && (
+          <p className="text-xs text-muted">
+            Re-using an existing goal&apos;s name updates it — the change takes effect next period; the current period
+            finishes under the old target.
+          </p>
+        )}
         {status && <p className="text-sm text-muted">{status}</p>}
       </Panel>
     </div>
