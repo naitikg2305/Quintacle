@@ -6,7 +6,7 @@ import frontmatter
 
 from ...markdown_paths import resolve_nested, safe_metadata, slugify
 
-_HOME = "Planning/Travel"
+_HOME = "Fun/Travel"  # 2026-10-20 taxonomy: Planning root retired, travel experiences live under Fun
 
 
 def _kind_folder_name(kind: str) -> str:

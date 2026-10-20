@@ -49,7 +49,7 @@ def test_rest_journal_save_links_people_and_experiences(tmp_path):
     edges = get_graph_store().edges_from("journal:2026-10-14")
     by_kind = {e["kind"]: e["target_id"] for e in edges}
     assert by_kind["mentions_person"] == "note:people/laura/profile"
-    assert by_kind["at_location"] == "experience:planning/travel/new-york/restaurants/carbone"
+    assert by_kind["at_location"] == "experience:fun/travel/new-york/restaurants/carbone"
 
 
 def test_rest_journal_resave_does_not_duplicate_edges(tmp_path):
@@ -119,7 +119,7 @@ def test_activity_description_links_from_its_day(tmp_path, monkeypatch):
 
     edges = get_graph_store().edges_from("journal:2026-09-11")
     assert [(e["kind"], e["target_id"]) for e in edges] == [
-        ("at_location", "experience:planning/travel/alexandria/restaurants/mia-italina-kitchen")
+        ("at_location", "experience:fun/travel/alexandria/restaurants/mia-italina-kitchen")
     ]
 
 
@@ -174,7 +174,7 @@ def test_place_emerges_at_exactly_the_threshold(tmp_path):
     assert {e["kind"] for e in edges} == {"at_location"}
     assert {e["source_of_edge"] for e in edges} == {"emergent_place"}
     assert {e["source_id"] for e in edges} == {
-        "experience:planning/travel/lisbon/bakerys/pastel-bakery",
+        "experience:fun/travel/lisbon/bakerys/pastel-bakery",
         "journal:2026-10-01",
         "note:thoughts/lisbon-packing-list",
     }
@@ -221,5 +221,5 @@ def test_graph_endpoint_types_person_and_place_nodes(tmp_path, monkeypatch):
 
     # An experience's own KB file appears once, under its experience: id —
     # not again as an untyped duplicate note.
-    assert "experience:planning/travel/new-york/restaurants/carbone" in nodes
-    assert "note:planning/travel/new-york/restaurants/carbone" not in nodes
+    assert "experience:fun/travel/new-york/restaurants/carbone" in nodes
+    assert "note:fun/travel/new-york/restaurants/carbone" not in nodes

@@ -29,7 +29,7 @@ def test_experiences_nested_by_city_and_kind(tmp_path):
     store = ExperienceStore(tmp_path)
     folder, _ = store.write("Nobu", "Tokyo", "restaurant")
 
-    assert folder == "planning/travel/tokyo/restaurants"
+    assert folder == "fun/travel/tokyo/restaurants"
 
 
 def test_different_kinds_get_different_subfolders(tmp_path):
