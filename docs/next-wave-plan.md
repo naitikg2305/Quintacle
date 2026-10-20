@@ -550,3 +550,38 @@ surface moved).
   (archive-on-close), don't-keep, suggesters, target-note lane,
   generate-image, phone pane switcher.
 
+
+## 10. The final map, Me, and time (2026-10-20, all ordered same day)
+
+**The file map (decided after the PARA talk — his structure, three upgrades):**
+roots = Me · Daily Log · Personal Development · Organisation · Career ·
+Projects · Knowledge (ex-Nerd Folder) · Fun (new) · People. Planning,
+Multimedia, Sports & Activities retire. Career = nouns (one folder per
+employer); Projects = verbs (one per endeavor, `idea → active → archived`
+as a FIELD — archive is a status, never a file move, because moves break
+note ids/edges). Travel splits: planning a trip = a Project; visited
+places auto-file `Fun/Travel/<City>/<Kind>/` (code home moved off
+Planning/Travel); idea lists = `Fun/Day Trips`/`Things To Do`. Lectures
+live by topic (`Knowledge/Lectures`) with `course:`/`semester:` fields
+carrying the endeavor dimension.
+
+**Ordered:**
+- **Seed** charters incl. entity hubs `Career/Minfy`, `Projects/Quintacle`, `Me/`.
+- **Me/ lane**: quick-reference self — curated facts written there (injuries,
+  dating, friends, preferences); live numbers (PRs, income, savings rate)
+  COMPUTED from SQL at ask-time, never copied; chat always hydrates it.
+- **Work logs**: all days, one home — `Daily Log/Work Logs` — edges to every
+  project/employer mentioned ("what did I do for Minfy this year" = walk edges).
+- **Auto productivity rows**: one activity one-liner per work-log session,
+  deterministic (hours from the Session header, description from Summary),
+  deduped vs manual rows, backfilled at import.
+- **Time/date always**: chat knows now (ET); date words in questions resolve
+  IN CODE to that day's bundle (journal, rows, photo who-with lines, people)
+  hydrated into context.
+- **Home-page regroup**: Me · Life (Daily Log, PD, Organisation, People) ·
+  Productivity (Career, Projects, Knowledge) · Fun.
+- **Clickable deep links**: chat answers link into notes and their assets.
+- **Add-to-scratchpad on chat TEXT output**: drafted CSVs/itineraries become
+  files in the tray — one funnel (images got the button in §9).
+
+**Dumped for now:** STL-grade artifact generation (future agentic-tool wave).
