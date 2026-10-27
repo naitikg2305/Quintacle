@@ -107,6 +107,7 @@ _RETRIEVE_K = 8
 _FULL_BODY_CHARS = 4000  # per-hit cap on a prose node's full content
 _TOPIC_BODY_CHARS = 8000  # the scoped topic note itself gets more room
 _CONTEXT_CHAR_BUDGET = 24000  # total cap on the assembled context block
+_NO_MATCH = "(nothing in the knowledge base matched this question)"  # retrieval ran, zero hits
 
 
 def _last_user_text(messages: list[dict]) -> str:
@@ -207,7 +208,7 @@ def _kb_context(store: KBStore, query: str, exclude_id: str | None = None) -> st
         raise LookupError("retrieval index is empty — run the backfill")
     hits = [h for h in index.retrieve(query, k=_RETRIEVE_K) if h["id"] != exclude_id]
     if not hits:
-        return "(nothing in the knowledge base matched this question)"
+        return _NO_MATCH
     sections: list[str] = []
     total = 0
     for hit in hits:
@@ -621,6 +622,17 @@ _GROUNDING_RULES = (
 )
 
 
+# §12 correction 2026-10-27: the fixed SERIOUS-mode reply when there is
+# nothing to ground on (see _build_context's `nothing_to_ground`). Returned
+# by code WITHOUT any model call — live testing showed local qwen3:8b
+# inventing notes, meds and links under the strict prompt anyway.
+SERIOUS_NOTHING_REPLY = (
+    "That's not in your notes.\n\n"
+    "Say \"casual mode\" if you want me to draw on recent chats too — or record it "
+    "if it's worth keeping."
+)
+
+
 def _system_text(
     store: KBStore,
     use_kb: bool,
@@ -629,7 +641,31 @@ def _system_text(
     messages: list[dict],
     mode: str = "unserious",
 ) -> str | None:
-    """The system context for every provider — identical assembly whether the
+    """The assembled system context (see _build_context for the full order)."""
+    return _build_context(store, use_kb, folder, slug, messages, mode)[0]
+
+
+def _build_context(
+    store: KBStore,
+    use_kb: bool,
+    folder: str | None,
+    slug: str | None,
+    messages: list[dict],
+    mode: str = "unserious",
+) -> tuple[str | None, bool]:
+    """(system text, nothing_to_ground).
+
+    `nothing_to_ground` (§12 correction 2026-10-27) is True ONLY when the
+    KB is on, the scope is NOT folder-only, there is no topic hydration,
+    retrieval RAN and matched nothing (the legacy dump-everything fallback
+    counts as material, so retrieval-down never sets it), no day bundle
+    hydrated, and the Me block is empty. run_kb_chat uses it in SERIOUS mode
+    to skip the model entirely. A non-empty Me block alone keeps it False:
+    a question about the user's own numbers may be answerable from it.
+    `use_kb=false` never sets it (the user switched the notes off; there is
+    nothing to be strict about).
+
+    The system context for every provider — identical assembly whether the
     turn runs local, on Bedrock, or on a direct cloud API (escalation carries
     the SAME text). Order (extended 2026-10-20 §10, 2026-10-27 §12):
 
@@ -666,7 +702,7 @@ def _system_text(
     falls back to the legacy behavior — the folder's entries when scoped,
     the old dump-everything context otherwise; Me/day/recent sections just drop."""
     if not use_kb:
-        return _now_line()  # §10: chat always knows now, even with the KB off
+        return _now_line(), False  # §10: chat always knows now, even with the KB off
 
     serious = mode == "serious"
     parts: list[str] = [_now_line()]
@@ -681,7 +717,7 @@ def _system_text(
         )
         rules = f"{_GROUNDING_RULES} {_LINK_RULES}" + (f" {_SERIOUS_RULES}" if serious else "")
         parts.append(f"{intro} {rules}\n\n{_kb_context_for_folder(store, folder)}")
-        return "\n\n".join(parts)
+        return "\n\n".join(parts), False  # folder scope: unaffected by the short-circuit
 
     topic = _topic_context(store, folder, slug) if folder and slug else None
 
@@ -726,7 +762,7 @@ def _system_text(
         if recent:
             body.append(recent)
         parts.append(f"{intro} {rules_for(recent)}\n\n" + "\n\n".join(body))
-        return "\n\n".join(parts)
+        return "\n\n".join(parts), False  # topic hydration IS material
 
     if serious:
         intro = (
@@ -754,7 +790,8 @@ def _system_text(
     if recent:
         context = f"{context}\n\n{recent}"
     parts.append(f"{intro} {rules_for(recent)}\n\n{context}")
-    return "\n\n".join(parts)
+    nothing_to_ground = retrieved == _NO_MATCH and not day_blocks and not me
+    return "\n\n".join(parts), nothing_to_ground
 
 
 def _run_anthropic(model: str, messages: list[dict], kb_text: str | None) -> str:
@@ -1049,6 +1086,86 @@ def _run_local(picker_id: str, messages: list[dict], kb_text: str | None) -> str
     return reply.strip() or "(the model returned an empty reply)"
 
 
+# --- §12 correction 2026-10-27: deterministic link post-validation ------------
+#
+# Every reply, every mode, every provider: markdown links to the app's own
+# note/asset routes are checked against the store IN CODE. A link to a note
+# or asset that doesn't exist is replaced by its plain text + " (not found in
+# your notes)" — a model can still write a fake path, but it can never render
+# as a clickable link. External http(s) links and any other href are left
+# untouched. The routes are the ones _LINK_RULES teaches:
+#   /kb/browse?path=<folder>&open=<slug>   -> KBStore.read(folder, slug)
+#   /kb/browse?path=<folder>               -> folder exists (a folder view)
+#   /kb/browse                             -> the browse page itself (valid)
+#   /kb/asset?folder=<folder>&path=<path>  -> KBStore.asset_exists (clamped)
+# Query values are URL-decoded (parse_qs); folder/slug go through the same
+# slugify normalization KBStore uses on read, so "Health%20Notes" finds
+# "health-notes". Anything else under those two routes (missing params,
+# `open` without `path`, a bad query) is unverifiable -> treated as not found.
+
+_MD_LINK_RE = re.compile(r"(!?)\[([^\]\n]*)\]\(\s*(?:<([^<>\n]+)>|([^()\s<>]+))(?:\s+\"[^\"]*\")?\s*\)")
+NOT_FOUND_SUFFIX = " (not found in your notes)"
+
+
+def _app_link_exists(store: KBStore, href: str) -> bool | None:
+    """True/False for an app note/asset route, None for any other href (not
+    ours to judge — external links, other in-app routes, anchors)."""
+    parsed = urllib.parse.urlsplit(href)
+    if parsed.scheme or parsed.netloc:
+        return None
+    route = parsed.path.rstrip("/")
+    if route not in ("/kb/browse", "/kb/asset"):
+        return None
+    try:
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True, strict_parsing=bool(parsed.query))
+    except ValueError:
+        return False
+    one = lambda key: (query.get(key) or [""])[0].strip()  # noqa: E731
+    if route == "/kb/asset":
+        folder, asset_path = one("folder"), one("path")
+        if not asset_path:
+            return False
+        try:
+            return store.asset_exists(folder, asset_path)
+        except Exception:
+            return False
+    folder, slug = one("path"), one("open")
+    if slug:
+        if not folder:
+            return False
+        try:
+            return store.read(folder, slug) is not None
+        except Exception:
+            return False
+    if not query:
+        return True  # bare /kb/browse — the browse page itself
+    if not folder:
+        return False
+    try:
+        return store.folder_exists(folder)
+    except Exception:
+        return False
+
+
+def validate_reply_links(reply: str, store: KBStore) -> str:
+    """Pure post-pass over a model reply (store reads only, no writes, no
+    model): every markdown link/image whose href is an app note or asset
+    route that does NOT exist becomes `text (not found in your notes)`.
+    Valid links, external links and plain text are returned byte-identical."""
+    if not reply or "](" not in reply:
+        return reply
+
+    def replace(m: re.Match) -> str:
+        href = (m.group(3) or m.group(4) or "").strip()
+        exists = _app_link_exists(store, href)
+        if exists is None or exists:
+            return m.group(0)
+        text = m.group(2).strip() or href
+        return f"{text}{NOT_FOUND_SUFFIX}"
+
+    return _MD_LINK_RE.sub(replace, reply)
+
+
 def run_kb_chat(
     store: KBStore,
     messages: list[dict],
@@ -1062,7 +1179,13 @@ def run_kb_chat(
     entry = resolve_model(model, research)
     # Context is assembled once, identically for every provider — escalating
     # the same conversation to a cloud model transfers the SAME context.
-    kb_text = _system_text(store, use_kb, folder, slug, messages, mode)
+    kb_text, nothing_to_ground = _build_context(store, use_kb, folder, slug, messages, mode)
+    if mode == "serious" and nothing_to_ground:
+        # §12 correction: zero-match short-circuit. Serious mode is the
+        # escape hatch FROM hallucination, so with nothing to ground on the
+        # model is never called — whatever provider was picked (escalation
+        # gets the identical deterministic answer).
+        return SERIOUS_NOTHING_REPLY
     if entry["provider"] == "openai":
         reply = _run_openai(entry["id"], messages, kb_text)
     elif entry["provider"] == "bedrock":
@@ -1071,4 +1194,6 @@ def run_kb_chat(
         reply = _run_local(entry["id"], messages, kb_text)
     else:
         reply = _run_anthropic(entry["id"], messages, kb_text)
-    return _resolve_photo_tags(reply)
+    # Post-validation runs last, after photo tags resolved (those are external
+    # https images and pass through untouched).
+    return validate_reply_links(_resolve_photo_tags(reply), store)

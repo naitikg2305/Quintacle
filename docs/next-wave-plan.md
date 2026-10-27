@@ -821,3 +821,45 @@ rollback + error banner on failure. Not yet done: surfacing `soft_facts_added`.
 - Tests: `tests/test_chat_modes.py` (63 new); suite 597 passed / 0 skipped.
   Deferred: the linear timeline VIEW page (frontend), a "Record that" shortcut
   from a soft fact, and any retention/pruning of old soft facts.
+
+### CORRECTION 2026-10-27 — live testing showed local serious mode hallucinating; deterministic fixes (worktree agent, off `redone-UI` `69989ea`)
+
+Running the real pipeline in a sandbox with local qwen3:8b: asked "what's been
+going on with my throat lately?" in SERIOUS mode with nothing relevant in the
+KB, the assembled context was correct (strict rule present, no chat material,
+"(nothing in the knowledge base matched this question)") and the model STILL
+invented a "Sore Throat Note", ibuprofen, a doctor's appointment and two links
+to notes that don't exist. Serious mode is the user's escape hatch from
+hallucination, so a prompt-wording fix was rejected — the fixes are code:
+
+- **Zero-match short-circuit** (`chat._build_context` returns
+  `nothing_to_ground`; `run_kb_chat` checks it). In serious mode, when the KB
+  is on, the scope is not folder-only, there is no topic hydration, retrieval
+  RAN and matched nothing, no day bundle hydrated, AND the Me block is empty,
+  the model is never called: the reply is the fixed `SERIOUS_NOTHING_REPLY`
+  ("That's not in your notes." + one line suggesting casual mode or recording
+  it), same `{reply, mode, mode_switched}` shape. Me-only still calls the model
+  (a question about the user's own numbers may be answerable from it). The
+  retrieval-down legacy fallback counts as material (never short-circuits);
+  `use_kb=false` is out of scope. Same rule for every provider, so escalating
+  gets the identical deterministic answer.
+- **Link post-validation** (`chat.validate_reply_links`, every reply, every mode
+  and provider): markdown links/images to `/kb/browse?path=&open=` and
+  `/kb/asset?folder=&path=` are checked in code (KBStore.read with its slugify
+  normalization after URL-decoding; `KBStore.asset_exists` through the existing
+  clamp). Missing -> plain text + " (not found in your notes)". External and
+  other links untouched.
+- **Soft facts anchor relative dates** (`soft_record.annotate_fact_date`, at
+  store time against the CHAT's date, not clock.today()): "since Tuesday" from
+  a Tuesday 2026-10-27 chat was later read as 2026-10-27. Now stored as
+  "Throat soreness since Tuesday (2026-10-20)". Conservative: only when exactly
+  one date resolves; future cues, existing ISO dates and explicit month-days
+  are left alone. Bare weekdays only after since / this past / started (on) /
+  began (on) — the last two added because the extractor rewords "since Tuesday"
+  as "started on Tuesday".
+- Frontend: the escalate path now adopts the returned `mode`/`mode_switched`.
+- Verified live (sandbox, qwen3:8b): the throat question in serious mode
+  returns the fixed reply with 0 model calls; the stored fact carried
+  2026-10-20; "just from my notes — when does my Minfy contract renew?"
+  switched to serious and answered from the note with a valid link.
+  Tests: `tests/test_chat_mode_fixes.py`; suite 653 passed / 0 skipped.

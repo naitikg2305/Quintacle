@@ -155,7 +155,12 @@ def test_chat_response_carries_mode_and_switch_flag(client, monkeypatch):
 def test_switch_phrase_changes_the_context_used_this_very_turn(client, monkeypatch):
     captured = _capture(monkeypatch)
     _seed_recent()
-    _chat(client, "serious mode: what is my kettlebell plan?")
+    # Nothing in the KB matches "kettlebell" (it only lives in recent chats):
+    # the switched-to serious turn short-circuits without a model call
+    # (§12 correction 2026-10-27) — the soft material can't leak in.
+    r = _chat(client, "serious mode: what is my kettlebell plan?")
+    assert r["reply"] == chat.SERIOUS_NOTHING_REPLY and captured == []
+    _chat(client, "serious mode: what is my kettlebell plan and deadlift cue?")
     assert "From recent chats" not in captured[-1]
 
 
