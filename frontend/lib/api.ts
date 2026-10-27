@@ -1457,10 +1457,17 @@ export const listChatModels = () => request<ChatModel[]>("/kb/models");
 // only when no model is given. `slug` (with `folder`) marks a chat continued
 // ON one note — the backend hydrates its content + graph neighborhood as the
 // topic (next-wave-plan §4); context otherwise comes from retrieval.
-export const chatWithKB = (messages: ChatMessage[], use_kb: boolean, research: boolean, folder?: string, model?: string, slug?: string) =>
-  request<{ reply: string }>("/kb/chat", {
+//
+// §12: `mode` is sticky — the page echoes back the `mode` the last response
+// returned. An older backend omits `mode`/`mode_switched`; callers treat a
+// missing `mode` as "keep current".
+export type ChatMode = "serious" | "unserious";
+export type ChatReply = { reply: string; mode?: ChatMode; mode_switched?: boolean };
+
+export const chatWithKB = (messages: ChatMessage[], use_kb: boolean, research: boolean, folder?: string, model?: string, slug?: string, mode?: ChatMode) =>
+  request<ChatReply>("/kb/chat", {
     method: "POST",
-    body: JSON.stringify({ messages, use_kb, research, folder: folder ?? null, model: model ?? null, slug: slug ?? null }),
+    body: JSON.stringify({ messages, use_kb, research, folder: folder ?? null, model: model ?? null, slug: slug ?? null, ...(mode ? { mode } : {}) }),
   });
 
 // --- transcripts deep search + "record that" (next-wave-plan §4) -----------
@@ -1518,13 +1525,25 @@ export function base64ToFile(base64: string, mimeType: string, filename: string)
 // invisible to every KB/model surface, reachable only via the explicit
 // /transcripts/search deep-dive lane. keep=false (the per-chat "don't keep"
 // toggle) archives nothing.
-export type ArchiveResult = { archived: boolean; path?: string; topic?: string };
+export type ArchiveResult = { archived: boolean; path?: string; topic?: string; soft_facts_added?: number };
 
-export const archiveTranscript = (messages: ChatMessage[], subject: string | null, keep: boolean) =>
+// `incognito` (§12) marks a chat that was incognito from message one — the
+// same intent as keep=false, stated explicitly so the backend never learns
+// soft facts from it.
+export const archiveTranscript = (messages: ChatMessage[], subject: string | null, keep: boolean, incognito?: boolean) =>
   request<ArchiveResult>("/transcripts/archive", {
     method: "POST",
-    body: JSON.stringify({ messages, subject, keep }),
+    body: JSON.stringify({ messages, subject, keep, ...(incognito ? { incognito: true } : {}) }),
   });
+
+// --- soft record (§12) -----------------------------------------------------
+// Short facts extracted from kept chats; each carries its date and the
+// transcript it came from. Used only in casual mode.
+export type SoftFact = { id: number | string; date: string; text: string; transcript: string };
+
+export const getSoftRecord = () => request<SoftFact[]>("/soft-record");
+export const deleteSoftFact = (id: number | string) =>
+  request<{ deleted: number | string }>(`/soft-record/${encodeURIComponent(String(id))}`, { method: "DELETE" });
 
 export type ChatSession = { id: string; title: string };
 

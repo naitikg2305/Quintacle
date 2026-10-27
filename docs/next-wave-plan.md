@@ -758,3 +758,18 @@ two layers with different trust, never merged automatically.
   formatting change, no new storage.
 - **Storage is not a constraint**: roughly 25–110 MB/year of text plus a
   similar FTS index, negligible next to photos.
+
+**BUILT 2026-10-27 (frontend half):** `components/ModeChip.tsx` — chip reads
+"Mode: Casual" / "Mode: Serious" (text always, accent border when serious),
+click toggles; `chatMode` is sticky page state sent on every `/kb/chat`
+(including escalations) and replaced by `response.mode` (missing = keep
+current, so older backends work). `mode_switched` shows a transient inline
+notice ("Switched to serious mode — answering from your notes only"), kept
+out of `chatLog` so it is never sent or archived. Hint under the input:
+"Serious: answers only from your knowledge base" / "Casual: draws on your
+notes and recent chats". Incognito reuses `keepTranscript` (button now reads
+"Incognito" when off; banner "Incognito — this chat won't be kept or learned
+from."); `archiveTranscript` passes `incognito: true` in that case. New page
+`/soft-record` ("Chat memory", nav under Life, linked from the chat footer,
+in ChatLog `APP_ROUTES`) lists `GET /soft-record` with optimistic delete and
+rollback + error banner on failure. Not yet done: surfacing `soft_facts_added`.
