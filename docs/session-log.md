@@ -3,6 +3,20 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-27 — Additive preset suggestion in /drop (worktree agent)
+
+Built on `redone-UI` `69989ea` (not pushed). Unprefixed meal/workout/label text
+now yields the primary classification PLUS a meal_composition / workout_routine /
+ingredient_preset proposal. Gate: `drop_router.looks_like_preset` (regex, no
+model). Extractors reused; `estimate_nutrition`, `suggest_meal_composition`,
+`suggest_workout_routine` now accept `provider` and go through
+`parse_structured` (behavior change: those lanes are local-first by default).
+Dedupe vs meals/routines/ingredients; failure-isolated. Suite 641 passed
+(597 + 44 in `tests/test_drop_presets.py`). Frontend unchanged (verified mixed
+batch commit + event link in `lib/entries.ts`, per-entry remove in DropReview).
+Open: real-model quality on seeded data not judged (local qwen3:8b on the
+nutrition schema is untested).
+
 ## 2026-10-27 — §12 backend: serious/unserious chat modes + soft record (worktree agent)
 
 Built on `redone-UI` `f57ac31` (not pushed). Backend only; frontend is a

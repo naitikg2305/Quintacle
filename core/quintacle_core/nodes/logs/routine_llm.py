@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import anthropic
 from pydantic import BaseModel
 
-from ...llm_config import DEFAULT_MODEL
+from ...llm_dispatch import parse_structured
 from ..journal.normalize import canonicalize_name
 
 # Mirrors suggest_outfit/suggest_grooming_routine's shape, but simpler: an
@@ -24,21 +23,17 @@ class WorkoutRoutineSuggestion(BaseModel):
     exercises: list[str]
 
 
-def suggest_workout_routine(description: str, known_exercise_names: list[str]) -> WorkoutRoutineSuggestion:
-    client = anthropic.Anthropic()
+def suggest_workout_routine(
+    description: str, known_exercise_names: list[str], provider: str | None = None
+) -> WorkoutRoutineSuggestion:
     library = (
         "Known exercise names:\n" + "\n".join(known_exercise_names)
         if known_exercise_names
         else "Known exercise names: (none logged yet)"
     )
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=2048,
-        system=_COMPOSER_SYSTEM_PROMPT + "\n\n" + library,
-        messages=[{"role": "user", "content": description}],
-        output_format=WorkoutRoutineSuggestion,
-    )
-    return response.parsed_output
+    return parse_structured(
+        _COMPOSER_SYSTEM_PROMPT + "\n\n" + library, description, WorkoutRoutineSuggestion, provider=provider, max_tokens=2048
+    ).parsed
 
 
 def resolve_workout_routine(suggestion: WorkoutRoutineSuggestion, known_exercise_names: list[str]) -> dict:

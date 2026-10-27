@@ -550,6 +550,24 @@ surface moved).
   (archive-on-close), don't-keep, suggesters, target-note lane,
   generate-image, phone pane switcher.
 
+**BUILT 2026-10-27 (additive preset suggestion, worktree agent):** "Sort with
+AI" on an unprefixed text description of a meal / workout / ingredient now
+also proposes the matching preset, appended AFTER the primary result
+(propose-everything, prune-what-you-don't-want). `drop_router.looks_like_preset`
+is a zero-model regex gate (ingredient_preset / workout_routine /
+meal_composition / None, conservative); the proposal reuses the prefix lanes'
+extractors (`estimate_nutrition`, `parse_routine_definition` else
+`suggest_workout_routine`+`resolve_workout_routine`, `suggest_meal_composition`
++`resolve_composition`) in the identical entry shape. Preset types stay OUT of
+parse_journal_dump's union. Skipped for prefixed/file/stock drops and when the
+name already exists; failure-isolated. The three LLM extractors now take
+`provider` and route through `llm_dispatch.parse_structured` (previously
+direct cloud calls), so the extra call honors Redo-with-cloud and is counted in
+`provider_used`; this also moves the `recipe:`/`ingredient:` lanes and
+`/logs/*/suggest*` endpoints to local-first-with-cloud-fallback by default.
+Tests: `core/tests/test_drop_presets.py`. No frontend change (mixed batches
+already commit + event-link generically).
+
 
 ## 10. The final map, Me, and time (2026-10-20, all ordered same day)
 

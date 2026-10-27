@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as _datetime
 import logging
 import os
+import re
 from datetime import date
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from .nodes.drop_router import (
     entry_type_for_image_kind,
     extension,
     extract_finance_from_receipt,
+    looks_like_preset,
     looks_like_stock_transaction,
     parse_income_text,
     parse_prefix,
@@ -40,6 +42,7 @@ from .nodes.kb.drop import describe_drop, extract_photo_date, extract_photo_loca
 from .nodes.kb.photo_organizer import compute_photo_folder
 from .nodes.kb.llm import suggest_kb_entry, suggest_kb_placement
 from .nodes.logs.meal_composer import resolve_composition, suggest_meal_composition
+from .nodes.logs.routine_llm import resolve_workout_routine, suggest_workout_routine
 from .nodes.logs.nutrition_llm import estimate_nutrition, estimate_nutrition_from_image
 from .nodes.schedule.api import init_store as init_schedule_store, get_store as get_schedule_store, router as schedule_router
 from .nodes.logs.api import init_repo, init_profile_ref, get_repo as get_logs_repo, get_log_store, router as logs_router
@@ -107,6 +110,13 @@ from .perception import perceive_photo
 from .sync import init_sync, router as sync_router
 
 logger = logging.getLogger(__name__)
+
+
+def _name_exists(name: str, known_names: list[str]) -> bool:
+    """True when `name` already matches a registry entry (case/spacing/near-
+    duplicate tolerant — the same fuzzy match canonicalize_name applies)."""
+    return bool(known_names) and canonicalize_name(name, known_names) in known_names
+
 
 DATA_DIR = Path(os.environ.get("QUINTACLE_DATA_DIR", Path.home() / ".quintacle"))
 
@@ -303,6 +313,44 @@ def create_app() -> FastAPI:
             edges_conn=get_graph_store().conn,
         )
 
+    def _propose_preset_entry(text: str, provider: str | None) -> dict | None:
+        """Gate -> existing extractor -> dedupe against the registries. Any
+        failure is logged and swallowed: an extra suggestion must never
+        fail the drop."""
+        try:
+            kind = looks_like_preset(text)
+            if kind is None:
+                return None
+            if kind == "workout_routine":
+                known_names = [r["name"] for r in get_logs_repo().list_routines()]
+                known_exercises = sorted({e["exercise_name"] for e in (get_log_store().all_entries("exercise") if get_log_store() else [])})
+                parsed_routine = parse_routine_definition(text)
+                if parsed_routine is not None:
+                    name, exercises = parsed_routine
+                    resolved = {"name": name, "exercises": [canonicalize_name(e, known_exercises) for e in exercises]}
+                else:
+                    resolved = resolve_workout_routine(suggest_workout_routine(text, known_exercises, provider=provider), known_exercises)
+                if not resolved["exercises"] or _name_exists(resolved["name"], known_names):
+                    return None
+                return {"type": "workout_routine", **resolved}
+            if kind == "ingredient_preset":
+                known_names = [i["name"] for i in get_logs_repo().list_ingredients()]
+                estimate = estimate_nutrition(text, provider=provider)
+                clause = re.split(r"[,\n.:;]", text.strip())[0].strip()
+                name = canonicalize_name(clause[:60] or "New ingredient", known_names)
+                if _name_exists(name, known_names):
+                    return None
+                return {"type": "ingredient_preset", "suggested_name": name, **estimate.model_dump()}
+            known_ingredients = [dict(row) for row in get_logs_repo().list_ingredients()]
+            suggestion = suggest_meal_composition(text, known_ingredients, provider=provider)
+            resolved = resolve_composition(suggestion, known_ingredients)
+            if not resolved["components"] or _name_exists(resolved["meal_name"], [m["name"] for m in get_logs_repo().list_meals()]):
+                return None
+            return {"type": "meal_composition", **resolved}
+        except Exception:
+            logger.warning("additive preset suggestion failed; skipping", exc_info=True)
+            return None
+
     @app.post("/drop")
     async def propose_drop(
         text: str = Form(""),
@@ -395,6 +443,9 @@ def create_app() -> FastAPI:
         # look at — defaults to the raw text, overridden per-branch when a
         # richer extracted description already exists.
         experience_check_text: str | None = rest
+        # Set only by the unprefixed plain-text fall-through: the additive
+        # preset suggestion (below) never runs for prefixed/file/stock drops.
+        preset_check_text: str | None = None
 
         if entry_type == "workout_routine":
             parsed_routine = parse_routine_definition(rest)
@@ -605,6 +656,7 @@ def create_app() -> FastAPI:
             # all. Only path that hits full multi-type AI classification.
             parsed = parse_journal_dump(rest, known_meals, reference_date, known_routines=known_routines, provider=provider)
             entries = [e.model_dump() for e in parsed]
+            preset_check_text = rest
 
         # Propose-everything-plausible, prune-what-you-don't-want: independent
         # of whatever got classified above, also check whether this drop
@@ -701,6 +753,17 @@ def create_app() -> FastAPI:
                                 "links": [exp_estimate.suggested_name] if exp_estimate is not None else [],
                             }
                         )
+
+        # Additive PRESET suggestion — same propose-everything pattern: a
+        # deterministic gate (looks_like_preset, zero model calls) says the
+        # text defines a reusable meal / routine / ingredient, and the SAME
+        # extractors the recipe:/routine:/ingredient: lanes use build the
+        # proposal in the SAME entry shape, appended after the primary
+        # result. Failure-isolated; skipped when the name already exists.
+        if preset_check_text:
+            preset_entry = _propose_preset_entry(preset_check_text, provider)
+            if preset_entry is not None:
+                entries.append(preset_entry)
 
         canonicalize_entries(entries, get_log_store())
 
