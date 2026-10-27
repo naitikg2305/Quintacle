@@ -280,6 +280,17 @@ class KBStore:
             raise FileNotFoundError(f"asset path escapes the KB root: {asset_path}")
         return path
 
+    def asset_exists(self, folder: str, asset_path: str) -> bool:
+        """Existence check through the SAME clamp read_asset uses — an
+        escaping path is simply "no such asset"."""
+        try:
+            return self._clamped_asset_path(folder, asset_path).is_file()
+        except FileNotFoundError:
+            return False
+
+    def folder_exists(self, folder: str) -> bool:
+        return resolve_nested(self.root, folder).is_dir()
+
     def read_asset(self, folder: str, asset_path: str) -> bytes | None:
         try:
             path = self._clamped_asset_path(folder, asset_path)
