@@ -218,9 +218,12 @@ def test_transcripts_never_enter_default_chat_context(client, monkeypatch):
             "subject": "Scheme Talk",
         },
     )
-    _chat(client, "what was the xylophone gambit?")
+    # 2026-10-27 (§12): the default (unserious) mode now recalls recent chats
+    # by design — see test_chat_modes.py. SERIOUS mode keeps the original
+    # §4 guarantee: the archive never enters context.
+    _chat(client, "what was the xylophone gambit?", mode="serious")
     [kb_text] = captured
-    assert "xylophone" not in kb_text  # second-tier by decision — never automatic
+    assert "xylophone" not in kb_text  # serious: KB + notes only
 
     # The explicit lane DOES reach it — topic, date, snippet for the next turn.
     hits = client.get("/transcripts/search", params={"q": "xylophone gambit"}).json()

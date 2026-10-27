@@ -105,3 +105,19 @@ The old `/kb/chats` session endpoints and `ChatStore` remain server-side but
 the page no longer writes mid-chat sessions. `chat.py`'s KB-context /
 prompting logic is untouched — hydration-from-retrieval and explicit
 "record that" folding are the chat-context wave's job, over §3's engine.
+
+---
+
+**Correction 2026-10-27 (next-wave-plan §12):** the "explicit-only, nothing else
+reads the archive" rule above no longer holds in the default chat mode. In
+**unserious** mode (the default) chat's context includes a `## From recent
+chats` block: up to 3 FTS snippets from this archive dated within the last 14
+days (`TranscriptStore.search(..., since=, limit=, any_term=True)`), plus soft
+facts extracted from kept archives (see `chat-modes.md`). **Serious** mode keeps
+the original guarantee exactly: the archive never enters context. Everything
+else is unchanged: files stay outside `kb/`, off the graph view, and invisible
+to /kb/*, MCP and the main retrieval index. `POST /transcripts/archive` also
+gains `incognito` (alias of `keep=false`) and returns `soft_facts_added`
+(always 0 — extraction is a deferred background task) / `soft_facts_pending`.
+`transcript:` ids are now filtered out of every `Connected:` neighbor label and
+`/retrieve` neighbor list.

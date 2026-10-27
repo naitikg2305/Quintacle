@@ -342,6 +342,10 @@ class RetrievalIndex:
             else:
                 continue  # an edge among the neighbors themselves
             key = (other, edge["kind"])
+            # §12: archived transcripts are second-tier — a `transcript_of`
+            # edge must never surface a transcript id in any neighbor label.
+            if other.startswith("transcript:"):
+                continue
             if other == node_id or key in seen:
                 continue
             seen.add(key)
@@ -373,6 +377,7 @@ class RetrievalIndex:
                     "title": row["title"],
                     "summary": row["summary"],
                     "score": round(score, 6),
+                    "updated_at": row["updated_at"],
                     "neighbors": self._neighbors(node_id),
                 }
             )
