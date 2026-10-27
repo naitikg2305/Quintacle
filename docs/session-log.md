@@ -3,6 +3,26 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-27 — §12 backend: serious/unserious chat modes + soft record (worktree agent)
+
+Built on `redone-UI` `f57ac31` (not pushed). Backend only; frontend is a
+parallel agent. Suite 597 passed / 0 skipped (baseline 534; 63 new in
+`tests/test_chat_modes.py`, 2 existing tests adjusted: `/retrieve` hits now carry
+`updated_at`; the "transcripts never enter default context" test now asserts it
+for serious mode, since unserious recalls recent chats by design).
+
+- `POST /kb/chat` `mode` -> `{mode, mode_switched}`; deterministic phrase switch
+  (`detect_mode_phrase`). Serious = KB-only + strict rule; unserious adds the
+  headed recent-chats block (soft facts 30d + 3 snippets 14d). Details:
+  `docs/reference/chat-modes.md`.
+- New `nodes/kb/soft_record.py` + `/soft-record` endpoints; background local
+  extraction after a kept archive; `incognito` flag; `soft_facts_added` is 0 by
+  design (deferred), `soft_facts_pending` added.
+- Retrieved notes carry `— updated YYYY-MM-DD`; persona rewritten.
+- Found + fixed the §12 open check: `transcript:` ids DID leak into `Connected:`
+  lines and `/retrieve` neighbors.
+- Conftest sets `QUINTACLE_SOFT_RECORD_PROVIDER=off` suite-wide.
+
 ## 2026-10-20 — Time grounding + the Me lane in chat context (§10, worktree agent)
 
 Built on `redone-UI` at `61adbc4`. Backend-only: `nodes/kb/chat.py` context

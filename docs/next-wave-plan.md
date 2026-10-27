@@ -758,3 +758,34 @@ two layers with different trust, never merged automatically.
   formatting change, no new storage.
 - **Storage is not a constraint**: roughly 25–110 MB/year of text plus a
   similar FTS index, negligible next to photos.
+
+### BUILT 2026-10-27 — §12 backend (worktree agent, branch `worktree-agent-a8ab428a8c609faed` off `redone-UI` `f57ac31`; frontend half is a parallel agent)
+
+- **Modes** in `nodes/kb/chat.py`: `detect_mode_phrase()` (pure, deterministic,
+  whole-phrase, case-insensitive; later phrase wins) + `resolve_mode()`.
+  `POST /kb/chat` takes `mode` (default `unserious`), returns `mode` (effective)
+  and `mode_switched`. Serious = KB + graph + notes only + a strict "that's not
+  in your notes" rule; unserious = today's context plus the headed
+  `## From recent chats (not recorded in your notes)` block (30-day soft facts
+  <=2,000 chars; <=3 FTS snippets from the last 14 days <=2,500 chars) with an
+  instruction to flag it "from a past chat, not in your notes" and offer
+  Record that. Block shrinks first under the 24k budget; any failure omits it.
+  Folder-only scope never gets the block (its cite-only contract).
+- **Dates + persona**: retrieved prose notes carry `— updated YYYY-MM-DD` (ET,
+  from the index `updated_at`, now also returned by `retrieve()`); the topic
+  header too. Unserious intro rewritten to a "was there for it" tone.
+- **Soft record** (`nodes/kb/soft_record.py`): `conversations/soft_record.db`
+  (outside `kb/`, off the graph and the main index), `GET /soft-record`,
+  `DELETE /soft-record/{id}`. One local-first `parse_structured` call
+  (`provider="local"`) over the USER's turns, run as a FastAPI background task
+  after a kept archive; dedup on (date, text). `soft_facts_added` is always 0 in
+  the archive response (extraction is deferred); `soft_facts_pending` says one
+  was queued. `incognito` is an alias of `keep=false` — neither is archived nor
+  read for facts. `QUINTACLE_SOFT_RECORD_PROVIDER=off` disables extraction.
+- **Connected-lines leak (the open check) CONFIRMED and fixed**: `transcript_of`
+  edges did surface `transcript:` ids in `Connected:` lines and `/retrieve`
+  neighbors. Filtered in `retrieval._neighbors` (plus `_neighbor_line`);
+  `/graph` regression-tested to carry no transcript nodes/edges.
+- Tests: `tests/test_chat_modes.py` (63 new); suite 597 passed / 0 skipped.
+  Deferred: the linear timeline VIEW page (frontend), a "Record that" shortcut
+  from a soft fact, and any retention/pruning of old soft facts.
