@@ -39,6 +39,16 @@ def _frontmatter_assets(meta: dict) -> list[str]:
     return list(meta.get("assets") or []) or [a for a in (meta.get("asset"), meta.get("asset2")) if a]
 
 
+def safe_asset_name(filename: str) -> str:
+    """The on-disk name an asset upload gets: slugified stem + lowercased
+    extension. The extension is reduced to [a-z0-9] too — a name like
+    "x./../../y" would otherwise smuggle a "/" or ".." through the part
+    after the last dot (rpartition never slugified it)."""
+    stem, _, ext = filename.rpartition(".")
+    ext = re.sub(r"[^a-z0-9]", "", ext.lower())
+    return f"{slugify(stem or filename)}.{ext}" if ext else slugify(filename)
+
+
 class KBStore:
     """One markdown file per entry, grouped into nested folders (e.g.
     "Personal Development/Physical/Fitness") — the narrative/reference layer
@@ -263,12 +273,39 @@ class KBStore:
         logs/ and presets/ elsewhere in the KB tree. Returns the path relative
         to the folder (e.g. "assets/deadlift-form.jpg") for the markdown
         entry to reference."""
-        assets_dir = resolve_nested(self.root, folder) / "assets"
+        assets_dir = self.assets_dir(folder)
         assets_dir.mkdir(parents=True, exist_ok=True)
-        stem, _, ext = filename.rpartition(".")
-        safe_name = f"{slugify(stem or filename)}.{ext.lower()}" if ext else slugify(filename)
+        safe_name = safe_asset_name(filename)
         (assets_dir / safe_name).write_bytes(data)
         return f"assets/{safe_name}"
+
+    def assets_dir(self, folder: str) -> Path:
+        return resolve_nested(self.root, folder) / "assets"
+
+    def entry_path(self, folder: str, slug: str) -> Path:
+        """Where `folder`/`slug`'s markdown lives (whether or not it exists) —
+        the same path _load() reads and add_asset_to_entry() rewrites."""
+        return resolve_nested(self.root, folder) / f"{slugify(slug)}.md"
+
+    def free_asset_path(self, folder: str, filename: str) -> str:
+        """The `assets/<name>` path save_asset() WOULD use for `filename`,
+        made collision-free: if that name is taken, `-2`, `-3`, ... is
+        appended to the stem, so the caller never overwrites an existing
+        asset. Goes through the same clamp read_asset uses — a result that
+        would resolve outside the KB root (e.g. an `assets` symlink pointing
+        into the vault) raises FileNotFoundError instead."""
+        safe_name = safe_asset_name(filename)
+        stem, dot, ext = safe_name.rpartition(".")
+        if not dot:
+            stem, ext = safe_name, ""
+        assets_dir = self.assets_dir(folder)
+        candidate, n = safe_name, 1
+        while (assets_dir / candidate).exists() or (assets_dir / candidate).is_symlink():
+            n += 1
+            candidate = f"{stem}-{n}.{ext}" if ext else f"{stem}-{n}"
+        rel = f"assets/{candidate}"
+        self._clamped_asset_path(folder, rel)  # raises if it escapes kb/
+        return rel
 
     def _clamped_asset_path(self, folder: str, asset_path: str) -> Path:
         """`asset_path` comes from a request query/form raw — unlike `folder`
@@ -310,7 +347,7 @@ class KBStore:
             raise FileNotFoundError(f"entry not found: {folder}/{slug}")
         asset_path = self.save_asset(folder, filename, data)
         post.content = post.content.rstrip("\n") + f"\n[asset]({asset_path})\n"
-        path = resolve_nested(self.root, folder) / f"{slugify(slug)}.md"
+        path = self.entry_path(folder, slug)
         path.write_text(frontmatter.dumps(post), encoding="utf-8")
         return asset_path
 
