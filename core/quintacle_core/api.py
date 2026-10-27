@@ -35,6 +35,7 @@ from .nodes.drop_router import (
     parse_income_text,
     parse_prefix,
     parse_routine_definition,
+    strip_set_scheme,
 )
 from .nodes.journal.llm import parse_journal_dump
 from .nodes.journal.normalize import canonicalize_entries, canonicalize_name
@@ -330,6 +331,12 @@ def create_app() -> FastAPI:
                     resolved = {"name": name, "exercises": [canonicalize_name(e, known_exercises) for e in exercises]}
                 else:
                     resolved = resolve_workout_routine(suggest_workout_routine(text, known_exercises, provider=provider), known_exercises)
+                exercises: list[str] = []
+                for ex in resolved["exercises"]:
+                    clean = strip_set_scheme(ex)
+                    if clean and clean not in exercises:
+                        exercises.append(clean)
+                resolved = {**resolved, "exercises": exercises}
                 if not resolved["exercises"] or _name_exists(resolved["name"], known_names):
                     return None
                 return {"type": "workout_routine", **resolved}

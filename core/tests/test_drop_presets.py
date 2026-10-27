@@ -240,3 +240,28 @@ def test_extra_call_is_counted_by_provider_collector(client, monkeypatch):
     assert _types(resp) == ["food", "workout_routine"]
     assert resp.json()["provider_used"] == "local"
     assert ParseResult  # imported for clarity of intent
+
+
+# --- routine presets hold exercise NAMES, never set/rep schemes -------------
+
+import pytest as _pytest
+
+from quintacle_core.nodes.drop_router import strip_set_scheme
+
+
+@_pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("Bench Press 4x8", "Bench Press"),
+        ("Overhead Press 3 x 10", "Overhead Press"),
+        ("Tricep Dips 3×12", "Tricep Dips"),
+        ("Squat 5x5-8", "Squat"),
+        ("Deadlift - 3 sets of 5", "Deadlift"),
+        ("Rows (4 sets x 10 reps)", "Rows"),
+        ("Pull-ups", "Pull-ups"),
+        ("21s Curls", "21s Curls"),
+        ("4x8", "4x8"),
+    ],
+)
+def test_strip_set_scheme(raw, expected):
+    assert strip_set_scheme(raw) == expected

@@ -244,6 +244,18 @@ def looks_like_preset(text: str) -> Literal["meal_composition", "workout_routine
 
 
 _ROUTINE_RE = re.compile(r"^\s*(.+?)\s*=\s*(.+)$", re.DOTALL)
+_SET_SCHEME_RE = re.compile(
+    r"\s*[-–—:(]?\s*(?:\d+\s*[x×]\s*\d+(?:\s*-\s*\d+)?|\d+\s*sets?\s*(?:of|x)\s*\d+(?:\s*-\s*\d+)?(?:\s*reps?)?)\s*\)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def strip_set_scheme(exercise: str) -> str:
+    """'Bench Press 4x8' -> 'Bench Press'. A routine preset holds exercise
+    NAMES — routine expansion and the exercise registry match on them, so a
+    trailing set/rep scheme must never become part of the name."""
+    stripped = _SET_SCHEME_RE.sub("", exercise).strip()
+    return stripped or exercise.strip()
 
 
 def parse_routine_definition(text: str) -> tuple[str, list[str]] | None:
