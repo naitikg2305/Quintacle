@@ -3,6 +3,15 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-27 — §12 frontend: mode chip, incognito, Chat memory page (worktree agent)
+
+Built on `redone-UI` at `f57ac31`; frontend only (core/ untouched). Added
+`components/ModeChip.tsx`, `app/soft-record/page.tsx`, chat-page wiring in
+`app/kb/page.tsx`, `chatWithKB`/`archiveTranscript`/`getSoftRecord`/
+`deleteSoftFact` in `lib/api.ts`, nav entry + `APP_ROUTES`. tsc 0 errors,
+eslint 38 = baseline 38, `npm run build` passes with `/soft-record`.
+Details: docs/next-wave-plan.md §12 BUILT note.
+
 ## 2026-10-20 — Time grounding + the Me lane in chat context (§10, worktree agent)
 
 Built on `redone-UI` at `61adbc4`. Backend-only: `nodes/kb/chat.py` context
