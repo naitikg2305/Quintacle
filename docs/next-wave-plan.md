@@ -863,3 +863,11 @@ hallucination, so a prompt-wording fix was rejected — the fixes are code:
   2026-10-20; "just from my notes — when does my Minfy contract renew?"
   switched to serious and answered from the note with a valid link.
   Tests: `tests/test_chat_mode_fixes.py`; suite 653 passed / 0 skipped.
+  - *CORRECTION 2026-10-27 (Opus verification)*: the zero-match short-circuit
+    originally required the Me block to be EMPTY — but a real store always
+    has a seeded `Me` note, so it never fired there and local serious mode
+    could still invent notes. Gate changed to `_me_touches`: the Me block
+    counts as grounding only when a content word of the question appears in
+    it. Verified live with qwen3:8b on a store with a Me note: unrelated
+    question → fixed "That's not in your notes." with no model call; Me-fact
+    and note questions → correct grounded answers.

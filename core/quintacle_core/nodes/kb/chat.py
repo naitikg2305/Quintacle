@@ -659,9 +659,11 @@ def _build_context(
     KB is on, the scope is NOT folder-only, there is no topic hydration,
     retrieval RAN and matched nothing (the legacy dump-everything fallback
     counts as material, so retrieval-down never sets it), no day bundle
-    hydrated, and the Me block is empty. run_kb_chat uses it in SERIOUS mode
-    to skip the model entirely. A non-empty Me block alone keeps it False:
-    a question about the user's own numbers may be answerable from it.
+    hydrated, and the Me block doesn't touch the question (no query content
+    word appears in it — see _me_touches). run_kb_chat uses it in SERIOUS
+    mode to skip the model entirely. A Me block that DOES mention a query
+    word keeps it False: a question about the user's own numbers may be
+    answerable from it.
     `use_kb=false` never sets it (the user switched the notes off; there is
     nothing to be strict about).
 
@@ -790,8 +792,20 @@ def _build_context(
     if recent:
         context = f"{context}\n\n{recent}"
     parts.append(f"{intro} {rules_for(recent)}\n\n{context}")
-    nothing_to_ground = retrieved == _NO_MATCH and not day_blocks and not me
+    nothing_to_ground = retrieved == _NO_MATCH and not day_blocks and not _me_touches(me, query)
     return "\n\n".join(parts), nothing_to_ground
+
+
+def _me_touches(me: str | None, query: str | None) -> bool:
+    """Whether the Me block can plausibly answer this question: at least one
+    content word of the query appears in it as a whole word. A seeded Me note
+    is present on every turn, so "Me is non-empty" would never short-circuit
+    on a real store — only a Me block that actually mentions what was asked
+    counts as grounding ("bench PR" vs a Me line "Bench Press PR 225")."""
+    if not me or not query:
+        return False
+    haystack = me.lower()
+    return any(re.search(rf"(?<!\w){re.escape(t)}(?!\w)", haystack) for t in _query_terms(query).split())
 
 
 def _run_anthropic(model: str, messages: list[dict], kb_text: str | None) -> str:

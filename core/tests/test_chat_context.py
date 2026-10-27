@@ -222,8 +222,10 @@ def test_transcripts_never_enter_default_chat_context(client, monkeypatch):
     # by design — see test_chat_modes.py. SERIOUS mode keeps the original
     # §4 guarantee: the archive never enters context.
     _chat(client, "what was the xylophone gambit?", mode="serious")
-    [kb_text] = captured
-    assert "xylophone" not in kb_text  # serious: KB + notes only
+    # Nothing in the notes matches, so serious mode short-circuits (§12
+    # correction) and may not call the model at all — either way the archive
+    # must never reach a model context.
+    assert all("xylophone" not in kb_text for kb_text in captured)  # serious: KB + notes only
 
     # The explicit lane DOES reach it — topic, date, snippet for the next turn.
     hits = client.get("/transcripts/search", params={"q": "xylophone gambit"}).json()

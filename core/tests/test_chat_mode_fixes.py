@@ -91,9 +91,19 @@ def test_zero_match_unserious_still_calls_the_model(client, monkeypatch):
 def test_me_only_calls_the_model_with_strict_rule(client, monkeypatch):
     calls = _spy(monkeypatch)
     monkeypatch.setattr(chat, "_me_block", lambda store: "## About the user\n\n- Bench PR 225 lb")
-    _chat(client, THROAT, mode="serious")
+    _chat(client, "what's my bench PR?", mode="serious")
     [text] = calls
     assert "## About the user" in text and "that's not in your notes" in text
+
+
+def test_unrelated_me_block_still_short_circuits(client, monkeypatch):
+    # The real-store case: a seeded Me note is always present, but it says
+    # nothing about the throat — serious mode must not call the model.
+    calls = _spy(monkeypatch)
+    monkeypatch.setattr(chat, "_me_block", lambda store: "## About the user\n\n- Bench PR 225 lb")
+    r = _chat(client, THROAT, mode="serious")
+    assert calls == []
+    assert r["reply"].startswith("That's not in your notes.")
 
 
 def test_retrieval_hit_calls_the_model(client, monkeypatch):
@@ -333,3 +343,19 @@ def test_extract_and_store_bad_date_skips_annotation_only(client, monkeypatch):
     monkeypatch.setattr(soft_record, "extract_facts", lambda t: ["Throat sore since Tuesday"])
     assert soft_record.extract_and_store("...", "not-a-date", "t/x.md") == 1
     assert soft_record.get_soft_record_store().rows()[0]["text"] == "Throat sore since Tuesday"
+
+
+# --- the real-store case: a seeded Me note is ALWAYS present ----------------
+# Found in Opus verification: with "Me is non-empty" as the gate, a store with
+# any Me note never short-circuited, so serious mode could invent notes again.
+
+from quintacle_core.nodes.kb.chat import _me_touches
+
+
+def test_me_touches_only_when_query_word_appears():
+    me = "## About the user\n- Bench Press PR: 225 lb (2026-10-12)\nAllergic to shellfish."
+    assert _me_touches(me, "what's my bench PR?")
+    assert _me_touches(me, "am I allergic to anything like shellfish")
+    assert not _me_touches(me, "what's been going on with my throat lately?")
+    assert not _me_touches(None, "bench")
+    assert not _me_touches(me, "")
