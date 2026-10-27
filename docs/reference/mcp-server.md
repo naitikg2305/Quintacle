@@ -30,7 +30,8 @@ Derived from code at commit `884d057` on 2026-10-15.
 > `core/quintacle_core/nodes/logs/worklog.py` for the parser/import rules.*
 >
 > *Moved again, 2026-10-27 (commit `2f4e69c`): two write tools — count
-> 23 → **25** (verified: 25 `@mcp.tool()` decorators). Contracts below in
+> 22 → **24** (corrected same day: a live `list_tools` over stdio returns 24 —
+> the earlier "23" grep also matched a non-decorator line). Contracts below in
 > "2026-10-27 additions". The server is still NOT registered with Claude
 > Code on the owner's machine (owner's "legacy mode" choice); the
 > registration snippet below stays illustrative.*

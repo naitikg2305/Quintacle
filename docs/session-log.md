@@ -5,7 +5,7 @@ Newest session at the top. Read this before picking the project back up.
 
 ## 2026-10-27 — MCP: `kb_attach_file` + `log_income` (worktree agent)
 
-Off `redone-UI` `80d7fcd` (not pushed). Two MCP write tools, 23 → 25:
+Off `redone-UI` `80d7fcd` (not pushed). Two MCP write tools, 22 → 24 (count corrected after a live stdio list_tools):
 `kb_attach_file` attaches an existing local file (PDF/DOCX/contract/resume)
 to an EXISTING KB note via the same `KBStore.add_asset_to_entry` REST uses
 (absolute regular non-symlink file, 50 MB cap, vault sources refused,
