@@ -23,8 +23,9 @@ this suite-wide, same pattern as the retrieval summary seam).
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -140,11 +141,84 @@ def extract_facts(user_text: str) -> list[str]:
         return []
 
 
+# --- relative-date anchoring (§12 correction 2026-10-27) ------------------------
+#
+# A fact like "Throat soreness started on Tuesday" stored from a chat held on
+# Tuesday 2026-10-27 lost its anchor: a later reply read it as 2026-10-27 (the
+# chat date) when the user meant the PREVIOUS Tuesday. So at store time, in
+# code, relative date words are resolved against the CHAT's date (fact_date —
+# never clock.today(), the job may run later) and the absolute date is written
+# into the fact text: "Throat soreness started on Tuesday (2026-10-20)".
+#
+# Rules (conservative — when in doubt the text is left untouched):
+# - a fact that already contains an ISO date is never re-annotated;
+# - a fact with ANY future cue (next, coming, upcoming, tomorrow, will, won't,
+#   shall, going to, gonna, plan(s/ning) to, 'll) is never annotated;
+# - relative expressions = day_context's relative forms (today, tonight,
+#   yesterday, day before yesterday, last <weekday>, N days/weeks ago,
+#   last week), each resolved with day_context.detect_dates against the chat
+#   date, PLUS bare weekdays only after a past cue: "since", "this past",
+#   "started (on)", "began (on)" -> the most recent such weekday STRICTLY
+#   before the chat date (on a Tuesday, "since Tuesday" is the previous one);
+# - annotate only when every date the fact mentions (relative ones plus any
+#   explicit date detect_dates finds) collapses to exactly ONE date; the
+#   "(YYYY-MM-DD)" goes right after the first relative expression.
+#   Explicit month-day forms alone ("Nov 3") are never annotated — their year
+#   is a guess and could be a future appointment.
+
+_ISO_IN_TEXT = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_FUTURE_CUE = re.compile(
+    r"\b(?:next|coming|upcoming|tomorrow|will|won't|wont|shall|going\s+to|gonna|plan(?:s|ning)?\s+to)\b|'ll\b",
+    re.IGNORECASE,
+)
+
+
+def _past_weekday_re() -> re.Pattern:
+    from .day_context import _WEEKDAY_RE
+
+    return re.compile(
+        rf"\b(?:since|this\s+past|(?:started|began)(?:\s+on)?)\s+({_WEEKDAY_RE})\b", re.IGNORECASE
+    )
+
+
+def annotate_fact_date(text: str, chat_date: date) -> str:
+    """Pure: `text` with its single relative date resolved against
+    `chat_date` and appended in parentheses, or `text` unchanged (see the
+    rules above)."""
+    from .day_context import _RELATIVE_RE, _WEEKDAYS, detect_dates
+
+    if not text or _ISO_IN_TEXT.search(text) or _FUTURE_CUE.search(text.replace("\u2019", "'")):
+        return text
+    spans: list[tuple[int, list[date]]] = []  # (end offset, resolved dates)
+    for m in _RELATIVE_RE.finditer(text):
+        spans.append((m.end(), detect_dates(m.group(0), chat_date)))
+    for m in _past_weekday_re().finditer(text):
+        delta = (chat_date.weekday() - _WEEKDAYS[m.group(1).lower()]) % 7 or 7
+        spans.append((m.end(), [chat_date - timedelta(days=delta)]))
+    if not spans:
+        return text
+    mentioned = set(detect_dates(text, chat_date))
+    for _, ds in spans:
+        mentioned.update(ds)
+    if len(mentioned) != 1:
+        return text
+    (resolved,) = mentioned
+    end = min(e for e, _ in spans)
+    return f"{text[:end]} ({resolved.isoformat()}){text[end:]}"
+
+
 def extract_and_store(user_text: str, fact_date: str, transcript: str) -> int:
-    """Background job body: extract + dedup-insert. Fully failure-isolated;
-    returns how many facts were actually written."""
+    """Background job body: extract + anchor relative dates to the chat's
+    date + dedup-insert. Fully failure-isolated; returns how many facts were
+    actually written."""
     try:
         facts = extract_facts(user_text)  # looked up at call time so tests can monkeypatch it
+        try:
+            anchor = date.fromisoformat(fact_date[:10])
+        except (TypeError, ValueError):
+            anchor = None
+        if anchor is not None:
+            facts = [annotate_fact_date(f, anchor) for f in facts]
         return get_soft_record_store().add_many(fact_date, facts, transcript)
     except Exception:
         return 0
