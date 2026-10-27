@@ -720,7 +720,10 @@ function KBPageInner() {
     try {
       const context = chatLog.slice(0, messageIndex);
       // Same scope as the original ask — the escalation transfers the SAME context.
-      const { reply } = await chatWithKB(context, useKB, false, target?.folder, cloudModel, target?.slug, chatMode);
+      const { reply, mode, mode_switched } = await chatWithKB(context, useKB, false, target?.folder, cloudModel, target?.slug, chatMode);
+      // Adopt the effective mode exactly like sendChat (older backends omit it).
+      if (mode) setChatMode(mode);
+      if (mode_switched && mode) setModeNotice(modeSwitchNotice(mode));
       setChatLog([...chatLog, { role: "assistant" as const, content: reply, model: cloudModel }]);
     } catch (e) {
       setChatError(e instanceof Error ? e.message : String(e));
