@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Literal
 
 import frontmatter
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 
 from ... import clock
@@ -65,12 +65,15 @@ def _render_turns(messages: list[dict]) -> str:
     return "\n\n".join(sections)
 
 
-def _match_query(q: str) -> str:
+def _match_query(q: str, any_term: bool = False) -> str:
     """User text -> a safe FTS5 MATCH expression over the body column: each
     whitespace token becomes a quoted term (quotes doubled), implicitly ANDed
-    — no way for `"`, `-`, `NEAR` etc. to break the query syntax."""
+    (or ORed with any_term=True, used by chat's recent-chats recall where the
+    "query" is a whole sentence) — no way for `"`, `-`, `NEAR` etc. to break
+    the query syntax."""
     terms = [t.replace('"', '""') for t in q.split()]
-    return "body : " + " ".join(f'"{t}"' for t in terms)
+    joiner = " OR " if any_term else " "
+    return "body : (" + joiner.join(f'"{t}"' for t in terms) + ")"
 
 
 class TranscriptStore:
@@ -139,21 +142,37 @@ class TranscriptStore:
             "message_count": len(messages),
         }
 
-    def search(self, q: str, topic: str | None = None) -> list[dict]:
-        """Ranked FTS5 hits, optionally scoped to one topic slug. This is the
-        archive's ONLY read lane."""
+    def search(
+        self,
+        q: str,
+        topic: str | None = None,
+        *,
+        since: str | None = None,
+        limit: int | None = None,
+        any_term: bool = False,
+        snippet_tokens: int = 12,
+    ) -> list[dict]:
+        """Ranked FTS5 hits, optionally scoped to one topic slug and/or to
+        chats dated on/after `since` (YYYY-MM-DD, ET). Read lanes: the explicit
+        /transcripts/search endpoint, and (§12) chat's unserious-mode recent-
+        chats recall — nothing else reads the archive."""
         q = (q or "").strip()
         if not q:
             return []
         sql = (
-            "SELECT path, topic, date, snippet(transcript_fts, 3, '**', '**', '…', 12) AS snippet "
+            f"SELECT path, topic, date, snippet(transcript_fts, 3, '**', '**', '…', {int(snippet_tokens)}) AS snippet "
             "FROM transcript_fts WHERE transcript_fts MATCH ?"
         )
-        params: list = [_match_query(q)]
+        params: list = [_match_query(q, any_term)]
         if topic:
             sql += " AND topic = ?"
             params.append(slugify(topic))
+        if since:
+            sql += " AND substr(date, 1, 10) >= ?"
+            params.append(since)
         sql += " ORDER BY rank"
+        if limit:
+            sql += f" LIMIT {int(limit)}"
         try:
             rows = self.conn.execute(sql, params).fetchall()
         except sqlite3.OperationalError:
@@ -209,6 +228,9 @@ class ArchiveRequest(BaseModel):
     messages: list[TranscriptTurn]
     subject: str | None = None  # the chat's subject, if the session had one
     keep: bool = True  # the per-chat "don't keep" toggle — False archives nothing
+    # §12: the incognito start — an alias of keep=false; EITHER one skips
+    # everything (no file, no FTS row, no edge, no soft-fact extraction).
+    incognito: bool = False
 
 
 def _edge_candidates() -> list[dict]:
@@ -235,22 +257,46 @@ def _edge_candidates() -> list[dict]:
 
 
 @router.post("/archive")
-def archive_transcript(body: ArchiveRequest) -> dict:
+def archive_transcript(body: ArchiveRequest, background: BackgroundTasks) -> dict:
     """The archive-on-close hook the chat page calls — a file write + an FTS
-    row, zero model calls. keep=false (the "don't keep" toggle) archives
-    nothing at all."""
-    if not body.keep:
-        return {"archived": False, "reason": "keep is off for this chat"}
-    result = get_transcript_store().archive([m.model_dump() for m in body.messages], body.subject)
+    row, zero model calls IN THE REQUEST. keep=false / incognito=true archives
+    nothing at all and the chat is never read for facts.
+
+    §12 soft record: after a kept archive lands, ONE background task extracts
+    straight facts (soft_record.extract_and_store). `soft_facts_added` is what
+    was written synchronously, i.e. ALWAYS 0 here — extraction is deferred
+    past the response and its model failure can never fail the archive. The
+    additive `soft_facts_pending` flag says a background extraction was
+    queued; read the result from GET /soft-record."""
+    if not body.keep or body.incognito:
+        return {"archived": False, "reason": "keep is off for this chat", "soft_facts_added": 0}
+    messages = [m.model_dump() for m in body.messages]
+    result = get_transcript_store().archive(messages, body.subject)
     if result is None:
-        return {"archived": False, "reason": "empty transcript"}
+        return {"archived": False, "reason": "empty transcript", "soft_facts_added": 0}
+    pending = False
+    try:
+        user_text = "\n\n".join(_as_text(m["content"]) for m in messages if m["role"] == "user").strip()
+        if user_text:
+            from .soft_record import extract_and_store
+
+            background.add_task(extract_and_store, user_text, result["date"][:10], result["path"])
+            pending = True
+    except Exception:
+        pending = False
     # The graph edge is additive — a hiccup here (graph store not up in some
     # partial test app) must never fail an archive that already landed.
     try:
         edge = link_transcript_topic(f"transcript:{result['topic']}/{result['stamp']}", body.subject, _edge_candidates())
     except Exception:
         edge = None
-    return {"archived": True, **result, "edge_id": edge["id"] if edge else None}
+    return {
+        "archived": True,
+        **result,
+        "edge_id": edge["id"] if edge else None,
+        "soft_facts_added": 0,
+        "soft_facts_pending": pending,
+    }
 
 
 @router.get("/search")

@@ -24,7 +24,7 @@ from ..profile.api import get_store as get_profile_store
 from ..travel.api import get_store as get_travel_store
 from .auto_journal import process_photo_commit
 from ... import clock
-from .chat import CHAT_MODELS, BedrockError, OllamaError, UnknownModelError, run_kb_chat
+from .chat import CHAT_MODELS, BedrockError, OllamaError, UnknownModelError, resolve_mode, run_kb_chat
 from .chat_store import ChatStore, _as_text
 from .drop import _IMAGE_MIME, describe_drop, describe_images, extract_photo_date, extract_photo_location, is_image
 from .image_gen import generate_image
@@ -581,6 +581,10 @@ class ChatRequest(BaseModel):
     # With folder: a chat continued ON one note — topic hydration (the note's
     # current content + graph neighborhood prepended; see chat._system_text).
     slug: str | None = None
+    # §12: "serious" = KB + graph + notes ONLY; "unserious" (default) adds the
+    # recent-chats block. The frontend keeps it sticky by echoing the mode the
+    # response returns; a trigger phrase in the newest message overrides it.
+    mode: Literal["serious", "unserious"] = "unserious"
 
 
 @router.get("/models")
@@ -590,9 +594,11 @@ def list_chat_models() -> list[dict]:
 
 @router.post("/chat")
 def chat_endpoint(body: ChatRequest) -> dict:
+    messages = [m.model_dump() for m in body.messages]
+    mode, mode_switched = resolve_mode(body.mode, messages)
     try:
         reply = run_kb_chat(
-            get_store(), [m.model_dump() for m in body.messages], body.use_kb, body.research, body.folder, body.model, body.slug
+            get_store(), messages, body.use_kb, body.research, body.folder, body.model, body.slug, mode=mode
         )
     except UnknownModelError as e:
         raise HTTPException(400, str(e))
@@ -608,7 +614,7 @@ def chat_endpoint(body: ChatRequest) -> dict:
         if "api_key" in str(e) or "credentials" in str(e):
             raise HTTPException(400, "OPENAI_API_KEY not set — add it to core/.env to use GPT models")
         raise HTTPException(502, f"OpenAI error: {e}")
-    return {"reply": reply}
+    return {"reply": reply, "mode": mode, "mode_switched": mode_switched}
 
 
 # --- "record that" (next-wave-plan §4) — explicit consolidation, gated ------

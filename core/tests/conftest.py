@@ -14,3 +14,7 @@ def _deterministic_prose_summaries(monkeypatch):
     # Ollama up (a dev machine after the real-data backfill), live embeddings
     # would otherwise join FTS results and reshuffle rankings mid-suite.
     monkeypatch.setenv("QUINTACLE_VECTOR_LANE", "off")
+    # Soft-record fact extraction (soft_record.extract_facts) is a local-model
+    # call kicked off after every kept transcript archive; off suite-wide so a
+    # dev machine's Ollama is never hit. Tests monkeypatch the extractor.
+    monkeypatch.setenv("QUINTACLE_SOFT_RECORD_PROVIDER", "off")

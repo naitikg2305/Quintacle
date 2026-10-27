@@ -7,6 +7,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta
 
 import anthropic
 from openai import OpenAI
@@ -127,7 +128,10 @@ def _last_user_text(messages: list[dict]) -> str:
 def _neighbor_line(neighbors: list[dict]) -> str:
     if not neighbors:
         return ""
-    parts = [f"{n['title']} ({n['edge_type']}, id: {n['id']})" for n in neighbors]
+    # §12: archived transcripts are second-tier — never named as a neighbor.
+    parts = [f"{n['title']} ({n['edge_type']}, id: {n['id']})" for n in neighbors if not str(n["id"]).startswith("transcript:")]
+    if not parts:
+        return ""
     return "Connected: " + "; ".join(parts)
 
 
@@ -170,7 +174,11 @@ def _hit_section(store: KBStore, hit: dict, *, with_body: bool) -> str:
     log rows, meals, routines, todos, events — is its finished one-line
     summary, passed through as-is (the numbers in it were computed in SQL;
     the model never re-derives them)."""
-    lines = [f"### {hit['title']} [{hit['id']}] ({hit['type']})"]
+    header = f"### {hit['title']} [{hit['id']}] ({hit['type']})"
+    updated = _et_date(hit.get("updated_at")) if hit["type"] in _PROSE_TYPES else None
+    if updated:
+        header += f" — updated {updated}"
+    lines = [header]
     body = _prose_body(store, hit["id"], _FULL_BODY_CHARS) if (with_body and hit["type"] in _PROSE_TYPES) else None
     if body:
         lines.append(body)
@@ -227,7 +235,9 @@ def _topic_context(store: KBStore, folder: str, slug: str) -> str | None:
     field_lines = "\n".join(f"- {k}: {v}" for k, v in fields.items())
     body = rest.lstrip("\n")
     body = f"{field_lines}\n\n{body}" if field_lines else body
-    lines = [f"## Current topic: {title} [note:{folder}/{slug}]", body[:_TOPIC_BODY_CHARS]]
+    updated = _node_updated(f"note:{folder}/{slug}")
+    stamp = f" — updated {updated}" if updated else ""
+    lines = [f"## Current topic: {title} [note:{folder}/{slug}]{stamp}", body[:_TOPIC_BODY_CHARS]]
     try:
         from ...retrieval import neighbor_labels
 
@@ -423,6 +433,180 @@ def _day_blocks(messages: list[dict]) -> str | None:
     return "\n\n".join(blocks) if blocks else None
 
 
+# --- §12 serious / unserious modes (2026-10-27) --------------------------------
+#
+# Mode switching is DETERMINISTIC code, never model judgment: whole-phrase,
+# case-insensitive matches on the newest user message. No phrase -> the
+# request's (sticky, frontend-echoed) mode stands.
+
+SERIOUS_PHRASES = (
+    "serious mode",
+    "kb only",
+    "knowledge base only",
+    "just from my notes",
+    "only from my notes",
+    "only what i've recorded",
+    "only what i recorded",
+    "strictly from my notes",
+    "stick to my notes",
+)
+UNSERIOUS_PHRASES = ("unserious mode", "casual mode", "normal mode", "back to normal")
+
+
+def _phrase_regex(phrases: tuple[str, ...]) -> re.Pattern:
+    alts = "|".join(r"\s+".join(re.escape(w) for w in p.split()) for p in phrases)
+    # (?<!\w)/(?!\w): whole-phrase — "unserious mode" is NOT "serious mode".
+    return re.compile(rf"(?<![\w])(?:{alts})(?![\w])", re.IGNORECASE)
+
+
+_SERIOUS_RE = _phrase_regex(SERIOUS_PHRASES)
+_UNSERIOUS_RE = _phrase_regex(UNSERIOUS_PHRASES)
+
+
+def detect_mode_phrase(text: str) -> str | None:
+    """"serious" / "unserious" when `text` contains a trigger phrase, else
+    None. If both kinds appear, the LATER one wins (the user's last word)."""
+    text = (text or "").replace("\u2019", "'").replace("\u2018", "'")
+    last_serious = max((m.start() for m in _SERIOUS_RE.finditer(text)), default=-1)
+    last_unserious = max((m.start() for m in _UNSERIOUS_RE.finditer(text)), default=-1)
+    if last_serious < 0 and last_unserious < 0:
+        return None
+    return "serious" if last_serious > last_unserious else "unserious"
+
+
+def resolve_mode(requested: str | None, messages: list[dict]) -> tuple[str, bool]:
+    """(effective mode, mode_switched). A phrase in the newest user message
+    overrides the request's mode; switched is true only when it CHANGED it."""
+    base = requested if requested in ("serious", "unserious") else "unserious"
+    detected = detect_mode_phrase(_last_user_text(messages))
+    if detected is None or detected == base:
+        return base, False
+    return detected, True
+
+
+_SERIOUS_RULES = (
+    "SERIOUS MODE: answer ONLY from the knowledge-base material provided above. If it "
+    "isn't there, say plainly \"that's not in your notes\" — never guess, never fill "
+    "in from general knowledge or memory of past chats, never present anything as "
+    "recorded that isn't in the material."
+)
+
+_RECENT_RULES = (
+    "The \"From recent chats\" block is NOT part of their notes: it's loose material "
+    "from earlier conversations. Never treat it as authoritative the way notes are — "
+    "when you use it, flag it plainly (\"from a past chat, not in your notes\"), and "
+    "when something in it looks worth keeping, offer to Record that so it lands in "
+    "their notes. If a note and a past-chat item disagree, the note wins."
+)
+
+_RECENT_FACT_DAYS = 30
+_RECENT_FACT_CHARS = 2000
+_RECENT_SNIPPET_DAYS = 14
+_RECENT_SNIPPET_COUNT = 3
+_RECENT_SNIPPET_CHARS = 2500
+_RECENT_HEADING = "## From recent chats (not recorded in your notes)"
+_STOPWORDS = frozenset(
+    "the and for you your with that this have what when where which about from into there "
+    "their would could should does did are was were been being how why who can not but "
+    "just like some any all out get got tell say said".split()
+)
+
+
+def _query_terms(query: str, limit: int = 12) -> str:
+    terms: list[str] = []
+    for raw in re.findall(r"[\w'-]+", query.lower()):
+        t = raw.strip("'-")
+        if len(t) >= 3 and t not in _STOPWORDS and t not in terms:
+            terms.append(t)
+    return " ".join(terms[:limit])
+
+
+def _recent_chats_block(query: str, max_chars: int) -> str | None:
+    """§12 unserious-mode material, clearly headed and size-capped to
+    `max_chars` (the caller passes whatever is left of the context budget, so
+    this block shrinks first): (i) soft facts from the last 30 days, newest
+    first as `- [date] text`, then (ii) up to 3 FTS snippets from chats of the
+    last 14 days. ANY failure degrades to None — never a 500."""
+    if max_chars < 200:
+        return None
+    fact_lines: list[str] = []
+    snippet_lines: list[str] = []
+    try:
+        from .soft_record import get_soft_record_store
+
+        used = 0
+        for f in get_soft_record_store().recent(_RECENT_FACT_DAYS):
+            line = f"- [{f['date']}] {f['text']}"
+            if used + len(line) + 1 > min(_RECENT_FACT_CHARS, max_chars):
+                break
+            fact_lines.append(line)
+            used += len(line) + 1
+    except Exception:
+        fact_lines = []
+    try:
+        from .transcripts import get_transcript_store
+
+        terms = _query_terms(query)
+        if terms:
+            since = (clock.today() - timedelta(days=_RECENT_SNIPPET_DAYS)).isoformat()
+            hits = get_transcript_store().search(
+                terms, since=since, limit=_RECENT_SNIPPET_COUNT, any_term=True, snippet_tokens=40
+            )
+            used = 0
+            for h in hits:
+                text = " ".join(h["snippet"].replace("**", "").split())
+                line = f"- [{h['date'][:10]}] …{text}"
+                if used + len(line) + 1 > _RECENT_SNIPPET_CHARS:
+                    break
+                snippet_lines.append(line)
+                used += len(line) + 1
+    except Exception:
+        snippet_lines = []
+    if not fact_lines and not snippet_lines:
+        return None
+    parts = [_RECENT_HEADING]
+    if fact_lines:
+        parts.append("Things you told me recently (straight facts, newest first):\n" + "\n".join(fact_lines))
+    if snippet_lines:
+        parts.append("Excerpts from past chats that touch this question:\n" + "\n".join(snippet_lines))
+    block = "\n\n".join(parts)
+    while len(block) > max_chars and (fact_lines or snippet_lines):
+        # shrink: drop the least valuable line first (last snippet, then last fact)
+        (snippet_lines or fact_lines).pop()
+        if not fact_lines and not snippet_lines:
+            return None
+        parts = [_RECENT_HEADING]
+        if fact_lines:
+            parts.append("Things you told me recently (straight facts, newest first):\n" + "\n".join(fact_lines))
+        if snippet_lines:
+            parts.append("Excerpts from past chats that touch this question:\n" + "\n".join(snippet_lines))
+        block = "\n\n".join(parts)
+    return block
+
+
+def _et_date(stamp: str | None) -> str | None:
+    """An index `updated_at` ISO stamp -> YYYY-MM-DD in Eastern Time."""
+    if not stamp:
+        return None
+    try:
+        dt = datetime.fromisoformat(stamp)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(clock.TIME_ZONE)
+        return dt.date().isoformat()
+    except ValueError:
+        return stamp[:10] if len(stamp) >= 10 else None
+
+
+def _node_updated(node_id: str) -> str | None:
+    try:
+        from ...retrieval import get_retrieval_index
+
+        row = get_retrieval_index().conn.execute("SELECT updated_at FROM nodes_index WHERE id = ?", (node_id,)).fetchone()
+        return _et_date(row["updated_at"]) if row else None
+    except Exception:
+        return None
+
+
 _GROUNDING_RULES = (
     "Ground your answers in the material below when relevant — reference it "
     "naturally, don't just recite it back. If something isn't covered below, say so "
@@ -437,10 +621,17 @@ _GROUNDING_RULES = (
 )
 
 
-def _system_text(store: KBStore, use_kb: bool, folder: str | None, slug: str | None, messages: list[dict]) -> str | None:
+def _system_text(
+    store: KBStore,
+    use_kb: bool,
+    folder: str | None,
+    slug: str | None,
+    messages: list[dict],
+    mode: str = "unserious",
+) -> str | None:
     """The system context for every provider — identical assembly whether the
     turn runs local, on Bedrock, or on a direct cloud API (escalation carries
-    the SAME text). Order (extended 2026-10-20, next-wave-plan §10):
+    the SAME text). Order (extended 2026-10-20 §10, 2026-10-27 §12):
 
     1. the Now line — current Eastern datetime, ALWAYS present (even with the
        KB switched off: chat always knows now);
@@ -456,19 +647,28 @@ def _system_text(store: KBStore, use_kb: bool, folder: str | None, slug: str | N
     - folder only (the per-folder chat): context stays exactly that folder's
       entries; this scope's whole contract is that the answer can't come
       from somewhere it can't cite, so no global retrieval (and no §10 day
-      bundles) here.
+      bundles, no §12 recent-chats block) here.
     - no scope: retrieval hits for the latest question.
+
+    Retrieved prose notes carry `— updated YYYY-MM-DD` (ET) in their header.
 
     4. day bundles (§10): date words in the newest user message resolve in
        code and hydrate those days' full records alongside retrieval (max 3),
        each headed `## <date> — that day's record`.
+    5. (§12, UNSERIOUS mode only, not folder-only scope) the
+       `## From recent chats (not recorded in your notes)` block: soft facts
+       (30 days) + up to 3 recent-chat snippets (14 days). SERIOUS mode
+       omits it entirely (and adds the strict "only from the notes" rule);
+       the block is also the first thing to shrink when the context budget
+       is tight.
 
     Degradation (never a 500): retrieval uninitialized / empty / erroring
     falls back to the legacy behavior — the folder's entries when scoped,
-    the old dump-everything context otherwise; Me/day sections just drop."""
+    the old dump-everything context otherwise; Me/day/recent sections just drop."""
     if not use_kb:
         return _now_line()  # §10: chat always knows now, even with the KB off
 
+    serious = mode == "serious"
     parts: list[str] = [_now_line()]
     me = _me_block(store)
     if me:
@@ -479,7 +679,8 @@ def _system_text(store: KBStore, use_kb: bool, folder: str | None, slug: str | N
             f"You're chatting with the user about notes filed under \"{folder}\" specifically — "
             "not their whole knowledge base. Only the notes below exist for this conversation."
         )
-        parts.append(f"{intro} {_GROUNDING_RULES} {_LINK_RULES}\n\n{_kb_context_for_folder(store, folder)}")
+        rules = f"{_GROUNDING_RULES} {_LINK_RULES}" + (f" {_SERIOUS_RULES}" if serious else "")
+        parts.append(f"{intro} {rules}\n\n{_kb_context_for_folder(store, folder)}")
         return "\n\n".join(parts)
 
     topic = _topic_context(store, folder, slug) if folder and slug else None
@@ -492,6 +693,19 @@ def _system_text(store: KBStore, use_kb: bool, folder: str | None, slug: str | N
         except Exception:
             retrieved = None  # uninitialized / empty / any retrieval error → legacy fallback
     day_blocks = _day_blocks(messages)
+
+    def recent_for(body_text: str) -> str | None:
+        # unserious only; sized to what's left of the context budget so it
+        # shrinks (or drops) before any KB material does.
+        if serious or not query:
+            return None
+        return _recent_chats_block(query, _CONTEXT_CHAR_BUDGET - len(body_text))
+
+    def rules_for(recent: str | None) -> str:
+        base = f"{_GROUNDING_RULES} {_LINK_RULES}"
+        if serious:
+            return f"{base} {_SERIOUS_RULES}"
+        return f"{base} {_RECENT_RULES}" if recent else base
 
     if topic is not None:
         intro = (
@@ -508,10 +722,24 @@ def _system_text(store: KBStore, use_kb: bool, folder: str | None, slug: str | N
             body.append(_kb_context_for_folder(store, folder))
         if day_blocks:
             body.append(day_blocks)
-        parts.append(f"{intro} {_GROUNDING_RULES} {_LINK_RULES}\n\n" + "\n\n".join(body))
+        recent = recent_for("\n\n".join(body))
+        if recent:
+            body.append(recent)
+        parts.append(f"{intro} {rules_for(recent)}\n\n" + "\n\n".join(body))
         return "\n\n".join(parts)
 
-    intro = "You're chatting with the user about their own personal knowledge base."
+    if serious:
+        intro = (
+            "You're answering the user strictly from their own personal knowledge base — "
+            "their recorded notes and what connects them, nothing else."
+        )
+    else:
+        intro = (
+            "You're talking with the user like someone who was there for it: you know their "
+            "notes and what they've told you in recent chats. Refer to past material the way "
+            "a person would (\"you told me...\", \"last time we landed on...\"), say so "
+            "plainly when nothing matches instead of inventing a memory, and keep it concise."
+        )
     if retrieved is not None:
         intro += (
             " The entries below were retrieved for their latest question — a selection, "
@@ -522,7 +750,10 @@ def _system_text(store: KBStore, use_kb: bool, folder: str | None, slug: str | N
         context = _kb_context_everything(store)
     if day_blocks:
         context = f"{context}\n\n{day_blocks}"
-    parts.append(f"{intro} {_GROUNDING_RULES} {_LINK_RULES}\n\n{context}")
+    recent = recent_for(context)
+    if recent:
+        context = f"{context}\n\n{recent}"
+    parts.append(f"{intro} {rules_for(recent)}\n\n{context}")
     return "\n\n".join(parts)
 
 
@@ -826,11 +1057,12 @@ def run_kb_chat(
     folder: str | None = None,
     model: str | None = None,
     slug: str | None = None,
+    mode: str = "unserious",
 ) -> str:
     entry = resolve_model(model, research)
     # Context is assembled once, identically for every provider — escalating
     # the same conversation to a cloud model transfers the SAME context.
-    kb_text = _system_text(store, use_kb, folder, slug, messages)
+    kb_text = _system_text(store, use_kb, folder, slug, messages, mode)
     if entry["provider"] == "openai":
         reply = _run_openai(entry["id"], messages, kb_text)
     elif entry["provider"] == "bedrock":

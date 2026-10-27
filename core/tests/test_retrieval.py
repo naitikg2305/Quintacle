@@ -189,7 +189,7 @@ def test_fts_retrieval_ranks_and_filters_by_type(tmp_path):
     assert [r["id"] for r in results][0] == "note:fitness/deadlift-cues"  # title match outranks body-only
     assert {r["id"] for r in results} == {"note:fitness/deadlift-cues", "note:fitness/squat-cues", "journal:2026-10-12"}
     for r in results:
-        assert set(r) == {"id", "type", "title", "summary", "score", "neighbors"}
+        assert set(r) == {"id", "type", "title", "summary", "score", "updated_at", "neighbors"}  # updated_at added 2026-10-27 (§12 note dates)
 
     only_days = index.retrieve("deadlift", types=["journal_day"])
     assert [r["id"] for r in only_days] == ["journal:2026-10-12"]
