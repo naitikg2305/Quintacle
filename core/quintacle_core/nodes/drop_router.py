@@ -167,6 +167,82 @@ def looks_like_stock_transaction(text: str) -> bool:
     return bool(_STOCK_SHARES_RE.search(text) or _STOCK_TICKER_AT_PRICE_RE.search(text))
 
 
+# --- additive preset suggestion gate ------------------------------------
+# Unprefixed text that DEFINES a reusable thing (a recipe, a routine, an
+# ingredient/label) deserves a preset proposal alongside the normal result.
+# Pure regexes, zero model calls, conservative: ambiguity -> None. The preset
+# types must NEVER join parse_journal_dump's union (schema-size limit — see
+# the _ReceiptExtraction note below); /drop appends them additively instead.
+
+_UNIT = r"(?:g|grams?|kg|oz|ounces?|lbs?|cups?|tbsp|tsp|tablespoons?|teaspoons?|ml)"
+_QTY = rf"\d+(?:\.\d+)?\s*{_UNIT}\b"
+_NON_FOOD = {
+    "protein", "carbs", "carb", "carbohydrate", "carbohydrates", "fat", "fats", "fiber", "fibre", "sugar", "sugars",
+    "sodium", "kcal", "calories", "cholesterol", "x", "for", "on", "at", "and", "each", "per", "with", "to", "in",
+    "today", "reps", "rep", "sets", "set", "the", "a", "of",
+}
+_FOOD_AFTER_QTY_RE = re.compile(rf"(?<![\w.]){_QTY}\.?\s*(?:of\s+)?([a-z][a-z'-]{{2,}})", re.IGNORECASE)
+_FOOD_BEFORE_QTY_RE = re.compile(rf"([a-z][a-z'-]{{2,}})\s*[:=-]?\s*{_QTY}", re.IGNORECASE)
+_NUTRIENT_NUM_RE = re.compile(
+    r"\b(calories|kcal|protein|carb(?:ohydrate)?s?|total fat|fat|fib(?:er|re)|sugars?|sodium)\b\s*[:=-]?\s*\d",
+    re.IGNORECASE,
+)
+_LABEL_WORDING_RE = re.compile(
+    r"\b(?:nutrition(?:al)? (?:facts|label|info)|serving size|macros? per|per\s+(?:100\s*g|100\s*grams|serving))\b",
+    re.IGNORECASE,
+)
+_RECIPE_WORDING_RE = re.compile(r"\b(?:recipe|my usual|my go-?to|i (?:usually |always )?make|ingredients)\b", re.IGNORECASE)
+_SETREP_RE = re.compile(r"\b\d+\s*[x×]\s*\d+\b|\b\d+\s*sets?\s*(?:of|x|×)\s*\d+\b", re.IGNORECASE)
+_ROUTINE_STRONG_RE = re.compile(r"\b(?:routine|split|workout plan|ppl)\b|\bday\s*\d+\s*:", re.IGNORECASE)
+_DAY_NAME_RE = re.compile(r"\b(?:push|pull|leg|upper|lower|chest|back|arm|shoulder)s?\s+day\b", re.IGNORECASE)
+_DEFINED_LIST_RE = re.compile(r"[:=]\s*(.+)$", re.DOTALL)
+
+
+def _food_quantity_count(text: str) -> int:
+    best = 0
+    for rx in (_FOOD_AFTER_QTY_RE, _FOOD_BEFORE_QTY_RE):
+        best = max(best, sum(1 for m in rx.finditer(text) if m.group(1).lower() not in _NON_FOOD))
+    return best
+
+
+def _setrep_segments(text: str) -> int:
+    """Segments (lines / commas / semicolons) naming an exercise AND carrying a sets x reps shape."""
+    return sum(
+        1
+        for seg in re.split(r"[\n;,]+", text)
+        if _SETREP_RE.search(seg) and re.search(r"[A-Za-z]{3,}", _SETREP_RE.sub("", seg))
+    )
+
+
+def _defined_list_items(text: str) -> int:
+    m = _DEFINED_LIST_RE.search(text)
+    return len([i for i in re.split(r"[\n,+]+", m.group(1)) if i.strip()]) if m else 0
+
+
+def looks_like_preset(text: str) -> Literal["meal_composition", "workout_routine", "ingredient_preset"] | None:
+    """Which reusable preset (if any) unprefixed text is confidently defining.
+    Order matters: a nutrition label also carries many 'Ng' quantities, so
+    ingredient_preset is checked before meal_composition. A single logged set
+    ("bench 3x8 today") or meal ("ate a burrito") is a LOG, never a preset."""
+    if not text or not text.strip():
+        return None
+    qty = _food_quantity_count(text)
+    nutrients = len({m.group(1).lower()[:4] for m in _NUTRIENT_NUM_RE.finditer(text)})
+    label = bool(_LABEL_WORDING_RE.search(text))
+    if nutrients >= 3 or (label and nutrients >= 1) or (label and qty < 3 and re.search(r"\d", text)):
+        return "ingredient_preset"
+    setrep = _setrep_segments(text)
+    if (
+        setrep >= 2
+        or (_ROUTINE_STRONG_RE.search(text) and (setrep >= 1 or _defined_list_items(text) >= 3))
+        or (_DAY_NAME_RE.search(text) and _defined_list_items(text) >= 3)
+    ):
+        return "workout_routine"
+    if qty >= 3 or (qty >= 2 and _RECIPE_WORDING_RE.search(text)):
+        return "meal_composition"
+    return None
+
+
 _ROUTINE_RE = re.compile(r"^\s*(.+?)\s*=\s*(.+)$", re.DOTALL)
 
 

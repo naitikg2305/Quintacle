@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import anthropic
 from pydantic import BaseModel
 
-from ...llm_config import DEFAULT_MODEL
+from ...llm_dispatch import parse_structured
 from ..journal.normalize import canonicalize_name
 from .nutrition_targets import NUTRIENT_UNITS
 
@@ -49,17 +48,11 @@ def _format_ingredient_library(known_ingredients: list[dict]) -> str:
     return "Known ingredient library:\n" + "\n".join(lines)
 
 
-def suggest_meal_composition(description: str, known_ingredients: list[dict]) -> MealCompositionSuggestion:
-    client = anthropic.Anthropic()
+def suggest_meal_composition(
+    description: str, known_ingredients: list[dict], provider: str | None = None
+) -> MealCompositionSuggestion:
     system = _SYSTEM_PROMPT + "\n\n" + _format_ingredient_library(known_ingredients)
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=4096,
-        system=system,
-        messages=[{"role": "user", "content": description}],
-        output_format=MealCompositionSuggestion,
-    )
-    return response.parsed_output
+    return parse_structured(system, description, MealCompositionSuggestion, provider=provider, max_tokens=4096).parsed
 
 
 def resolve_composition(

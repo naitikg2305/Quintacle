@@ -4,6 +4,7 @@ import anthropic
 from pydantic import BaseModel
 
 from ...llm_config import DEFAULT_MODEL
+from ...llm_dispatch import parse_structured
 from ..vision import image_content_blocks
 from .nutrition_targets import NUTRIENT_UNITS
 
@@ -54,16 +55,8 @@ class NutritionEstimateFromImage(NutritionEstimate):
     suggested_name: str
 
 
-def estimate_nutrition(description: str) -> NutritionEstimate:
-    client = anthropic.Anthropic()
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=4096,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": description}],
-        output_format=NutritionEstimate,
-    )
-    return response.parsed_output
+def estimate_nutrition(description: str, provider: str | None = None) -> NutritionEstimate:
+    return parse_structured(_SYSTEM_PROMPT, description, NutritionEstimate, provider=provider, max_tokens=4096).parsed
 
 
 def estimate_nutrition_from_image(photos: list[tuple[bytes, str]], user_description: str = "") -> NutritionEstimateFromImage:
