@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import stat
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -183,6 +184,102 @@ def kb_search_entries(query: str) -> list[dict]:
     return kb_store.search(query)
 
 
+# Hard ceiling on one kb_attach_file call — a contract PDF or a resume is a
+# few MB; anything past this is almost certainly the wrong path. Module-level
+# so tests can monkeypatch it small.
+KB_ATTACH_MAX_BYTES = 50 * 1024 * 1024
+
+
+def _validated_local_file(local_path: str) -> Path:
+    """The source side of kb_attach_file: an absolute path to an existing
+    REGULAR file, not a symlink (lstat, so a link is judged as a link, never
+    followed), within the size cap, and not inside the Vault's directory
+    (whose files must never cross into kb/ — the vault is invisible to every
+    model-facing surface)."""
+    path = Path(local_path)
+    if not path.is_absolute():
+        raise ValueError(f"local_path must be an absolute path, got {local_path!r}")
+    try:
+        st = path.lstat()
+    except FileNotFoundError:
+        raise ValueError(f"no such file: {local_path}")
+    if stat.S_ISLNK(st.st_mode):
+        raise ValueError(f"local_path is a symlink — pass the real file's path: {local_path}")
+    if stat.S_ISDIR(st.st_mode):
+        raise ValueError(f"local_path is a directory, not a file: {local_path}")
+    if not stat.S_ISREG(st.st_mode):
+        raise ValueError(f"local_path is not a regular file: {local_path}")
+    if st.st_size > KB_ATTACH_MAX_BYTES:
+        raise ValueError(f"file is {st.st_size} bytes — over the {KB_ATTACH_MAX_BYTES}-byte attach limit")
+    if path.resolve().is_relative_to((DATA_DIR / "vault").resolve()):
+        raise ValueError("files inside the Vault can't be attached to KB notes")
+    return path
+
+
+def _attach_name(local_path: Path, filename: str | None) -> str:
+    """The requested display name, reduced to its last path component (no
+    directories survive — KBStore.safe_asset_name then slugifies it). A
+    caller-chosen name without an extension keeps the source file's."""
+    if filename is None or not filename.strip():
+        return local_path.name
+    name = filename.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].strip()
+    if not name or name in (".", ".."):
+        return local_path.name
+    if "." not in name.strip(".") and local_path.suffix:
+        name = f"{name}{local_path.suffix}"
+    return name
+
+
+@mcp.tool()
+def kb_attach_file(folder: str, slug: str, local_path: str, filename: str | None = None) -> dict:
+    """Attach a file that ALREADY EXISTS ON THIS MACHINE (absolute path; the
+    MCP client runs locally — e.g. Claude Code) to an EXISTING KB note, so
+    PDFs/DOCX/contracts/resumes from other projects land as knowledge. Local
+    files only: nothing is fetched from a URL, and the bytes never cross MCP.
+    The note must already exist (create it first with kb_create_entry — this
+    never creates one implicitly).
+
+    Same asset layout the app's own "add file to entry" uses: the file is
+    copied into the note folder's `assets/` and the note gains an
+    `[asset](assets/<name>)` line. `filename` optionally renames it (only
+    its last path component is used, slugified, extension kept); a name
+    that's already taken gets a `-2`, `-3`... suffix — an existing asset is
+    never overwritten. Rejected: relative paths, missing files, directories,
+    symlinks, files over the size cap (50 MB), and anything inside the
+    Vault. The Vault is out of scope entirely: it lives outside kb/, and the
+    destination always passes the KB-root clamp, so nothing can be attached
+    INTO it either. Commits as ONE ledger entry; undo_write removes the
+    asset and restores the note's exact prior bytes."""
+    note_path = kb_store.entry_path(folder, slug)
+    if not note_path.is_file() or not note_path.resolve().is_relative_to(kb_store.root.resolve()):
+        raise ValueError(f"no such entry: {folder}/{slug} (kb_attach_file never creates notes — use kb_create_entry first)")
+    source = _validated_local_file(local_path)
+    name = _attach_name(source, filename)
+    try:
+        asset_rel = kb_store.free_asset_path(folder, name)
+    except FileNotFoundError as exc:
+        raise ValueError(f"refusing to attach outside the KB: {exc}")
+    data = source.read_bytes()
+    if len(data) > KB_ATTACH_MAX_BYTES:  # grew between stat and read
+        raise ValueError(f"file is {len(data)} bytes — over the {KB_ATTACH_MAX_BYTES}-byte attach limit")
+
+    folder_slug = str(note_path.parent.relative_to(kb_store.root)).replace("\\", "/")
+    entry_slug = note_path.stem
+    session = _session("kb.attach_file", f"Attached {asset_rel} to KB entry {folder_slug}/{entry_slug}")
+    assets_dir = kb_store.assets_dir(folder)
+    if not assets_dir.exists():
+        session.stage_new_dir(assets_dir)
+    session.stage_file(note_path)
+    # add_asset_to_entry re-derives the name through the same safe_asset_name
+    # rule, which is idempotent on the already-safe name picked above.
+    written = kb_store.add_asset_to_entry(folder, slug, asset_rel.removeprefix("assets/"), data)
+    session.stage_new_file(kb_store.assets_dir(folder) / written.removeprefix("assets/"))
+    # No graph edge / retrieval re-index: the REST add-asset path
+    # (POST /kb/entry/asset) does neither, and this mirrors it.
+    ledger_id = session.commit(result={"folder": folder_slug, "slug": entry_slug, "asset_path": written})
+    return {"folder": folder_slug, "slug": entry_slug, "asset_path": written, "bytes": len(data), "ledger_id": ledger_id}
+
+
 # --- Universal retrieval ---
 
 
@@ -231,6 +328,44 @@ def log_expense(
     retrieval.safe_index_log_row(f"expense:{expense_id}")  # failure-isolated
     ledger_id = session.commit(result={"expense_id": expense_id, "date": entry_date.isoformat()})
     return {"expense_id": expense_id, "date": entry_date.isoformat(), "ledger_id": ledger_id}
+
+
+# Same set POST /logs/income documents for IncomeLogCreate.kind
+# (next-wave-plan §1 decision 3) — the REST model doesn't enforce it, this
+# tool does, so an MCP client can't invent a third kind analytics never see.
+INCOME_KINDS = ("salary", "other")
+
+
+@mcp.tool()
+def log_income(
+    for_date: str,
+    amount: float,
+    source: str = "",
+    kind: str = "salary",
+    notes: str = "",
+) -> dict:
+    """Log one income row (paycheck, sale, refund-as-income...) on a given
+    date. kind: "salary" | "other". Structured write: amount/source/kind
+    already decided — this never parses free text (that's the "income:"
+    drop prefix). Feeds the same income_log the finance insights' monthly
+    income and savings rate are computed from. Commits immediately,
+    independently undoable."""
+    if kind not in INCOME_KINDS:
+        raise ValueError(f"kind must be one of {INCOME_KINDS}, got {kind!r}")
+    entry_date = date.fromisoformat(for_date)
+    session = _session("logs.log_income", f"Logged ${amount:.2f} income from {source or 'unknown source'} on {entry_date.isoformat()}")
+    logs_dir = resolve_nested(log_file_store.kb_root, home_for("income")) / "logs"
+    income_id = _stage_new_log_files(
+        session,
+        logs_dir,
+        f"{entry_date.isoformat()}-*.md",
+        lambda: logs_repo.log_income(entry_date, amount, source, kind, notes),
+    )
+    session.stage_sqlite_insert(_db_path, "income_log", "id", income_id)
+    link_new_entry("income", f"income:{income_id}", f"{source} {notes}".strip(), session=session, amount=amount, date=entry_date.isoformat())
+    retrieval.safe_index_log_row(f"income:{income_id}")  # failure-isolated
+    ledger_id = session.commit(result={"income_id": income_id, "date": entry_date.isoformat()})
+    return {"income_id": income_id, "date": entry_date.isoformat(), "ledger_id": ledger_id}
 
 
 @mcp.tool()

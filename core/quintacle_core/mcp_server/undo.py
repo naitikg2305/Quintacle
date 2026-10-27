@@ -31,6 +31,7 @@ _ALLOWED_TABLES = {
     "exercise_sets",
     "body_stats",
     "stock_transactions",
+    "income_log",
 }
 
 
@@ -148,8 +149,33 @@ class SqliteRowStep:
         return SqliteRowStep(Path(data["db_path"]), data["table"], data["pk_column"], data["pk_value"], data["before"])
 
 
+@dataclass
+class NewDirStep:
+    """A directory a write had to create (e.g. a note folder's first
+    `assets/`). Undo removes it only if it is empty again by then — its
+    files are their own FileSteps, undone first since steps replay in
+    reverse — so an undo never leaves a stray empty folder that would show
+    up in kb_list_folders, and never deletes anything it didn't create."""
+
+    path: Path
+
+    def to_json(self) -> dict[str, Any]:
+        return {"kind": "new_dir", "path": str(self.path)}
+
+    def undo(self) -> None:
+        try:
+            self.path.rmdir()
+        except OSError:
+            pass  # gone already, or something else now lives in it — keep it
+
+    @staticmethod
+    def from_json(data: dict[str, Any]) -> "NewDirStep":
+        return NewDirStep(Path(data["path"]))
+
+
 _STEP_TYPES = {
     "file": FileStep,
+    "new_dir": NewDirStep,
     "journal_append": JournalAppendStep,
     "sqlite_row": SqliteRowStep,
 }
@@ -188,6 +214,12 @@ class WriteSession:
         existed, for call sites where the exact path is only known once the
         store has chosen it (e.g. a generated filename)."""
         self.steps.append(FileStep(path, before=None))
+
+    def stage_new_dir(self, path: Path) -> None:
+        """Call BEFORE a write creates directory `path` (only when it doesn't
+        exist yet, and before any FileStep for files inside it) — undo
+        removes it again iff empty."""
+        self.steps.append(NewDirStep(path))
 
     def stage_journal_append(self, root: Path, entry_date: date, marker: str) -> None:
         self.steps.append(JournalAppendStep(root, entry_date, marker))

@@ -28,6 +28,55 @@ Derived from code at commit `884d057` on 2026-10-15.
 > had already added `search_index`, `log_stock_transaction`,
 > `stock_positions` and `link_event` without a note here). See
 > `core/quintacle_core/nodes/logs/worklog.py` for the parser/import rules.*
+>
+> *Moved again, 2026-10-27 (commit `2f4e69c`): two write tools — count
+> 23 → **25** (verified: 25 `@mcp.tool()` decorators). Contracts below in
+> "2026-10-27 additions". The server is still NOT registered with Claude
+> Code on the owner's machine (owner's "legacy mode" choice); the
+> registration snippet below stays illustrative.*
+
+## 2026-10-27 additions: `kb_attach_file`, `log_income`
+
+**`kb_attach_file(folder, slug, local_path, filename=None)`** →
+`{folder, slug, asset_path, bytes, ledger_id}`. Copies a file that already
+exists on the machine the MCP client runs on into an EXISTING note's folder
+`assets/` and appends `[asset](assets/<name>)` to the note — i.e. exactly
+`KBStore.add_asset_to_entry`, the same call REST `POST /kb/entry/asset`
+makes (body asset line, frontmatter otherwise preserved; not the
+structured stores' frontmatter `assets` list). Validation, in order:
+- the note `entry_path(folder, slug)` must be an existing file under the KB
+  root — no implicit creation;
+- `local_path` must be absolute; `lstat` must show a regular file — missing,
+  directories, symlinks (any symlink, not followed) and other file types
+  are rejected; size ≤ `KB_ATTACH_MAX_BYTES` (50 MB; re-checked after the
+  read); a source resolving inside `<data_dir>/vault` is rejected;
+- name: `filename` (or the source basename) cut to its last path
+  component; a custom name with no extension inherits the source's; then
+  `safe_asset_name` (slugified stem + `[a-z0-9]`-only extension — the
+  extension filter is new and also hardens REST `save_asset`, which used to
+  pass anything after the last dot through);
+- `KBStore.free_asset_path` adds `-2`, `-3`… on collision (existing assets
+  are never overwritten) and runs the result through `_clamped_asset_path`,
+  so an `assets/` symlink pointing out of kb/ (e.g. into the vault) is
+  refused — the vault is structurally unreachable as a destination.
+Undo: ONE ledger entry staging, in order, `NewDirStep(assets/)` (only when
+the attach creates the dir; new step kind — undo `rmdir`s it iff empty),
+`FileStep(note, before-bytes)`, `FileStep(new asset, before=None)`. Reverse
+replay deletes the asset, restores the note byte-for-byte, removes the
+dir. No graph edge, no retrieval re-index — the REST add-asset path does
+neither, so this doesn't invent one.
+
+**`log_income(for_date, amount, source="", kind="salary", notes="")`** →
+`{income_id, date, ledger_id}`. Mirrors `log_expense`: `kind` must be
+`salary` | `other` (the set `IncomeLogCreate` documents; the REST model
+doesn't enforce it, this tool does); writes through
+`LogsRepository.log_income` (markdown in `Organisation/Finance/logs/` —
+shared with expenses, filtered by `type` — plus the `income_log` row);
+stages the new file via the dir-snapshot helper and the row via
+`stage_sqlite_insert` (`income_log` added to `_ALLOWED_TABLES`); keyword
+graph link via `link_new_entry("income", …)`; retrieval via
+`safe_index_log_row("income:<id>")`. Feeds the finance insights' monthly
+income / savings rate directly.
 
 Code: [core/quintacle_core/mcp_server/](../../core/quintacle_core/mcp_server/)
 — `server.py` (tools), `ledger.py` (the write log), `undo.py` (snapshots +

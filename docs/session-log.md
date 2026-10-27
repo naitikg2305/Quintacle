@@ -3,6 +3,21 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-27 — MCP: `kb_attach_file` + `log_income` (worktree agent)
+
+Off `redone-UI` `80d7fcd` (not pushed). Two MCP write tools, 23 → 25:
+`kb_attach_file` attaches an existing local file (PDF/DOCX/contract/resume)
+to an EXISTING KB note via the same `KBStore.add_asset_to_entry` REST uses
+(absolute regular non-symlink file, 50 MB cap, vault sources refused,
+destination clamped to kb/, `-N` suffix on collision, never overwrites);
+`log_income` mirrors `log_expense` onto `income_log` (kind salary|other).
+Each is ONE ledger entry with exact undo (new `NewDirStep` so an attach's
+freshly created `assets/` dir goes away on undo). Side fix: `safe_asset_name`
+filters the extension to `[a-z0-9]`. Suite 725 passed / 0 skipped (708 + 17
+in `tests/test_mcp_attach_income.py`). The MCP server remains UNREGISTERED
+with Claude Code by owner choice (legacy mode) — repo code/tests/docs only.
+Details: `docs/reference/mcp-server.md` "2026-10-27 additions".
+
 ## 2026-10-27 — §12 corrections from live testing: serious-mode short-circuit, link validation, dated soft facts (worktree agent)
 
 Off `redone-UI` `69989ea` (not pushed). Live qwen3:8b in serious mode invented
