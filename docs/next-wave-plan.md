@@ -718,3 +718,43 @@ voice-ready — vs side rail); write contract (pure auto-commit+undo vs a
 soft 3-second confirm tier for new notes); sequencing (build dark behind a
 toggle now vs after the two-week real-use test, which the owner's own
 seamless-mode.md sequencing prefers).
+
+## 12. Serious vs unserious chat, and the soft record (2026-10-27, decided — not yet built)
+
+**Why this amends §4:** §4 made transcripts a second-tier archive that only
+an explicit button could search. In use, that loses the "we talked about
+this last night" feel that GPT/Claude have. Owner's fix keeps the KB clean:
+two layers with different trust, never merged automatically.
+
+**Decisions:**
+- **Every chat is recorded** as a transcript (the `conversations/` store
+  already does this by default), read as ONE linear, dated timeline — not a
+  thread list. The chat page still stays fresh; continuity comes from the
+  timeline, not reopened chats.
+- **Unserious mode (default)**: the assistant layer. Answers draw on the
+  timeline (recent chats + a soft record of straight facts extracted per
+  conversation) AND the knowledge base. Assistant-like, knows the user.
+- **Serious mode**: strict. Knowledge base + graph + notes ONLY. No
+  timeline, no soft record, says "not in your notes" rather than guessing.
+  Intended use: switch to serious when unserious hallucinates or when the
+  question is knowledge-related.
+- **Mode switching is deterministic, not model judgment**: phrase detection
+  ("serious mode", "just from my notes", "KB only", …) plus a visible chip
+  showing the current mode. Sticky until changed.
+- **Soft record**: after each chat a model extracts only straight facts
+  into a single running log. Every soft fact carries its date and a link to
+  the transcript it came from (checkable, or it is slop). The log is a page
+  the owner can read and delete from. It NEVER becomes KB knowledge without
+  an explicit Record that.
+- **Don't keep** remains the off switch (per-chat, plus an incognito start):
+  such a chat is never written, never read for facts.
+- **Source labels in answers**: KB facts stated plainly; timeline/soft-record
+  material flagged ("we talked about this on the 26th — not in your notes").
+- **Transcripts stay off the graph view** (verified: /graph drops edges to
+  nodes it doesn't draw). To check at build time: the edges table still holds
+  `transcript_of`, so chat context "Connected:" lines may list a transcript.
+- **Dates on everything** (retrieved notes carry their date into the model's
+  context) and a human recall tone in the chat persona — small prompt and
+  formatting change, no new storage.
+- **Storage is not a constraint**: roughly 25–110 MB/year of text plus a
+  similar FTS index, negligible next to photos.
