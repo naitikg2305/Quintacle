@@ -10,6 +10,7 @@ import {
   FileText,
   FolderTree,
   House,
+  Brain,
   Image as ImageIcon,
   KeyRound,
   Layers,
@@ -52,6 +53,7 @@ const LIFE: NavItem[] = [
   { href: "/finance", label: "Finance", icon: Wallet },
   { href: "/people", label: "People", icon: Users },
   { href: "/profile", label: "Profile", icon: User },
+  { href: "/soft-record", label: "Chat memory", icon: Brain },
 ];
 
 const PRODUCTIVITY: NavItem[] = [

@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   archiveTranscript,
+  ChatMode,
   base64ToFile,
   buildChatMessage,
   ChatMessage,
@@ -52,6 +53,8 @@ import MealCompositionEditor from "@/components/MealCompositionEditor";
 import OutfitEditor from "@/components/OutfitEditor";
 import GroomingRoutineEditor from "@/components/GroomingRoutineEditor";
 import ChatLog from "@/components/ChatLog";
+import ModeChip, { MODE_HINT, modeSwitchNotice } from "@/components/ModeChip";
+import Link from "next/link";
 import {
   Archive,
   ArchiveX,
@@ -61,6 +64,7 @@ import {
   Droplets,
   Dumbbell,
   FileSearch,
+  Info,
   ImagePlus,
   NotebookPen,
   Paperclip,
@@ -136,7 +140,13 @@ function KBPageInner() {
   // the KB, closed chats go verbatim into the second-tier transcript archive.
   const [chatSubject, setChatSubject] = useState("");
   // Per-chat "don't keep" toggle — when off, closing archives nothing.
+  // Doubles as "Incognito" (§12): off from message one means never archived,
+  // never learned from.
   const [keepTranscript, setKeepTranscript] = useState(true);
+  // §12 sticky chat mode: casual (default) vs serious (KB only). Echoed back
+  // to the backend each send; adopted from each response.
+  const [chatMode, setChatMode] = useState<ChatMode>("unserious");
+  const [modeNotice, setModeNotice] = useState<string | null>(null);
   // "Record that" review state — the proposed dated append, edited here
   // before the explicit save (propose→review→Save; nothing writes until then).
   const [recordProposal, setRecordProposal] = useState<RecordThatProposal | null>(null);
@@ -232,13 +242,14 @@ function KBPageInner() {
   async function closeChat() {
     if (chatLog.length > 0) {
       try {
-        await archiveTranscript(chatLog, chatSubject || null, keepTranscript);
+        await archiveTranscript(chatLog, chatSubject || null, keepTranscript, !keepTranscript);
       } catch {
         // an unreachable backend must not trap the user in a stale chat
       }
     }
     setChatSubject("");
     setKeepTranscript(true);
+    setModeNotice(null);
     setChatLog([]);
     setTarget(null);
     setChatFile(null);
@@ -651,6 +662,7 @@ function KBPageInner() {
   async function sendChat() {
     if (!chatInput.trim() && !chatFile) return;
     setChatError(null);
+    setModeNotice(null);
     if (model === CUSTOM_BEDROCK && !customBedrockId.trim()) {
       setChatError("Enter a Bedrock model id first (or pick a model from the list).");
       return;
@@ -683,7 +695,10 @@ function KBPageInner() {
     try {
       // A chat continued on a note sends its folder+slug — the backend
       // hydrates that topic's content + graph neighborhood (next-wave §4).
-      const { reply } = await chatWithKB(next, useKB, false, target?.folder, effectiveModel, target?.slug);
+      const { reply, mode, mode_switched } = await chatWithKB(next, useKB, false, target?.folder, effectiveModel, target?.slug, chatMode);
+      // Older backends omit `mode` — keep the current one.
+      if (mode) setChatMode(mode);
+      if (mode_switched && mode) setModeNotice(modeSwitchNotice(mode));
       // `model` is client-side bookkeeping: it labels the answer and, for a
       // `local:` model, enables the per-answer Escalate ↗ affordance.
       finalLog = [...next, { role: "assistant" as const, content: reply, model: effectiveModel }];
@@ -705,7 +720,7 @@ function KBPageInner() {
     try {
       const context = chatLog.slice(0, messageIndex);
       // Same scope as the original ask — the escalation transfers the SAME context.
-      const { reply } = await chatWithKB(context, useKB, false, target?.folder, cloudModel, target?.slug);
+      const { reply } = await chatWithKB(context, useKB, false, target?.folder, cloudModel, target?.slug, chatMode);
       setChatLog([...chatLog, { role: "assistant" as const, content: reply, model: cloudModel }]);
     } catch (e) {
       setChatError(e instanceof Error ? e.message : String(e));
@@ -827,7 +842,7 @@ function KBPageInner() {
                 title={
                   keepTranscript
                     ? "Closing this chat files its transcript in the archive (outside the KB — only deep search ever reads it)"
-                    : "Don't keep — closing this chat archives nothing"
+                    : "Incognito — this chat won't be kept or learned from"
                 }
                 className={cn(
                   "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors",
@@ -835,8 +850,9 @@ function KBPageInner() {
                 )}
               >
                 {keepTranscript ? <Archive size={14} /> : <ArchiveX size={14} />}
-                {keepTranscript ? "Keep transcript" : "Don't keep"}
+                {keepTranscript ? "Keep transcript" : "Incognito"}
               </button>
+              <ModeChip mode={chatMode} onToggle={() => setChatMode(chatMode === "serious" ? "unserious" : "serious")} />
               <Button size="sm" onClick={closeChat} disabled={chatBusy} title="Archive this chat and start fresh">
                 <Plus size={14} /> New chat
               </Button>
@@ -849,6 +865,9 @@ function KBPageInner() {
                 <BookmarkPlus size={14} /> Record that
               </Button>
             </div>
+            {!keepTranscript && (
+              <p className="text-xs text-danger">Incognito — this chat won&apos;t be kept or learned from.</p>
+            )}
             {target && (
               <p className="text-xs text-muted">
                 Continuing on <strong className="text-foreground">{target.title}</strong> ({target.folder})
@@ -884,6 +903,11 @@ function KBPageInner() {
             </div>
           )}
 
+          {modeNotice && (
+            <div role="status" className="flex shrink-0 items-center gap-1.5 px-3 pb-2 text-xs text-accent">
+              <Info size={13} /> {modeNotice}
+            </div>
+          )}
           {chatError && (
             <div className="flex shrink-0 items-center gap-1.5 px-3 pb-2 text-xs text-danger">
               <TriangleAlert size={13} /> {chatError}
@@ -929,6 +953,12 @@ function KBPageInner() {
               <SendHorizontal size={18} />
             </Button>
           </div>
+          <p className="shrink-0 px-3 pb-2 text-[11px] text-muted">
+            {MODE_HINT[chatMode]} ·{" "}
+            <Link href="/soft-record" className="underline hover:text-accent">
+              Chat memory
+            </Link>
+          </p>
         </div>
 
         {/* Scratchpad — beside the chat on desktop, its own pane on phone */}

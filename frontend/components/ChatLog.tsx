@@ -40,6 +40,7 @@ const APP_ROUTES = new Set([
   "/kb/graph",
   "/people",
   "/profile",
+  "/soft-record",
   "/stocks",
   "/sync",
   "/todos",
