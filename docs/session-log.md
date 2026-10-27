@@ -3,6 +3,19 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-27 — §12 corrections from live testing: serious-mode short-circuit, link validation, dated soft facts (worktree agent)
+
+Off `redone-UI` `69989ea` (not pushed). Live qwen3:8b in serious mode invented
+notes/meds/links when nothing matched, so: serious mode now returns a fixed
+"That's not in your notes." with NO model call when there's no retrieval hit,
+topic, day bundle or Me material; every reply's `/kb/browse` + `/kb/asset`
+links are checked in code (missing -> "text (not found in your notes)");
+soft facts get their relative date resolved against the chat's date
+("since Tuesday (2026-10-20)"); escalate adopts the returned mode. Suite 653
+passed / 0 skipped (56 new in `tests/test_chat_mode_fixes.py`, one §12 test
+updated for the short-circuit); tsc 0. Details: next-wave-plan §12 CORRECTION,
+`docs/reference/chat-modes.md`.
+
 ## 2026-10-27 — §12 backend: serious/unserious chat modes + soft record (worktree agent)
 
 Built on `redone-UI` `f57ac31` (not pushed). Backend only; frontend is a
