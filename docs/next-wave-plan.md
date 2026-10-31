@@ -871,3 +871,8 @@ hallucination, so a prompt-wording fix was rejected — the fixes are code:
     it. Verified live with qwen3:8b on a store with a Me note: unrelated
     question → fixed "That's not in your notes." with no model call; Me-fact
     and note questions → correct grounded answers.
+  - *CORRECTION 2026-10-27 (Opus verification, preset lane)*: routine
+    suggestions kept set/rep schemes in exercise names ("Bench Press 4x8"),
+    which would never match the registry. `drop_router.strip_set_scheme` now
+    strips them (and dedupes) before the registry check in
+    `api._propose_preset_entry`. Verified live.

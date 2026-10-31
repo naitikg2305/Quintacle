@@ -3,6 +3,24 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-10-27 — Opus verification of the day's §12 / preset work (main session)
+
+Re-verified every 2026-10-27 lane live (sandboxed, qwen3:8b). Two fixes on
+`redone-UI`, pushed: (1) serious-mode short-circuit never fired on real stores
+because it required an EMPTY Me block — now `chat._me_touches` (Me counts only
+when a question word appears in it); (2) routine suggestions kept set schemes
+in exercise names ("Bench Press 4x8") — `drop_router.strip_set_scheme` strips
+them and dedupes before the registry check in `api._propose_preset_entry`.
+MCP doc count corrected 25 → 24 (live `list_tools`). Suite 725 passed /
+0 skipped. Still open: "3 eggs" composes as 3 g (no count→grams); casual mode
+doesn't reliably label "from a past chat"; owner hasn't decided whether the
+meal/ingredient/routine builders stay local-first. Afterwards all 14
+`~/work-logs` days (10-07 → 10-31) were imported into the current store via
+`import_work_log` (30 productivity rows) — throwaway, the store is about to be
+wiped; the files stay the source of truth. Days whose `Session:` header lacks
+`HH:MM–HH:MM` times (10-25, 10-28, 10-29, 10-31) get no hours rows, and
+TailorCV / DataAnnotation days link nowhere until those hubs exist.
+
 ## 2026-10-27 — MCP: `kb_attach_file` + `log_income` (worktree agent)
 
 Off `redone-UI` `80d7fcd` (not pushed). Two MCP write tools, 22 → 24 (count corrected after a live stdio list_tools):
