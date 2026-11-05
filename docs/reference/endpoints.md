@@ -334,3 +334,17 @@ Changed: `POST /kb/entries/with-asset`, `POST /kb/entry/asset` (now also
 re-indexes when an image is attached) and the MCP `kb_attach_file` tool all
 bake the place line for image files. See `drop-pipeline.md` (2026-11-05
 photo place section).
+
+## 2026-11-05 additions — Knowledge page (`/knowledge`, `nodes/knowledge/`) — 2
+
+*Added 2026-11-05 (worktree agent).* Read-only and deterministic, with no
+model calls. Everything is derived from `kb/knowledge/**` at request time.
+`assets/` and `_*` dirs are skipped. `about-*` charter notes are never
+listed; a charter's `summary` (or first paragraph) becomes its folder's
+topic `description`. Private notes ARE listed, with `private: true`,
+because this is an owner surface.
+
+| Method | Path | Input | Purpose | Store |
+|---|---|---|---|---|
+| GET | `/knowledge` | query `q?`, `topic?` (`tech-notes` or `knowledge/tech-notes/graphs`; matches the subtree), `tag?` (case-insensitive; also matches hub labels) | Returns `{topics, tags, notes, total, root_count, charter}`. `topics` is a tree of `{topic, name, label "Tech Notes › Graphs", folder, count (subtree), direct_count, description, children}`. `tags` is `[{tag, count, kind: tag\|place\|project}]`: frontmatter `tags`/`category`/`categories` (top level or in `fields`), grouped case-insensitively, plus graph-linked `note:places/*`, `place:*` and `note:projects/*` hubs (one edges query). `notes` is `[{id, folder, slug, title, topic, topic_label, tags, hubs, summary, edited, has_assets, private}]`, sorted by `edited` desc (file mtime in ET when there is no stamp). `summary` is frontmatter `summary`, else the retrieval summary, else the first meaningful paragraph. `topics`, `tags` and `total` always describe the whole tree; only `notes` is filtered. `q` lists retrieval hits (FTS5 + vectors) restricted to knowledge notes first, then a substring pass over title, summary, tags and body | KBStore + GraphEdgeStore + RetrievalIndex |
+| GET | `/knowledge/note` | query `folder`, `slug` | Returns `read_full` plus `{id, topic, topic_label, tags, edited, private, related: [{id, title, edge_type, folder, slug, knowledge}]}`. `related` = 1-hop graph neighbours (`retrieval.neighbor_labels`). 404 if missing | KBStore + GraphEdgeStore |
