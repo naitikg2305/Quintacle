@@ -34,7 +34,48 @@ sprints get their own section below; never rewrite a past sprint's entries.
   "Vienna" / "Austria" / "Europe" all find it; cached geocoding (one lookup per
   place); private photos never send coordinates to the cloud; backfill endpoint.
 
-## Sprint 1 — in progress
+## Sprint 1 — round 2 (later on 2026-11-05)
+
+### Fixes
+- **Chats weren't saved unless you clicked "New chat".** Leaving, refreshing or a
+  backend restart dropped the conversation, so nothing was remembered. Now every chat
+  autosaves after each reply into ONE transcript (session id) plus a final save on
+  leave; Incognito still saves nothing. Home's Assist panel too.
+- **Markdown/text files weren't read at drop** — a chat answer saved as `.md` reached
+  the sorter as "no description given". md/txt/csv/json/yaml/html/code are now read.
+- **Images in a chat answer saved as an `.md` attachment weren't attached** — web
+  pictures are now downloaded and your own photos copied into the note's folder.
+- **Browse showed those images as broken** — note-relative `assets/…` paths now load
+  from the note's folder (verified 30/30 on the NYC itinerary).
+- **Random "couldn't load" on busy pages** — concurrent requests shared one SQLite
+  connection and failed (`InterfaceError` / phantom "no habit with id"). Every
+  statement is now serialized on that connection.
+- **A goal saved with period "weekly" broke forever** — periods are normalized
+  (weekly→week, bi-weekly→2weeks…) and invalid ones rejected at save.
+- **Local web search silently found nothing** — DuckDuckGo blocks scripted requests.
+  Switched to real search APIs (Brave key or self-hosted SearXNG); explicit Web-on with
+  no key now says so instead of failing silently.
+- **Graph labelled PDFs as "Photos"** (round 1 tail) and **PDF metadata noise** noted.
+
+### Features built during testing
+- Place graph: photo/experience/plan → city → country → continent ("photos from Europe").
+- File metadata (PDF/Office/video/photo) read deterministically at drop; created date
+  links documents to that day's journal.
+- Trip ↔ photos: photos taken during a plan's dates + destinations attach to it.
+- Chat shows your own photos inline (with a fallback gallery for weak models).
+- Local web search lane (🌐 auto/on/off) for local/Bedrock models.
+- New navigation: dashboard landing (widgets: today, goal rings, productivity, weight,
+  food, spend, connections), core rail (Chat/Browse/Calendar/Graph), ⊞ Apps drawer.
+- New pages: Projects, Business ideas, Career (timeline; updaters moved to
+  /career/updates), Knowledge (dynamic folder/tag filters), unified Finance (accounts with
+  balance history, net worth, investments, budgets, subscriptions, income).
+- Patent: invention disclosure draft (`docs/patent/`).
+
+### Not code (owner's repos)
+- Repo-slimming attempt reverted by owner decision: repos stay as-is (to be stored whole);
+  every `main` verified identical to GitHub; local `slim-repo` branches remain unused.
+
+## Sprint 1 — in progress (round 1 — since built)
 
 - **Place hierarchy in the graph.** Photos, experiences and trip plans link to
   city → country → continent nodes, so weak/local models answer "photos from
