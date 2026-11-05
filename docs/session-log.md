@@ -34,6 +34,39 @@ Not done: no `lib/apps.ts` drawer entry (parallel agents own that file),
 so the integrator should add `/knowledge`. Reference:
 `docs/reference/frontend.md` + `endpoints.md` (2026-11-05 Knowledge page).
 
+## 2026-11-05 — Business Ideas board (`/business`) (worktree agent)
+
+The owner asked for "Business ideas of course. where it shows business ideas
+i guess? with all file types." An idea is a KB folder
+`Business Ideas/<Idea>/` with a hub note whose slug matches the folder (the
+same pattern as `projects/quintacle/quintacle.md`). Any file anywhere in
+that folder belongs to the idea. The hub's `fields` hold `status` (idea ·
+exploring · validating · building · parked · dropped), `summary`, `market`,
+`tags` and `created`.
+
+Backend: `core/quintacle_core/nodes/business/` (`ideas.py` does the walk,
+`api.py` is the router). `GET /business/ideas`, `GET /business/ideas/{slug}`,
+`POST /business/ideas` and `PUT /business/ideas/{slug}/fields` are all
+deterministic. The two writes are the owner's own direct edits, and the
+fields write doesn't restamp `edited`. The sorter got a `Business Ideas`
+seed folder and one placement-rule line. Frontend: `app/business/page.tsx`
+shows a status board (kanban at `lg`, stacked on a phone) and a `?i=<slug>`
+detail page that renders every file kind (notes inline; images in a
+lightbox; video; STL; PDF/docx/xlsx preview; link and download chips).
+Client functions are in `lib/businessApi.ts` and components in
+`components/business/`.
+
+Verified: 957 passed (7 new in `test_business_ideas.py`), tsc 0, eslint
+clean on the touched files, and `CAPACITOR_BUILD=true next build` exports
+`/business`. Screenshots at 390px and 1440px were taken against a
+sandboxed backend on 8765 and the frontend on 3457.
+
+Open: `/business` is not in `lib/apps.ts` yet (parallel agents owned that
+file). Add it when merging.
+
+Reference: `docs/reference/frontend.md` and `docs/reference/endpoints.md`
+(2026-11-05 Business Ideas sections).
+
 ## 2026-11-05 — Dashboard-first nav + ⊞ Apps drawer + widget dashboard (worktree agent)
 
 This follows the owner's design: "the dashboard should be the landing

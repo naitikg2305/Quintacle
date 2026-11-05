@@ -348,3 +348,22 @@ because this is an owner surface.
 |---|---|---|---|---|
 | GET | `/knowledge` | query `q?`, `topic?` (`tech-notes` or `knowledge/tech-notes/graphs`; matches the subtree), `tag?` (case-insensitive; also matches hub labels) | Returns `{topics, tags, notes, total, root_count, charter}`. `topics` is a tree of `{topic, name, label "Tech Notes › Graphs", folder, count (subtree), direct_count, description, children}`. `tags` is `[{tag, count, kind: tag\|place\|project}]`: frontmatter `tags`/`category`/`categories` (top level or in `fields`), grouped case-insensitively, plus graph-linked `note:places/*`, `place:*` and `note:projects/*` hubs (one edges query). `notes` is `[{id, folder, slug, title, topic, topic_label, tags, hubs, summary, edited, has_assets, private}]`, sorted by `edited` desc (file mtime in ET when there is no stamp). `summary` is frontmatter `summary`, else the retrieval summary, else the first meaningful paragraph. `topics`, `tags` and `total` always describe the whole tree; only `notes` is filtered. `q` lists retrieval hits (FTS5 + vectors) restricted to knowledge notes first, then a substring pass over title, summary, tags and body | KBStore + GraphEdgeStore + RetrievalIndex |
 | GET | `/knowledge/note` | query `folder`, `slug` | Returns `read_full` plus `{id, topic, topic_label, tags, edited, private, related: [{id, title, edge_type, folder, slug, knowledge}]}`. `related` = 1-hop graph neighbours (`retrieval.neighbor_labels`). 404 if missing | KBStore + GraphEdgeStore |
+
+## 2026-11-05 additions — Business Ideas board (`/business`, `nodes/business/api.py`) — 4
+
+An idea is `Business Ideas/<Idea>/` (on disk `kb/business-ideas/<idea>/`)
+with a hub note whose slug equals the folder slug. Every file anywhere under
+the idea's folder belongs to it. Hub `fields`: `status` (`idea | exploring |
+validating | building | parked | dropped`; anything else reads as `idea`),
+`summary`, `market`, `tags` (list), `created`. No model is called.
+
+| Method | Path | Input | Purpose | Store |
+|---|---|---|---|---|
+| GET | `/business/ideas` | — | `{statuses, ideas: [{slug, folder, title, has_hub, private, status, summary, market, tags, created, file_counts, file_total, last_edited}]}`. A folder with no hub is listed with `has_hub: false`. `file_counts` is by kind (`markdown, image, video, pdf, doc, spreadsheet, model, link, other`), hub excluded, `_`/`.` plumbing skipped. `last_edited` = latest of the hub's `edited` and every file's mtime (ET). Newest first | KBStore root (read-only walk) |
+| GET | `/business/ideas/{slug}` | — | The card fields plus `body` (hub body, title line stripped), `files` grouped by kind (`{name, path, kind, size, modified}`; markdown adds `folder, slug, title, content, private`; `.url`/`.webloc` add `url`), and `links` (http(s) URLs found in the hub and notes). `path` is relative to the idea folder, so `/kb/asset?folder=<folder>&path=<path>` serves it. 404 if missing | KBStore root |
+| POST | `/business/ideas` | `{title, summary?, status?, market?, tags?, body?}` | Create the hub (`fields.created` = today ET), then the same graph-link + retrieval hooks as `POST /kb/entries`. A hub-less folder is adopted. 409 if the hub exists, 400 on a bad status or a title with no letters/digits. Returns the detail | KBStore + GraphEdgeStore + RetrievalIndex |
+| PUT | `/business/ideas/{slug}/fields` | any of `{status, summary, market, tags}` | Merge hub fields via `KBStore.set_fields` (no `edited` restamp, body untouched). Only sent keys change; `""` / `[]` removes the field. 400 on a bad status, 404 if there's no hub. Returns the detail | KBStore |
+
+The sorter now offers `Business Ideas` as a seed folder, and `_FOLDER_RULE`
+(`nodes/kb/llm.py`) routes business/startup/product ideas to
+`Business Ideas/<Idea>`. Tests: `core/tests/test_business_ideas.py`.

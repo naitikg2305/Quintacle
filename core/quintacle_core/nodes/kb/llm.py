@@ -23,6 +23,7 @@ SEED_FOLDERS = [
     "Organisation/Car",
     "Career",
     "Projects",
+    "Business Ideas",
     "Knowledge/Lectures",
     "Knowledge/Tech Notes",
     "Knowledge/Research",
@@ -46,6 +47,8 @@ _FOLDER_RULE = (
     "  Travel rule: future-trip documents (itineraries, bookings, flight/train tickets, hotel "
     "confirmations) -> \"Fun/Travel/Planned/<Region or Trip>\"; places the person wants to go "
     "someday -> \"Fun/Travel/Bucket List\".\n"
+    "  Business rule: business / startup / product ideas and anything about one (market notes, "
+    "pitch decks, mockups, spreadsheets) -> \"Business Ideas/<Idea>\".\n"
 )
 
 
