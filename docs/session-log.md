@@ -3,6 +3,24 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-05 — Web lane for local/Bedrock chat (worktree agent)
+
+Local models (qwen via Ollama) and Bedrock can now answer with web info.
+In keeping with the deterministic core, code does the searching and the
+model reads. New `core/quintacle_core/web_search.py` (stdlib only):
+`search` uses DuckDuckGo HTML or SearXNG JSON (`QUINTACLE_SEARXNG_URL`),
+and `fetch_text` returns capped page text with scripts and nav stripped.
+The top 3 pages are fetched in parallel within an 8 s / 20 s budget, and
+any failure means no block. `ChatRequest.web` is null for auto (a regex
+heuristic that stays off for own-data questions and in serious mode) or
+true/false to force it. `run_kb_chat` appends a numbered "Web results
+(fetched just now)" block, with a cite-[n] instruction, for providers
+without native search only. Cloud Claude, GPT and Max are unchanged.
+Privacy: only the query, built from the newest user text, leaves the
+machine. `/kb` has a "Web: auto/on/off" chip next to Mode. Tests:
+`core/tests/test_web_search.py` (28, no network). 919 passed. Details:
+`docs/reference/chat-context.md` (2026-11-05 web lane).
+
 ## 2026-11-05 — Place hierarchy in the graph (worktree agent)
 
 Owner: "link everything on that graph so weak AIs can answer stuff". New

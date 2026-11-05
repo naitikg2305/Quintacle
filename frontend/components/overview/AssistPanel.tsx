@@ -70,7 +70,7 @@ export default function AssistPanel() {
     setBusy(true);
     setPrivacyNotice(null);
     try {
-      const res = await chatWithKB(next, true, false, undefined, model, undefined, mode);
+      const res = await chatWithKB(next, true, false, undefined, model, undefined, mode, undefined /* web: auto */);
       if (res.mode) setMode(res.mode);
       if (res.private_stripped) setPrivacyNotice(privateHandoffNotice(res.private_stripped));
       // Keep private_notes on the reply so a later cloud request strips it.

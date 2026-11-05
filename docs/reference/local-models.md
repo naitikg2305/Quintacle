@@ -221,3 +221,13 @@ subscription, falling back to the API on any Max failure.
 - **Child env:** `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` stripped (else the CLI bills
   the API), `--setting-sources ""` (no hooks), `--strict-mcp-config`, no session saved.
 - Live check 2026-11-05: chat `max:haiku` 1.5 s; `/drop provider=cloud` 7 s, zero fallbacks.
+
+
+## Addition (2026-11-05): web results for local models
+
+Local (and Bedrock) chat can answer with web info. Code searches
+DuckDuckGo HTML (or SearXNG via `QUINTACLE_SEARXNG_URL`), fetches the top
+3 pages, and hands the model a numbered "Web results (fetched just now)"
+block to cite. Only the query leaves the machine. Stdlib only, so it is
+phone-safe. `QUINTACLE_WEB_SEARCH=off` disables it. Full lane:
+`docs/reference/chat-context.md` (2026-11-05 web lane).

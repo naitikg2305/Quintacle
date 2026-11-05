@@ -763,6 +763,9 @@ class ChatRequest(BaseModel):
     # recent-chats block. The frontend keeps it sticky by echoing the mode the
     # response returns; a trigger phrase in the newest message overrides it.
     mode: Literal["serious", "unserious"] = "unserious"
+    # 2026-11-05 web lane: None = auto heuristic, True/False = forced. Only
+    # local/Bedrock use it (cloud Claude/GPT/Max search natively).
+    web: bool | None = None
 
 
 @router.get("/models")
@@ -803,6 +806,7 @@ def chat_endpoint(body: ChatRequest) -> dict:
             body.slug,
             mode=mode,
             used_private=used_private,
+            web=body.web,
         )
     except UnknownModelError as e:
         raise HTTPException(400, str(e))

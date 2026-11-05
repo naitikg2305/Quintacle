@@ -67,6 +67,7 @@ import {
   Droplets,
   Dumbbell,
   FileSearch,
+  Globe,
   Info,
   ImagePlus,
   Lock,
@@ -151,6 +152,10 @@ function KBPageInner() {
   // to the backend each send; adopted from each response.
   const [chatMode, setChatMode] = useState<ChatMode>("unserious");
   const [modeNotice, setModeNotice] = useState<string | null>(null);
+  // 2026-11-05 web lane: auto (backend heuristic) → on → off. Only local and
+  // Bedrock models use it; cloud Claude/GPT search natively.
+  const [webMode, setWebMode] = useState<"auto" | "on" | "off">("auto");
+  const webFlag = webMode === "auto" ? undefined : webMode === "on";
   // 2026-11-05: "N private notes were left out of the cloud handoff." —
   // set when a cloud request stripped turns that used private notes.
   const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
@@ -769,7 +774,8 @@ function KBPageInner() {
         target?.folder,
         effectiveModel,
         target?.slug,
-        chatMode
+        chatMode,
+        webFlag
       );
       // Older backends omit `mode` — keep the current one.
       if (mode) setChatMode(mode);
@@ -810,7 +816,8 @@ function KBPageInner() {
         target?.folder,
         cloudModel,
         target?.slug,
-        chatMode
+        chatMode,
+        webFlag
       );
       // Adopt the effective mode exactly like sendChat (older backends omit it).
       if (mode) setChatMode(mode);
@@ -959,6 +966,21 @@ function KBPageInner() {
                 {keepTranscript ? "Keep transcript" : "Incognito"}
               </button>
               <ModeChip mode={chatMode} onToggle={() => setChatMode(chatMode === "serious" ? "unserious" : "serious")} />
+              <button
+                type="button"
+                onClick={() => setWebMode(webMode === "auto" ? "on" : webMode === "on" ? "off" : "auto")}
+                title={
+                  "Web search for local & Bedrock models — code searches and fetches, only the query leaves this machine. " +
+                  "Auto: on when the question needs current/outside info. Cloud Claude/GPT search natively regardless."
+                }
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors",
+                  webMode === "on" ? "border-accent/50 bg-accent/10 text-accent" : "border-line text-muted"
+                )}
+              >
+                <Globe size={14} />
+                {webMode === "auto" ? "Web: auto" : webMode === "on" ? "Web: on" : "Web: off"}
+              </button>
               <Button size="sm" onClick={closeChat} disabled={chatBusy} title="Archive this chat and start fresh">
                 <Plus size={14} /> New chat
               </Button>

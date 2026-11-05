@@ -198,3 +198,45 @@ model. One definition, `core/quintacle_core/nodes/kb/privacy.py`
   the FTS row — the only read lane (recent-chats recall, transcript search).
 
 Tests: `core/tests/test_private_notes.py`.
+
+
+## 2026-11-05 — the web lane for models without native search (code-derived)
+
+Cloud Claude (`web_search` server tool), GPT (Responses `web_search`) and
+Max (`WebSearch`/`WebFetch`) search natively and are untouched. Local
+(Ollama) and Bedrock models have no search, so for them **code** searches
+and fetches and the model only reads (`core/quintacle_core/web_search.py`).
+
+- **When:** `ChatRequest.web` — `null` (default) = auto, `true`/`false` =
+  forced. Auto (`needs_web`) is a deterministic regex: on for external cues
+  (latest, today, news, price of, opening hours, how do I, visa,
+  requirements, weather, near me, an explicit URL...), but **off** when the
+  message is about the owner's own data (my / I / our...) unless the cue
+  is strong (URL, weather, visa, news, near me...). Auto never fires in
+  serious mode. An explicit `web: true` does work there, and a non-empty
+  web block counts as something to ground on (no zero-match short-circuit).
+- **What:** `build_query` strips filler from the newest user message.
+  Search runs on DuckDuckGo's HTML endpoint (stdlib `html.parser`), or on
+  SearXNG JSON when `QUINTACLE_SEARXNG_URL` is set. URLs in the message are
+  fetched directly as the first sources. The top 3 pages are fetched in
+  parallel threads (8 s each, about 20 s total). Scripts, styles, nav,
+  header and footer are stripped, and each page is capped at about 3k
+  chars.
+- **Where:** a `## Web results (fetched just now) — search query: "…"`
+  block with numbered `[n] title — url` sources is appended after the
+  assembled KB context. It tells the model to cite `[1]`, `[2]`, to list
+  the sources as markdown links, and to say plainly when the results don't
+  answer the question. `run_kb_chat` adds it in one call to
+  `chat_web_block(provider, web, last_user_text, mode)`.
+- **Privacy:** the ONLY thing that leaves the machine is the search query,
+  and it is built purely from the user's newest typed text. KB context,
+  note bodies, private notes and earlier turns are never part of it.
+  (Fetching a result URL also tells that site you visited it, the same as
+  opening the link.) Test:
+  `test_web_search.py::test_no_native_search_providers_get_web_block`.
+- **Failure:** every error (timeout, DNS, parse) degrades to no block, so
+  chat proceeds as before. `QUINTACLE_WEB_SEARCH=off` is a global kill
+  switch, and the test suite sets it in `conftest.py`.
+- **UI:** a "Web: auto / on / off" chip next to the Mode chip on `/kb`.
+  Its tooltip notes that cloud models search natively. AssistPanel sends
+  auto.

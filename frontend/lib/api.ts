@@ -1588,10 +1588,31 @@ export type ChatReply = { reply: string; mode?: ChatMode; mode_switched?: boolea
 export const privateHandoffNotice = (n: number) =>
   `${n} private note${n === 1 ? " was" : "s were"} left out of the cloud handoff.`;
 
-export const chatWithKB = (messages: ChatMessage[], use_kb: boolean, research: boolean, folder?: string, model?: string, slug?: string, mode?: ChatMode) =>
+// `web` (2026-11-05): code-side web search for local/Bedrock models (cloud
+// Claude/GPT search natively). undefined = backend auto heuristic; true/false
+// force it on/off. Only the search query ever leaves the machine.
+export const chatWithKB = (
+  messages: ChatMessage[],
+  use_kb: boolean,
+  research: boolean,
+  folder?: string,
+  model?: string,
+  slug?: string,
+  mode?: ChatMode,
+  web?: boolean
+) =>
   request<ChatReply>("/kb/chat", {
     method: "POST",
-    body: JSON.stringify({ messages, use_kb, research, folder: folder ?? null, model: model ?? null, slug: slug ?? null, ...(mode ? { mode } : {}) }),
+    body: JSON.stringify({
+      messages,
+      use_kb,
+      research,
+      folder: folder ?? null,
+      model: model ?? null,
+      slug: slug ?? null,
+      ...(mode ? { mode } : {}),
+      ...(web !== undefined ? { web } : {}),
+    }),
   });
 
 // --- transcripts deep search + "record that" (next-wave-plan §4) -----------

@@ -24,3 +24,6 @@ def _deterministic_prose_summaries(monkeypatch):
     # existing anthropic fakes keep working. Max's own tests re-enable it
     # with a fake CLI binary.
     monkeypatch.setenv("QUINTACLE_DISABLE_MAX", "1")
+    # Web lane (web_search.py) for local/Bedrock chat: never a real network
+    # call from a test. test_web_search.py re-enables it with stubbed urlopen.
+    monkeypatch.setenv("QUINTACLE_WEB_SEARCH", "off")
