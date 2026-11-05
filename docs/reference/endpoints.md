@@ -334,3 +334,22 @@ Changed: `POST /kb/entries/with-asset`, `POST /kb/entry/asset` (now also
 re-indexes when an image is attached) and the MCP `kb_attach_file` tool all
 bake the place line for image files. See `drop-pipeline.md` (2026-11-05
 photo place section).
+
+## 2026-11-05 additions — Business Ideas board (`/business`, `nodes/business/api.py`) — 4
+
+An idea is `Business Ideas/<Idea>/` (on disk `kb/business-ideas/<idea>/`)
+with a hub note whose slug equals the folder slug. Every file anywhere under
+the idea's folder belongs to it. Hub `fields`: `status` (`idea | exploring |
+validating | building | parked | dropped`; anything else reads as `idea`),
+`summary`, `market`, `tags` (list), `created`. No model is called.
+
+| Method | Path | Input | Purpose | Store |
+|---|---|---|---|---|
+| GET | `/business/ideas` | — | `{statuses, ideas: [{slug, folder, title, has_hub, private, status, summary, market, tags, created, file_counts, file_total, last_edited}]}`. A folder with no hub is listed with `has_hub: false`. `file_counts` is by kind (`markdown, image, video, pdf, doc, spreadsheet, model, link, other`), hub excluded, `_`/`.` plumbing skipped. `last_edited` = latest of the hub's `edited` and every file's mtime (ET). Newest first | KBStore root (read-only walk) |
+| GET | `/business/ideas/{slug}` | — | The card fields plus `body` (hub body, title line stripped), `files` grouped by kind (`{name, path, kind, size, modified}`; markdown adds `folder, slug, title, content, private`; `.url`/`.webloc` add `url`), and `links` (http(s) URLs found in the hub and notes). `path` is relative to the idea folder, so `/kb/asset?folder=<folder>&path=<path>` serves it. 404 if missing | KBStore root |
+| POST | `/business/ideas` | `{title, summary?, status?, market?, tags?, body?}` | Create the hub (`fields.created` = today ET), then the same graph-link + retrieval hooks as `POST /kb/entries`. A hub-less folder is adopted. 409 if the hub exists, 400 on a bad status or a title with no letters/digits. Returns the detail | KBStore + GraphEdgeStore + RetrievalIndex |
+| PUT | `/business/ideas/{slug}/fields` | any of `{status, summary, market, tags}` | Merge hub fields via `KBStore.set_fields` (no `edited` restamp, body untouched). Only sent keys change; `""` / `[]` removes the field. 400 on a bad status, 404 if there's no hub. Returns the detail | KBStore |
+
+The sorter now offers `Business Ideas` as a seed folder, and `_FOLDER_RULE`
+(`nodes/kb/llm.py`) routes business/startup/product ideas to
+`Business Ideas/<Idea>`. Tests: `core/tests/test_business_ideas.py`.

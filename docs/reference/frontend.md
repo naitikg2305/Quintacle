@@ -215,3 +215,38 @@ Supersedes the "AppShell navigation" section above (kept as history).
   (`LogsRepository.body_stats_between`), oldest first and read-only, with
   the metric lowercased. Client: `listBodyStats` in `lib/api.ts`.
   Tests: `core/tests/test_body_stats_read.py`.
+
+## 2026-11-05 — Business Ideas page (`app/business/page.tsx`)
+
+- **Route** `/business`. Not yet in `lib/apps.ts` (parallel page builds own
+  that file). Add it there to put the page in the ⊞ Apps drawer.
+- **Board.** Ideas grouped by status: Idea · Exploring · Validating ·
+  Building · Parked/Dropped. These are five columns at `lg`. On a phone
+  they are stacked sections, and empty sections are hidden. A card shows
+  the title, summary, tags, file-kind icons with counts
+  (`components/business/fileKinds.tsx`), and the last-touched date. It also
+  shows a "no hub note" badge for a folder that the sorter filled before a
+  hub existed.
+- **Detail** is `?i=<slug>` (a query param, so it works with static
+  export). It shows a status picker (one click = `PUT …/fields`) and an
+  Edit form for summary, market and tags. The hub body is rendered as
+  markdown. Below that, every file in the folder is grouped by kind
+  (`components/business/IdeaFiles.tsx`):
+  - Notes are rendered inline as markdown. Relative `assets/…` links resolve
+    through `/kb/asset` against the note's own folder, and `[asset]` lines
+    are stripped.
+  - Images are a grid with `ImageLightbox`. Videos play inline. STLs use
+    `STLViewer`, loaded with `dynamic`, `ssr: false`.
+  - PDFs, docs and spreadsheets have Open and Save actions, plus an
+    on-demand Preview: an iframe for PDF, `DocxViewer` for docx, and
+    `SpreadsheetEditor` for xlsx/xlsm.
+  - `.url`/`.webloc` files are shown as link chips. Anything else is a
+    download chip. URLs found in the notes are collected in "Links in
+    notes".
+  - A hub-less folder shows a "Create the hub note" form instead of the
+    overview.
+- **New idea**: a quick form (title, summary, status, tags) that calls
+  `POST /business/ideas` and then opens the new idea. A hint explains that
+  dropping files with Sort with AI files them into `Business Ideas/<Idea>`.
+- **Client**: `lib/businessApi.ts`. It is kept separate from `lib/api.ts`
+  and reuses `API_BASE` and `kbAssetUrl`.
