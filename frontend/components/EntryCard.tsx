@@ -382,6 +382,11 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
             <input type="checkbox" checked={entry.private ?? false} onChange={(e) => onUpdate(i, { private: e.target.checked })} />
             Private — keep away from cloud AI
           </label>
+          {(entry.file_meta ?? []).map((m) => (
+            <p key={m.filename + m.line} className="text-xs opacity-60" title="Read from the file itself — saved into the note">
+              File info: {m.line}
+            </p>
+          ))}
           <textarea
             className="w-full border rounded p-2 text-sm"
             rows={4}

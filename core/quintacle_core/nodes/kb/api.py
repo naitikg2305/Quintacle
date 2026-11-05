@@ -37,6 +37,7 @@ from .llm import (
     suggest_record_fold_new,
 )
 from .photo_organizer import compute_photo_folder
+from .file_meta import apply_file_meta, backfill_file_meta, proposal_file_meta
 from .photo_place import backfill_photo_places, bake_photo_place, insert_place_line, is_image_name
 from .privacy import PRIVATE_MARKER, public_notes_index, strip_private_turns
 from .spreadsheet import read_spreadsheet, write_spreadsheet
@@ -381,7 +382,20 @@ async def add_entry_asset(folder: str = Form(...), slug: str = Form(...), file: 
             full = get_store().read_full(folder, slug) or {}
             folder_slug = str(get_store().entry_path(folder, slug).parent.relative_to(get_store().root)).replace("\\", "/")
             safe_index_note(folder_slug, get_store().entry_path(folder, slug).stem, full.get("title") or slug, baked.extra["body"])
+    _bake_file_meta_and_index(folder, slug, {asset_path: file.filename or asset_path})
     return {"folder": folder, "slug": slug, "asset": asset_path}
+
+
+def _bake_file_meta_and_index(folder: str, slug: str, names: dict[str, str]) -> None:
+    """2026-11-05: 🗂 file metadata (title/author/created/pages/camera/
+    duration...) re-extracted from the stored file into the body +
+    `file_meta`, on_day edge to the created day's journal, then re-index."""
+    fm = apply_file_meta(get_store(), folder, slug, names, journal_store=get_journal_store())
+    if fm is not None and fm.changed:
+        full = get_store().read_full(folder, slug) or {}
+        path = get_store().entry_path(folder, slug)
+        folder_slug = str(path.parent.relative_to(get_store().root)).replace("\\", "/")
+        safe_index_note(folder_slug, path.stem, full.get("title") or slug, fm.body)
 
 
 @router.post("/asset/replace")
@@ -455,6 +469,17 @@ def backfill_photo_place(dry_run: bool = True) -> dict:
     return {"dry_run": dry_run, "count": len(changes), "changes": changes}
 
 
+@router.post("/files/backfill-meta")
+def backfill_file_meta_route(dry_run: bool = True) -> dict:
+    """2026-11-05: add/refresh the 🗂 file-meta line(s) + `file_meta`
+    frontmatter on every existing note with asset files (read from disk),
+    link each to its created day's journal (`on_day`, when that day
+    exists) and re-index. dry_run (default) reports only — no writes, no
+    edges. Deterministic: no model call."""
+    changes = backfill_file_meta(get_store(), dry_run=dry_run, index=safe_index_note, journal_store=get_journal_store())
+    return {"dry_run": dry_run, "count": len(changes), "changes": changes}
+
+
 @router.post("/drop")
 async def drop_file(file: UploadFile = File(...), description: str = Form("")) -> dict:
     """Proposes a folder/title/content for an uploaded photo/PDF/DOCX/STL —
@@ -465,7 +490,7 @@ async def drop_file(file: UploadFile = File(...), description: str = Form("")) -
     data = await file.read()
     description_text = describe_drop(file.filename or "upload", data, description)
     suggestion = suggest_kb_entry(description_text, get_store().list_folders(), public_notes_index(get_store()))
-    return suggestion.model_dump()
+    return {**suggestion.model_dump(), "file_meta": proposal_file_meta([(file.filename or "upload", data)])}
 
 
 @router.post("/batch-drop")
@@ -494,9 +519,11 @@ async def batch_drop(
     journal_dates_by_id: dict[str, str] = {}
     photo_dates_by_id: dict[str, object] = {}
     locations_by_id: dict[str, dict] = {}
+    file_meta_by_id: dict[str, list[dict]] = {}
     for i, f in enumerate(files):
         file_id = f"file_{i}"
         data = await f.read()
+        file_meta_by_id[file_id] = proposal_file_meta([(f.filename or "upload", data)])
         description = describe_drop(f.filename or "upload", data, "")
         entries.append({"file_id": file_id, "description": description})
         filenames_by_id[file_id] = f.filename or "upload"
@@ -541,7 +568,13 @@ async def batch_drop(
             else file_suggestion.folder
         )
         buckets.setdefault(folder, []).append(
-            {"filename": filename, "title": file_suggestion.title, "content": file_suggestion.content, "links": links}
+            {
+                "filename": filename,
+                "title": file_suggestion.title,
+                "content": file_suggestion.content,
+                "links": links,
+                "file_meta": file_meta_by_id.get(file_suggestion.file_id, []),
+            }
         )
     return {"buckets": [{"folder": folder, "files": files} for folder, files in buckets.items()]}
 
@@ -581,6 +614,9 @@ async def create_entry_with_asset(
         if baked is not None:
             linked_content = insert_place_line(linked_content, baked.line)
             location = baked.location or location
+    # 2026-11-05: 🗂 file metadata baked from the STORED files (never client-sent) + on_day edge.
+    fm = apply_file_meta(get_store(), folder_slug, entry_slug, dict(zip(asset_paths, (n for n, _ in file_data))), journal_store=get_journal_store())
+    linked_content = fm.apply_to(linked_content) if fm is not None else linked_content
     _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", title, linked_content, link_list)
     # Retrieval index (retrieval.py) — failure-isolated, never fails the save.
     safe_index_note(folder_slug, entry_slug, title, linked_content)

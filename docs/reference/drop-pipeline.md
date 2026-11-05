@@ -257,6 +257,53 @@ plus `place: {city, state, country, continent}` frontmatter next to
 - `POST /kb/photos/backfill-place` (dry run by default) fixes notes saved
   before this change.
 
+### 2026-11-05 — file metadata baked at drop and at save
+
+Owner ask: "bake [file metadata] at the drop step that way we always have
+data … we need to link everything on that graph so weak ais can answer
+stuff". `nodes/kb/file_meta.py` extracts each file's own metadata. It uses
+only the stdlib and Pillow, makes no model call and adds no new dependency:
+
+| Type | Fields |
+|---|---|
+| PDF | title, author, subject, creator, producer, created, modified, pages. Read from the raw Info dict and from Flate object streams via zlib, with an XMP fallback |
+| DOCX / XLSX / PPTX | title, subject, author (`dc:creator`), last_modified_by, created, modified from `docProps/core.xml`. pages, slides and words from `app.xml`. sheets is the worksheet count |
+| Image | camera_make, camera_model, width, height, taken (EXIF). Place stays with `photo_place` |
+| MP4 / MOV / M4V / M4A / 3GP | duration_s, created (`mvhd`, overridden by Apple's `creationdate`), location (`©xyz` / ISO6709), from a small box walker. WebM and MKV get the common fields only |
+| Every file | filename (the original upload name), asset, size, mime, ext, kind, day |
+
+Dates are normalized to ISO. PDF `D:YYYYMMDDHHmmSS±HH'mm'` and W3CDTF are
+both handled, and timezone-aware values are converted to Eastern. `day` is
+the taken or created date, used for the journal link.
+
+- **Body line**: one per asset, just before the `[asset](…)` lines and after
+  any 📍 line. Example:
+  `🗂 PDF · "Austria itinerary" · 12 pages · created 2026-11-04 by Naitik · austria.pdf (128 KB) <!-- filemeta -->`.
+  The `<!-- filemeta -->` marker makes re-runs idempotent.
+  `insert_place_line` now treats 🗂 lines as part of the trailing block, so
+  📍 always stays first. `deterministic_prose_summary` skips the line, and
+  the FTS body keeps it.
+- **Frontmatter**: `file_meta: [{…}, …]`, one dict per asset. It is in
+  `_INTERNAL_META`, so Browse does not list it as a field.
+- **At drop**: `/drop` attaches `file_meta` (a list, with a display `line`)
+  to every kb_entry proposal, including "Private, skip AI", which still makes
+  zero model calls. `/kb/drop` and `/kb/batch-drop` attach it per file. The
+  review card (`EntryCard` kb_entry) and the batch import card show a
+  read-only "File info" line.
+- **At save**: `apply_file_meta()` re-reads the STORED asset from disk and
+  ignores anything the client sent. It is hooked into
+  `/kb/entries/with-asset`, `POST /kb/entry/asset` and MCP `kb_attach_file`,
+  each time right after the `photo_place` call and before `safe_index_note`.
+  The MCP call runs inside the staged session, and new edges are staged
+  too, so `undo_write` removes them.
+- **Graph**: the note gets an `on_day` edge to `journal:<day>`
+  (`source_of_edge: file_meta`) only when that journal day exists, the same
+  rule photos follow. The edges are re-synced, so a stale file_meta day edge
+  is removed. `day_bundle.day_photos` therefore surfaces a boarding pass
+  created on May 12 when asked about May 12. One gap: an MCP re-attach that
+  removes a stale edge does not restore it on undo.
+- `POST /kb/files/backfill-meta` (dry run by default) covers older notes.
+
 ## The Drop page's "Still going" session
 
 Pure orchestration of existing endpoints, no backend feature

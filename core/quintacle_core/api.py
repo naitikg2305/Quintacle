@@ -41,6 +41,7 @@ from .nodes.journal.llm import parse_journal_dump
 from .nodes.journal.normalize import canonicalize_entries, canonicalize_name
 from .nodes.kb.drop import describe_drop, extract_photo_date, extract_photo_location
 from .nodes.kb.photo_organizer import compute_photo_folder
+from .nodes.kb.file_meta import proposal_file_meta
 from .nodes.kb.privacy import private_manual_entry, public_notes_index
 from .nodes.kb.llm import suggest_kb_entry, suggest_kb_placement
 from .nodes.logs.meal_composer import resolve_composition, suggest_meal_composition
@@ -402,7 +403,10 @@ def create_app() -> FastAPI:
         if not text.strip() and file is None:
             raise HTTPException(400, "nothing to drop — provide text and/or a file")
         if private_skip_ai:
-            return {"entries": [private_manual_entry(text, file.filename if file is not None else None)], "provider_used": None}
+            manual = private_manual_entry(text, file.filename if file is not None else None)
+            if file is not None:  # deterministic file metadata — still zero model calls
+                manual["file_meta"] = proposal_file_meta([(file.filename or "upload", await file.read())])
+            return {"entries": [manual], "provider_used": None}
         if provider is not None and provider.strip().lower() not in llm_dispatch.VALID_PROVIDERS:
             raise HTTPException(400, f"provider must be one of {', '.join(llm_dispatch.VALID_PROVIDERS)}")
         used = llm_dispatch.collect_providers()
@@ -809,6 +813,17 @@ def create_app() -> FastAPI:
                 for entry in entries:
                     if entry.get("type") in _PHOTO_BEARING_ENTRY_TYPES:
                         entry["perception"] = payload
+
+        # 2026-11-05: deterministic file metadata (title/author/created/
+        # pages/camera/duration...) on each kb_entry proposal for the review
+        # card's read-only "File info" line. Display only — Save re-extracts
+        # from the stored file (nodes/kb/file_meta.py).
+        if data is not None:
+            drop_files = [(filename or "upload", data)] + ([(filename2 or "upload", data2)] if data2 is not None else [])
+            file_meta = proposal_file_meta(drop_files)
+            for entry in entries:
+                if entry.get("type") == "kb_entry":
+                    entry["file_meta"] = file_meta
 
         return {"entries": entries, "provider_used": llm_dispatch.summarize_providers(used)}
 

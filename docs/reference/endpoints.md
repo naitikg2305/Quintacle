@@ -320,6 +320,14 @@ places go to `Fun/Travel/Bucket List`.
 |---|---|---|---|---|
 | POST | `/kb/photos/backfill-place` | query `dry_run` (default `true`) | Walk every KB note with image assets (or frontmatter `location`), add/refresh its `📍 … <!-- place -->` body line + `place` frontmatter, re-index each. Dry run only reports `{dry_run, count, changes: [{folder, slug, line, place, location}]}` (geocode results are still cached, so the apply run is free). Private notes never hit the cloud geocoder | KBStore + RetrievalIndex |
 
+## 2026-11-05 additions — file metadata
+
+| Method | Path | Input | Purpose | Store |
+|---|---|---|---|---|
+| POST | `/kb/files/backfill-meta` | query `dry_run` (default `true`) | Walk every KB note with `[asset](…)` files and re-extract metadata from the stored bytes (PDF/Office/image/MP4, no model call). Adds or refreshes the `🗂 … <!-- filemeta -->` body line(s) and `file_meta` frontmatter, links an `on_day` edge to the created day's journal when that day exists, and re-indexes. Returns `{dry_run, count, changes: [{folder, slug, lines, days, new_edges}]}`. A dry run writes nothing | KBStore + GraphEdgeStore + RetrievalIndex |
+
+`/drop`, `/kb/drop` and `/kb/batch-drop` proposals now carry `file_meta: [{…, line}]` for display. Save re-extracts it from the stored file.
+
 Changed: `POST /kb/entries/with-asset`, `POST /kb/entry/asset` (now also
 re-indexes when an image is attached) and the MCP `kb_attach_file` tool all
 bake the place line for image files. See `drop-pipeline.md` (2026-11-05
