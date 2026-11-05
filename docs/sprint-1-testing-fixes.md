@@ -61,5 +61,9 @@ sprints get their own section below; never rewrite a past sprint's entries.
 
 ## To do later
 
+- **Stocks discusser** (owner, 2026-11-05): a page to discuss what's going on with
+  stocks he follows (e.g. Rivian) — recorded news, hunches, a watchlist — on top of the
+  simplified Investments page (holdings he actually owns). Placeholder card exists.
+
 - **Feature list.** A single map of every feature: where it lives, what it links to,
   tested or not. Build from the code + `docs/reference/` once testing settles.
