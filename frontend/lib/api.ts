@@ -816,6 +816,50 @@ export const createExperience = (fields: {
   links?: string[];
 }) => request<{ name: string; slug: string; folder: string }>("/travel/experiences", { method: "POST", body: JSON.stringify(fields) });
 
+// --- travel: planned trips + bucket list ---
+
+export type PlannedTrip = {
+  folder: string;
+  slug: string;
+  title: string;
+  group: string;
+  start: string | null;
+  end: string | null;
+  destinations: string | null;
+  status: string | null;
+  edited: string | null;
+};
+
+export const listPlannedTrips = () => request<PlannedTrip[]>("/travel/planned");
+
+// Notes sitting directly in Fun/Travel that haven't been filed under Planned.
+export const listUnsortedTravel = () => request<PlannedTrip[]>("/travel/unsorted");
+
+export const movePlannedTrip = (fields: { folder: string; slug: string; group: string }) =>
+  request<{ folder: string; slug: string }>("/travel/planned/move", { method: "POST", body: JSON.stringify(fields) });
+
+export type BucketPlace = {
+  folder: string;
+  slug: string;
+  place: string;
+  notes: string;
+  added: string | null;
+  visited: boolean;
+  visited_on: string | null;
+  experience_ids: (string | number)[];
+};
+
+export const listBucketPlaces = () => request<BucketPlace[]>("/travel/bucket");
+
+// Rejects with an Error whose message contains " 409 " when the place already exists.
+export const addBucketPlace = (fields: { place: string; notes?: string }) =>
+  request<BucketPlace>("/travel/bucket", { method: "POST", body: JSON.stringify(fields) });
+
+export async function deleteBucketPlace(slug: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/travel/bucket/${encodeURIComponent(slug)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`DELETE /travel/bucket/${slug} failed: ${res.status} ${await res.text()}`);
+}
+
 export type Person = {
   name: string;
   slug: string;

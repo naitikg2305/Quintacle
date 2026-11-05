@@ -47,3 +47,13 @@ export function mondayOfWeek(iso: string): string {
   const sinceMonday = (dt.getUTCDay() + 6) % 7; // Monday = 0
   return addDaysIso(iso, -sinceMonday);
 }
+
+const shortDateFormat = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" });
+
+// "Mar 4, 2027" from a YYYY-MM-DD (or ISO datetime — date part used) calendar
+// string. Formats the string's own fields in UTC so no zone shift can move it.
+export function formatIsoDate(iso: string): string {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return iso;
+  return shortDateFormat.format(new Date(Date.UTC(y, m - 1, d)));
+}
