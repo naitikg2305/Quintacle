@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import mimetypes
 import re
+import urllib.parse
 import urllib.request
 from datetime import date
 from typing import Literal
@@ -70,6 +71,59 @@ def _localize_remote_images(content: str, folder: str, store: KBStore) -> str:
         return f"![{alt}]({asset_path})"
 
     return _MD_IMAGE_RE.sub(replace, content)
+
+
+# 2026-11-05 fix: a chat answer saved as a .md ATTACHMENT kept its pictures
+# as links — remote Wikipedia URLs and links to the owner's own photos
+# (`…/kb/asset?folder=…&path=…`, from "show me my photos") — so nothing got
+# attached. Every image in an attached markdown file is now downloaded (remote)
+# or copied (own asset) into the note's folder, the file's links point at the
+# sibling copies, and the note body embeds them so Browse shows them inline.
+_MD_ANY_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
+_MD_EXT = {"md", "markdown"}
+
+
+def _fetch_image(url: str, store: KBStore) -> tuple[bytes, str] | None:
+    """(bytes, extension) for a remote URL or an own /kb/asset link; None on failure."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.path.endswith("/kb/asset"):
+        q = urllib.parse.parse_qs(parsed.query)
+        src_folder, src_path = (q.get("folder") or [""])[0], (q.get("path") or [""])[0]
+        data = store.read_asset(src_folder, src_path) if src_folder and src_path else None
+        return (data, "." + src_path.rsplit(".", 1)[-1].lower()) if data else None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Quintacle/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read()
+            ctype = resp.headers.get("Content-Type", "").split(";")[0].strip()
+    except Exception:
+        return None
+    if not ctype.startswith("image/"):
+        return None
+    return data, (mimetypes.guess_extension(ctype) or ".jpg")
+
+
+def _attach_markdown_images(md_text: str, folder: str, store: KBStore) -> tuple[str, list[str]]:
+    """Returns (rewritten markdown, [note-relative asset paths]) — failures
+    leave that link untouched rather than breaking the save."""
+    saved: list[str] = []
+
+    def replace(match: re.Match) -> str:
+        alt, url = match.group(1), match.group(2)
+        if not (url.startswith(("http://", "https://")) or "/kb/asset?" in url):
+            return match.group(0)
+        got = _fetch_image(url, store)
+        if got is None:
+            return match.group(0)
+        data, ext = got
+        stem = re.sub(r"[^\w\- ]", "", alt).strip()[:60] or "image"
+        asset_path = store.save_asset(folder, f"{stem}{ext}", data)  # "assets/<name>"
+        saved.append(asset_path)
+        return f"![{alt}]({asset_path.split('/', 1)[-1]})"  # sibling of the .md inside assets/
+
+    return _MD_ANY_IMAGE_RE.sub(replace, md_text), saved
 
 
 router = APIRouter(prefix="/kb", tags=["kb"])
@@ -619,6 +673,14 @@ async def create_entry_with_asset(
     # Deterministic EXIF GPS off the first photo, if present — no AI, no user input
     location = extract_photo_location(file_data[0][1]) if file_data else None
     content = _localize_remote_images(content, folder, get_store())
+    md_images: list[str] = []
+    for i, (name, data) in enumerate(file_data):
+        if name.rsplit(".", 1)[-1].lower() in _MD_EXT:
+            text, got = _attach_markdown_images(data.decode("utf-8", errors="replace"), folder, get_store())
+            file_data[i] = (name, text.encode("utf-8"))
+            md_images.extend(got)
+    if md_images:
+        content = content.rstrip() + "\n\n" + "\n".join(f"![]({p})" for p in md_images)
     folder_slug, entry_slug = get_store().write(folder, title, content, link_list, location)
     asset_paths = [get_store().save_asset(folder_slug, name, data) for name, data in file_data]
     # Re-write with the asset reference(s) now that we know their final
