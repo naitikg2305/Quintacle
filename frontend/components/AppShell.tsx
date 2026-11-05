@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   BookOpen,
+  Briefcase,
   CalendarDays,
   Ellipsis,
   FileText,
@@ -60,6 +61,7 @@ const LIFE: NavItem[] = [
 
 const PRODUCTIVITY: NavItem[] = [
   { href: "/stocks", label: "Stocks", icon: TrendingUp },
+  { href: "/career", label: "Career updates", icon: Briefcase },
 ];
 
 const FUN: NavItem[] = [

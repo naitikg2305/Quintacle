@@ -187,6 +187,33 @@ class KBStore:
         path.write_text(frontmatter.dumps(post), encoding="utf-8")
         return True
 
+    def read_meta(self, folder: str, slug: str) -> dict | None:
+        """The note's RAW frontmatter, plumbing keys included (`edited`,
+        `fields`, `private`...) — read_full() hides those from Browse, but the
+        career/website updaters need `edited` (the real last-edit stamp)."""
+        post = self._load(folder, slug)
+        return dict(post.metadata) if post is not None else None
+
+    def set_fields(self, folder: str, slug: str, updates: dict) -> bool:
+        """Merge `updates` into the note's `fields` (a None value removes
+        that key) without touching the body or restamping `edited` — same
+        rule as set_private: alias/mapping metadata on a hub note (public,
+        public_name, record_entry...) is not a content edit. Returns False
+        when the note doesn't exist."""
+        path = resolve_nested(self.root, folder) / f"{slugify(slug)}.md"
+        if not path.exists():
+            return False
+        post = frontmatter.loads(path.read_text(encoding="utf-8"))
+        fields = dict(post.metadata.get("fields") or {})
+        for key, value in updates.items():
+            if value is None:
+                fields.pop(key, None)
+            else:
+                fields[key] = value
+        post["fields"] = fields
+        path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        return True
+
     def _load(self, folder: str, slug: str) -> frontmatter.Post | None:
         path = resolve_nested(self.root, folder) / f"{slugify(slug)}.md"
         return frontmatter.loads(path.read_text(encoding="utf-8")) if path.exists() else None

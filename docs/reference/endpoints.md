@@ -247,3 +247,25 @@ Full semantics in [sync.md](sync.md).
 | GET | `/sync/manifest` | — | `{rel_path: {mtime, size, sha256}}` for every syncable file | filesystem |
 | GET | `/sync/file` | `?path` | Raw bytes of one syncable file; 403 on traversal/excluded paths | filesystem |
 | POST | `/sync/pull` | `{peer_url, push_back?, self_url?}` | Pull from the peer (merge/copy/snapshot per the rules), rebuild derived indexes, optionally ask the peer to pull back | filesystem + LogsRepository + GraphEdgeStore |
+
+## Career updaters (`/career`, `nodes/career/api.py`) — 12
+
+*Added 2026-11-05 (worktree agent).* Full semantics in
+[career-updates.md](career-updates.md). The two `run` endpoints write
+nothing; only `record/save`, `record/import`, `hubs` (PUT), `settings`
+(PUT), `website/reject` and `website/generate` write.
+
+| Method | Path | Input | Purpose | Store |
+|---|---|---|---|---|
+| GET | `/career/settings` | — | Record note location + website repo/content dir | CareerState |
+| PUT | `/career/settings` | `{record_folder?, record_title?}` | Override where the record note lives | CareerState |
+| GET | `/career/record` | — | Exists/private, `covered_through` watermark, period sections 3–7 + entries | KBStore |
+| POST | `/career/record/import` | `{content}` | First-time import of the master record as a KB note; 409 if one exists | KBStore + GraphEdgeStore + RetrievalIndex |
+| POST | `/career/record/run` | `{start?, include_today?, provider?}` | Collect work logs after the watermark, group by hub, map to entries, draft + fact-check bullets. No write | KBStore + GraphEdgeStore + llm_dispatch |
+| POST | `/career/record/save` | `{through, base_hash?, bullets[], new_entries[], mappings[]}` | Append-only write of reviewed bullets, move the watermark, remember hub→entry picks; 409 if the record changed since the run | KBStore + RetrievalIndex |
+| GET | `/career/hubs` | — | Career/Projects hubs with alias fields + deterministic entry mapping | KBStore |
+| PUT | `/career/hubs` | `{folder, slug, record_entry?, public?, public_name?, public_repo?, public_slug?}` | Edit one hub's alias/mapping fields (no `edited` restamp) | KBStore |
+| GET | `/career/website` | — | Website watermark, last run, last result, repo path | CareerState |
+| POST | `/career/website/run` | `{provider?}` | Candidates (notes edited since the watermark + changed public record entries) with an advisory AI suggest/reason. No write | KBStore + llm_dispatch |
+| POST | `/career/website/reject` | `{id, stamp}` | Remember a rejection until the note/entry changes | CareerState |
+| POST | `/career/website/generate` | `{through, items[{id, category?, summary?}]}` | Render approved items, commit onto a new `quintacle/content-YYYY-MM-DD` branch (409 on a dirty tree, nothing written), move the watermark | website git repo + CareerState |
