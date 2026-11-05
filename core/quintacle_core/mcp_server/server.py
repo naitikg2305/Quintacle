@@ -17,6 +17,7 @@ from ..graph_capture import link_event as capture_link_event
 from ..markdown_paths import resolve_nested, slugify
 from ..nodes.journal.store import JournalStore
 from ..nodes.kb.drop import _IMAGE_MIME, describe_images
+from ..nodes.kb.photo_place import bake_photo_place, is_image_name
 from ..nodes.kb.privacy import is_private_node, private_filter, without_private_hits
 from ..nodes.kb.store import KBStore
 from ..nodes.logs.log_store import LogFileStore, home_for
@@ -307,8 +308,16 @@ def kb_attach_file(folder: str, slug: str, local_path: str, filename: str | None
     # rule, which is idempotent on the already-safe name picked above.
     written = kb_store.add_asset_to_entry(folder, slug, asset_rel.removeprefix("assets/"), data)
     session.stage_new_file(kb_store.assets_dir(folder) / written.removeprefix("assets/"))
-    # No graph edge / retrieval re-index: the REST add-asset path
-    # (POST /kb/entry/asset) does neither, and this mirrors it.
+    # No graph edge: the REST add-asset path (POST /kb/entry/asset) adds
+    # none, and this mirrors it. 2026-11-05: an attached IMAGE bakes its
+    # 📍 place line into the note (inside this same staged session, so
+    # undo_write restores the prior bytes) and re-indexes so retrieval finds
+    # it by place name — the REST path does the same.
+    if is_image_name(written):
+        baked = bake_photo_place(kb_store, folder, slug)
+        if baked is not None:
+            full = kb_store.read_full(folder, slug) or {}
+            retrieval.safe_index_note(folder_slug, entry_slug, full.get("title") or entry_slug, baked.extra["body"])
     ledger_id = session.commit(result={"folder": folder_slug, "slug": entry_slug, "asset_path": written})
     return {"folder": folder_slug, "slug": entry_slug, "asset_path": written, "bytes": len(data), "ledger_id": ledger_id}
 

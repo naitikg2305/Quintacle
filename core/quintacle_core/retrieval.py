@@ -463,8 +463,8 @@ def deterministic_prose_summary(body: str, title: str = "") -> str:
     reachable, and ALWAYS in tests."""
     for line in (body or "").splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith("#") or stripped.startswith("[asset](") or stripped.startswith("<!--"):
-            continue
+        if not stripped or stripped.startswith("#") or stripped.startswith("[asset](") or stripped.startswith("<!--") or stripped.endswith("<!-- place -->"):
+            continue  # the 📍 photo-place line (nodes/kb/photo_place.py) stays in the FTS body, not the summary
         return stripped[:PROSE_SUMMARY_CHARS]
     return (title or "").strip()[:PROSE_SUMMARY_CHARS]
 

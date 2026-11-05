@@ -3,6 +3,18 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-05 — Photo place baked into the note body (worktree agent)
+
+Owner asked that a photo's location be "baked into the markdown so it can be retrieved".
+New `nodes/kb/photo_place.py` writes a `📍 city, state, country · continent · lat, lon ·
+taken … <!-- place -->` line before the asset lines, plus `place` frontmatter. Names come
+from the cached `geocode` (one call per ~100 m spot, cached in `<data>/geocode-cache.json`;
+private notes never geocode) and the continent from a code table. It is hooked into
+`/kb/entries/with-asset` (drop + batch), `/kb/entry/asset` and MCP `kb_attach_file`, and
+the last two now re-index. `POST /kb/photos/backfill-place` (dry run by default) covers
+existing notes. 837 passed. Details: `docs/reference/drop-pipeline.md` (2026-11-05 photo
+place).
+
 ## 2026-11-05 — Travel states: Planned + Bucket list backend (worktree agent)
 
 Travel now has three states: Experiences (unchanged), Planned (trip notes under
