@@ -15,6 +15,7 @@ from openai import OpenAI
 
 from ... import clock
 from ...llm_config import DEFAULT_MODEL, RESEARCH_MODEL
+from .my_photos import PhotoRegistry, render_my_photos
 from .privacy import PrivacyGate, note_node_id
 from .store import KBStore
 
@@ -202,7 +203,13 @@ def _hit_section(store: KBStore, hit: dict, *, with_body: bool, gate: PrivacyGat
     return "\n".join(lines)
 
 
-def _kb_context(store: KBStore, query: str, exclude_id: str | None = None, gate: PrivacyGate | None = None) -> str:
+def _kb_context(
+    store: KBStore,
+    query: str,
+    exclude_id: str | None = None,
+    gate: PrivacyGate | None = None,
+    photos: PhotoRegistry | None = None,
+) -> str:
     """The rebuilt context: retrieve(query, k≈8), fetch full content only for
     the selected prose hits, finished summary lines for structured rows,
     1-hop neighbor labels per hit. Deterministic assembly in retrieve()'s own
@@ -235,6 +242,13 @@ def _kb_context(store: KBStore, query: str, exclude_id: str | None = None, gate:
                 break
         sections.append(section)
         total += len(section)
+    if photos is not None:
+        # 2026-11-05 (my_photos.py): photo notes among hits/neighbors get
+        # {{myphoto:Pn}} handles — gate-admitted only (cloud never sees private).
+        photos.collect(store, hits, gate)
+        block = photos.context_block()
+        if block:
+            sections.append(block)
     return "\n\n".join(sections)
 
 
@@ -683,6 +697,7 @@ def _build_context(
     messages: list[dict],
     mode: str = "unserious",
     gate: PrivacyGate | None = None,
+    photos: PhotoRegistry | None = None,
 ) -> tuple[str | None, bool]:
     """(system text, nothing_to_ground).
 
@@ -766,7 +781,7 @@ def _build_context(
     retrieved: str | None = None
     if query:
         try:
-            retrieved = _kb_context(store, query, exclude_id=f"note:{folder}/{slug}" if topic else None, gate=gate)
+            retrieved = _kb_context(store, query, exclude_id=f"note:{folder}/{slug}" if topic else None, gate=gate, photos=photos)
         except Exception:
             retrieved = None  # uninitialized / empty / any retrieval error → legacy fallback
     day_blocks = _day_blocks(messages, gate)
@@ -1259,7 +1274,8 @@ def run_kb_chat(
     # `used_private` (optional collector) receives the private note ids that
     # actually entered this turn's context — always empty for cloud.
     gate = PrivacyGate(store, allow_private=entry["provider"] == "local")
-    kb_text, nothing_to_ground = _build_context(store, use_kb, folder, slug, messages, mode, gate)
+    photos = PhotoRegistry()  # 2026-11-05: per-request {{myphoto:Pn}} handle map
+    kb_text, nothing_to_ground = _build_context(store, use_kb, folder, slug, messages, mode, gate, photos)
     if used_private is not None:
         used_private.update(gate.used)
     if mode == "serious" and nothing_to_ground:
@@ -1278,6 +1294,8 @@ def run_kb_chat(
         reply = _run_max(entry["id"], messages, kb_text)
     else:
         reply = _run_anthropic(entry["id"], messages, kb_text)
-    # Post-validation runs last, after photo tags resolved (those are external
-    # https images and pass through untouched).
+    # Owner photos ({{myphoto:Pn}} → /kb/asset images, + the photo-request
+    # fallback gallery) first; post-validation runs last, after photo tags
+    # resolved (Wikipedia images are external https and pass untouched).
+    reply = render_my_photos(reply, photos, _last_user_text(messages))
     return validate_reply_links(_resolve_photo_tags(reply), store)
