@@ -302,7 +302,13 @@ export const logSubstance = (body: { date: string; substance: string; amount: nu
 export const logBodyStat = (body: { date: string; metric: string; value: number; unit?: string }) =>
   request("/logs/body-stats", { method: "POST", body: JSON.stringify(body) });
 
-export type NutritionHistoryPoint = { date: string; kcal: number; protein_g: number; kcal_burned: number };
+// One body metric over a window, oldest first (dashboard weight sparkline).
+export type BodyStat = { id: number; date: string; metric: string; value: number; unit: string };
+
+export const listBodyStats = (start: string, end: string, metric = "weight") =>
+  request<BodyStat[]>(`/logs/body-stats?start=${start}&end=${end}&metric=${encodeURIComponent(metric)}`);
+
+export type NutritionHistoryPoint ={ date: string; kcal: number; protein_g: number; kcal_burned: number };
 
 export const getNutritionHistory = (days = 8) => request<NutritionHistoryPoint[]>(`/logs/nutrition-history?days=${days}`);
 

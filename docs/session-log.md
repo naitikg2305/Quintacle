@@ -3,6 +3,40 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-05 — Dashboard-first nav + ⊞ Apps drawer + widget dashboard (worktree agent)
+
+This follows the owner's design: "the dashboard should be the landing
+page", "home is home lol, we don't need a home tab". Nav now comes from
+one registry, `frontend/lib/apps.ts`. The four core items (Chat, Browse,
+Calendar, Graph) sit on a slim desktop rail and in a 5-slot phone bar.
+Everything else lives in a new ⊞ Apps drawer
+(`components/AppDrawer.tsx`): search, a Recent row of the last 4 apps, and
+grouped bubble icons. The drawer is accessible (Esc, focus trap) and its
+motion respects reduced-motion. All 21 routes the old sidebar listed are
+still reachable.
+
+The dashboard (`app/page.tsx`) was rebuilt around widgets: Today (due and
+overdue todos plus today's logs), Goals (habit rings with a prorated-pace
+tick), Productivity (hours by category per weekday, with a change against
+last week), Weight (a 60-day sparkline), Food, Spend, Connections and
+Recent. Assist and Capture stay. The charts are plain SVG
+(`components/overview/charts.tsx`). New deterministic read:
+`GET /logs/body-stats` (`test_body_stats_read.py`). 938 passed, tsc 0, and
+eslint shows no new errors on the touched files. Screenshots at 1400px and
+390px were taken against a sandboxed backend on 8100 and the frontend on
+3100, and show no horizontal scroll.
+
+Found (pre-existing, not fixed):
+- Bursts of parallel GETs sometimes return 500 `sqlite3.InterfaceError:
+  bad parameter or other API misuse` / "no habit with id N". The routes
+  share one SQLite connection across uvicorn's threadpool. The dashboard
+  now fetches habit progress sequentially, but other concurrent requests
+  can still race it.
+- `POST /logs/habits` accepts `target_period: "weekly"`, which later
+  500s every progress read. Only `day/week/2weeks/month` are valid.
+
+Reference: `docs/reference/frontend.md` (2026-11-05 correction).
+
 ## 2026-11-05 — Web lane for local/Bedrock chat (worktree agent)
 
 Local models (qwen via Ollama) and Bedrock can now answer with web info.
