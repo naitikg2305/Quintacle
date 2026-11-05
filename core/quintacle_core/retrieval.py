@@ -340,11 +340,14 @@ class RetrievalIndex:
         RRF merge without sqlite-vec or Ollama installed."""
         return self.vectors.search(query, limit)
 
-    def _neighbors(self, node_id: str) -> list[dict]:
+    def _neighbors(self, node_id: str, exclude=None) -> list[dict]:
         """1-hop graph expansion via graph.neighborhood — labels only
         ({id, title, edge_type}), titles resolved from this index when the
         neighbor is indexed, else the id's own rest. No graph store wired
-        (bare tests) degrades to no neighbors, never an error."""
+        (bare tests) degrades to no neighbors, never an error. `exclude`
+        (2026-11-05, the private-note flag): an optional id predicate — a
+        neighbor it returns True for never appears (cloud surfaces pass
+        privacy.private_filter so a private note's title can't leak)."""
         try:
             from .graph import get_graph_store
 
@@ -367,6 +370,8 @@ class RetrievalIndex:
                 continue
             if other == node_id or key in seen:
                 continue
+            if exclude is not None and exclude(other):
+                continue
             seen.add(key)
             row = self.conn.execute("SELECT title FROM nodes_index WHERE id = ?", (other,)).fetchone()
             title = row["title"] if row is not None else other.partition(":")[2]
@@ -375,9 +380,12 @@ class RetrievalIndex:
                 break
         return neighbors
 
-    def retrieve(self, query: str, k: int = 10, types: list[str] | None = None) -> list[dict]:
+    def retrieve(self, query: str, k: int = 10, types: list[str] | None = None, exclude=None) -> list[dict]:
         """FTS5 bm25 + vector cosine (when the lane is up), RRF-fused, then
-        graph-expanded. Pure code end to end — no model call anywhere."""
+        graph-expanded. Pure code end to end — no model call anywhere.
+        `exclude` (2026-11-05): optional id predicate applied BEFORE the k
+        cut (so a cloud caller still gets k public hits) and to every hit's
+        neighbor labels — see nodes/kb/privacy.py."""
         k = max(1, int(k))
         pool = max(k * 5, 25)
         lanes = [lane for lane in (self._fts_ids(query, pool), self._vector_ids(query, pool)) if lane]
@@ -389,6 +397,8 @@ class RetrievalIndex:
                 continue  # stale lane row — nodes_index is the authority
             if type_filter and row["type"] not in type_filter:
                 continue
+            if exclude is not None and exclude(node_id):
+                continue
             results.append(
                 {
                     "id": row["id"],
@@ -397,7 +407,7 @@ class RetrievalIndex:
                     "summary": row["summary"],
                     "score": round(score, 6),
                     "updated_at": row["updated_at"],
-                    "neighbors": self._neighbors(node_id),
+                    "neighbors": self._neighbors(node_id, exclude),
                 }
             )
             if len(results) >= k:
@@ -422,11 +432,11 @@ def get_retrieval_index() -> RetrievalIndex:
     return _index
 
 
-def retrieve(query: str, k: int = 10, types: list[str] | None = None) -> list[dict]:
-    return get_retrieval_index().retrieve(query, k=k, types=types)
+def retrieve(query: str, k: int = 10, types: list[str] | None = None, exclude=None) -> list[dict]:
+    return get_retrieval_index().retrieve(query, k=k, types=types, exclude=exclude)
 
 
-def neighbor_labels(node_id: str) -> list[dict]:
+def neighbor_labels(node_id: str, exclude=None) -> list[dict]:
     """The same 1-hop `{id, title, edge_type}` labels retrieve() attaches to
     its hits, for ONE node — chat's topic hydration (next-wave-plan §4) uses
     this to show a scoped note's graph neighborhood. Degrades to [] when
@@ -434,7 +444,7 @@ def neighbor_labels(node_id: str) -> list[dict]:
     if _index is None:
         return []
     try:
-        return _index._neighbors(node_id)
+        return _index._neighbors(node_id, exclude)
     except Exception:
         return []
 

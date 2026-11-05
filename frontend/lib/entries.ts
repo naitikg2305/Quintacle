@@ -434,6 +434,7 @@ export async function commitEntry(date: string, entry: ParsedEntry, assets: File
         content: entry.content,
         links: entry.links,
         perception: entry.perception ?? null,
+        private: entry.private ?? false,
       };
       return assets.length > 0 ? pushKBEntryWithAsset(suggestion, assets) : pushKBEntry(suggestion);
     }

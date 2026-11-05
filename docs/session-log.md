@@ -3,6 +3,24 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-05 — Private note flag (worktree agent)
+
+Owner rule: `private: true` notes never reach a cloud model or the MCP
+server; local chat may use them; the owner always sees them. One shared
+definition in `nodes/kb/privacy.py`. Cloud chat context filters every lane
+(Me, retrieval hits + neighbor labels via retrieval's new `exclude` hook,
+topic, folder scope, legacy dump, day bundles); local replies report the
+private notes they used, and a cloud request strips those turns (+count →
+"N private notes were left out of the cloud handoff."). MCP get/search/
+search_index/day_recall/photo tools treat private notes as missing.
+Suggesters only see public note titles; private targets for sort/
+record-that are local-only. UI: Private checkbox on kb_entry review cards,
+"Private, skip AI" scratchpad toggle (zero model calls), Redo-with-cloud
+disabled for private pending notes, Browse badge + toggle
+(`POST /kb/entry/private`). Tests `tests/test_private_notes.py`. Details:
+`docs/reference/{chat-context,retrieval,mcp-server,frontend,endpoints}.md`
+2026-11-05 sections.
+
 ## 2026-11-03 — Overview (Home) page + nav rename (main session)
 
 Owner liked a GPT-generated "life OS" mockup; we kept its glance layout and

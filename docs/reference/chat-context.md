@@ -158,3 +158,43 @@ neighbor labels, every fallback rung, topic hydration, folder-scope
 invariance, transcripts staying out of default context, escalation context
 equality, and the full record-that flow (propose writes nothing; save
 appends without rewriting; new-note creation; 400/404 edges).
+
+
+## 2026-11-05 — the private note flag (code-derived)
+
+Owner rule: a KB note with `private: true` frontmatter never reaches a cloud
+model. One definition, `core/quintacle_core/nodes/kb/privacy.py`
+(`is_private_meta`, `is_private_node`, `private_filter`, `PrivacyGate`,
+`strip_private_turns`, `public_notes_index`, `private_manual_entry`).
+
+- **Context assembly.** `run_kb_chat` builds a `PrivacyGate(store,
+  allow_private = provider == "local")` and threads it through
+  `_build_context` → `_me_block` (`day_context.me_context` /
+  `_curated_me_notes`), `_kb_context` (retrieval's `exclude` hook, applied
+  BEFORE the k cut, plus every neighbor label), `_topic_context` (a private
+  topic note does not hydrate a cloud turn), `_kb_context_for_folder`,
+  `_kb_context_everything` (legacy fallback) and `_day_blocks`
+  (`day_context.day_bundle` / `_connections_section`: neighbor labels and
+  event members). Omitting the gate = the cloud-safe default. Prompting,
+  ordering, budgets and session logic are unchanged — this is the minimal
+  filter the owner explicitly opened chat.py for.
+- **Which notes a reply used.** The gate records every private note that
+  entered context (content OR a neighbor title); `/kb/chat` returns them as
+  `private_notes` (local only; key omitted when empty). The frontend keeps
+  the list on the assistant message (`ChatMessage.private_notes`).
+- **Cloud handoff.** For any non-`local:` model, `/kb/chat` runs
+  `strip_private_turns` first: every assistant turn carrying
+  `private_notes` is dropped together with the user turn that prompted it
+  (the newest message always stays), the marker key is removed from every
+  message, and `private_stripped` (distinct notes left out) comes back —
+  the UI shows "N private notes were left out of the cloud handoff."
+  (Chat page and the overview Assist panel). Escalate ↗ goes through the
+  same endpoint, so it is covered.
+- **Record that.** A conversation with any marked turn, or a private
+  target note, distills on `provider="local"` only (explicit cloud → 400);
+  the new-note fold sees `public_notes_index` titles.
+- **Transcripts.** `TranscriptStore.archive` keeps private-context turns in
+  the verbatim file (frontmatter `private_turns: N`) but leaves them out of
+  the FTS row — the only read lane (recent-chats recall, transcript search).
+
+Tests: `core/tests/test_private_notes.py`.

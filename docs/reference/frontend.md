@@ -139,3 +139,23 @@ UTC and rolled "today" to tomorrow after ~8 pm ET); `yearsAgoIso`,
 `calendarIso` (reads local fields of calendar-constructed Dates),
 `currentMonthStart`. Mirrors the backend's `clock.py`
 ([architecture.md](architecture.md)).
+
+
+## 2026-11-05 — the private note flag in the UI
+
+- **Review card** (`components/EntryCard.tsx`, kb_entry): a **Private**
+  checkbox (Save → `private: true` via `/kb/entries` or
+  `/kb/entries/with-asset`) and a folder input with existing folders as
+  suggestions (`components/KBFolderInput.tsx`).
+- **Scratchpad** (`app/kb/page.tsx`): **Private, skip AI** toggle — Sort
+  sends `/drop` with `private_skip_ai=true`, which makes zero model calls
+  and returns one private kb_entry (empty folder, first-line title) to file
+  by hand. **Redo with cloud ↻** is disabled (tooltip says why) while any
+  pending kb_entry is ticked Private.
+- **Chat** (`app/kb/page.tsx`, `components/overview/AssistPanel.tsx`):
+  assistant messages keep `private_notes` from `/kb/chat`; `ChatLog` tags
+  them "private · stays local"; a cloud reply's `private_stripped` shows
+  "N private notes were left out of the cloud handoff."
+- **Browse** (`app/kb/browse/page.tsx`): a Private badge on the note view
+  and a Make private / Make public button (`POST /kb/entry/private`); the
+  raw `private` key is hidden from the meta field list.

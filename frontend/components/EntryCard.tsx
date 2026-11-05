@@ -5,6 +5,7 @@ import MealCompositionEditor from "./MealCompositionEditor";
 import StatementImportCard from "./StatementImportCard";
 import OutfitEditor from "./OutfitEditor";
 import GroomingRoutineEditor from "./GroomingRoutineEditor";
+import KBFolderInput from "./KBFolderInput";
 
 const WARDROBE_CATEGORIES = ["jacket", "pants", "shirt", "shoes", "sunglasses", "accessory"];
 const GROOMING_CATEGORIES = ["skincare", "haircare", "shaving", "oral", "fragrance", "tool"];
@@ -360,11 +361,12 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
       {entry.type === "kb_entry" && (
         <div className="flex-1 space-y-1">
           <div className="flex gap-2">
-            <input
+            {/* Existing folders as suggestions — a "Private, skip AI" card
+                arrives with no folder for the owner to pick by hand. */}
+            <KBFolderInput
               className="border rounded px-2 py-1 text-sm w-56"
-              placeholder="folder"
               value={entry.folder}
-              onChange={(e) => onUpdate(i, { folder: e.target.value })}
+              onChange={(folder) => onUpdate(i, { folder })}
             />
             <input
               className="border rounded px-2 py-1 text-sm flex-1"
@@ -373,6 +375,13 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
               onChange={(e) => onUpdate(i, { title: e.target.value })}
             />
           </div>
+          <label
+            className="flex items-center gap-1.5 text-xs"
+            title="Private notes never reach a cloud model or the MCP server — only local chat can use them, and you always see them."
+          >
+            <input type="checkbox" checked={entry.private ?? false} onChange={(e) => onUpdate(i, { private: e.target.checked })} />
+            Private — keep away from cloud AI
+          </label>
           <textarea
             className="w-full border rounded p-2 text-sm"
             rows={4}

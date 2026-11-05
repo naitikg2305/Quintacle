@@ -10,6 +10,7 @@ import "highlight.js/styles/github-dark.css";
 import {
   addKBEntryAsset,
   getKBView,
+  isPrivateMeta,
   kbAssetUrl,
   KBEntryFull,
   KBEntryRow,
@@ -24,6 +25,7 @@ import {
   replaceKBAsset,
   saveKBView,
   searchKBEntries,
+  setKBEntryPrivate,
 } from "@/lib/api";
 import ImageLightbox from "@/components/ImageLightbox";
 import {
@@ -37,6 +39,8 @@ import {
   Folder,
   FolderTree,
   Image as ImageIcon,
+  Lock,
+  LockOpen,
   MessageSquare,
   Paperclip,
   Pencil,
@@ -298,6 +302,23 @@ export default function KBBrowsePage() {
     setStatus(null);
   }
 
+  // The private flag (2026-11-05): an AI-visibility boundary, not
+  // encryption — a private note never reaches a cloud model or the MCP
+  // server; local chat may use it; you always see it here. Flipping it
+  // touches only that frontmatter key (body + every other field untouched).
+  async function togglePrivate() {
+    if (!viewing) return;
+    const next = !isPrivateMeta(viewing.meta);
+    setStatus(next ? "marking private..." : "clearing private...");
+    try {
+      await setKBEntryPrivate(viewing.folder, viewing.slug, next);
+      setViewing(await readKBEntry(viewing.folder, viewing.slug));
+      setStatus(next ? "private — kept away from cloud AI" : "no longer private");
+    } catch (e) {
+      setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   async function attachFile(file: File) {
     if (!viewing) return;
     setStatus("attaching...");
@@ -314,8 +335,11 @@ export default function KBBrowsePage() {
   // entries as trailing [asset] body lines — show both, once each.
   const allAssets = viewing ? Array.from(new Set([...viewing.assets, ...assetPaths])) : [];
   const metaEntries = viewing
-    ? Object.entries(viewing.meta).filter(([k, v]) => fmt(v) !== "" && !(k === "name" && String(v) === viewing.title))
+    ? Object.entries(viewing.meta).filter(
+        ([k, v]) => k !== "private" && fmt(v) !== "" && !(k === "name" && String(v) === viewing.title)
+      )
     : [];
+  const viewingPrivate = viewing ? isPrivateMeta(viewing.meta) : false;
   const expiry = viewing ? expiryStatus(viewing.meta) : null;
   // Browse's editor round-trips the body through its "# Title" line; an entry
   // without one (a structured store's file) would come back as a NEW file, so
@@ -544,10 +568,28 @@ export default function KBBrowsePage() {
           {viewing && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="break-all font-mono text-xs text-muted">
+                <p className="flex flex-wrap items-center gap-2 break-all font-mono text-xs text-muted">
                   {viewing.folder}/{viewing.slug}.md
+                  {viewingPrivate && (
+                    <span title="Never sent to a cloud model or the MCP server — only local chat can use it.">
+                      <Badge>
+                        <Lock size={10} className="mr-1 inline" /> Private
+                      </Badge>
+                    </span>
+                  )}
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={togglePrivate}
+                    title={
+                      viewingPrivate
+                        ? "Clear the private flag — cloud chat and the MCP server will be able to see this note again"
+                        : "Mark private — keep this note away from cloud models and the MCP server (local chat can still use it)"
+                    }
+                  >
+                    {viewingPrivate ? <LockOpen size={13} /> : <Lock size={13} />} {viewingPrivate ? "Make public" : "Make private"}
+                  </Button>
                   {!editing && canEdit && (
                     <Button size="sm" onClick={startEditing}>
                       <Pencil size={13} /> Edit

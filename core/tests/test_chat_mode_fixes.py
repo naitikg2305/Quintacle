@@ -67,7 +67,7 @@ THROAT = "what's been going on with my throat lately?"
 @pytest.mark.parametrize("model", ["local:qwen3:8b", "claude-opus-5-5", "gpt-5-mini", "bedrock:us.amazon.nova-lite-v1:0"])
 def test_zero_match_serious_never_calls_any_provider(client, monkeypatch, model):
     calls = _spy(monkeypatch)
-    monkeypatch.setattr(chat, "_me_block", lambda store: None)
+    monkeypatch.setattr(chat, "_me_block", lambda store, *_: None)
     r = _chat(client, THROAT, mode="serious", model=model)
     assert calls == []  # no model call, whatever provider (escalation too)
     assert r == {"reply": SERIOUS_NOTHING_REPLY, "mode": "serious", "mode_switched": False}
@@ -76,21 +76,21 @@ def test_zero_match_serious_never_calls_any_provider(client, monkeypatch, model)
 
 def test_zero_match_via_switch_phrase_keeps_response_shape(client, monkeypatch):
     calls = _spy(monkeypatch)
-    monkeypatch.setattr(chat, "_me_block", lambda store: None)
+    monkeypatch.setattr(chat, "_me_block", lambda store, *_: None)
     r = _chat(client, "just from my notes — " + THROAT, mode="unserious")
     assert calls == [] and r == {"reply": SERIOUS_NOTHING_REPLY, "mode": "serious", "mode_switched": True}
 
 
 def test_zero_match_unserious_still_calls_the_model(client, monkeypatch):
     calls = _spy(monkeypatch)
-    monkeypatch.setattr(chat, "_me_block", lambda store: None)
+    monkeypatch.setattr(chat, "_me_block", lambda store, *_: None)
     assert _chat(client, THROAT, mode="unserious")["reply"] == "stub-reply"
     assert len(calls) == 1
 
 
 def test_me_only_calls_the_model_with_strict_rule(client, monkeypatch):
     calls = _spy(monkeypatch)
-    monkeypatch.setattr(chat, "_me_block", lambda store: "## About the user\n\n- Bench PR 225 lb")
+    monkeypatch.setattr(chat, "_me_block", lambda store, *_: "## About the user\n\n- Bench PR 225 lb")
     _chat(client, "what's my bench PR?", mode="serious")
     [text] = calls
     assert "## About the user" in text and "that's not in your notes" in text
@@ -100,7 +100,7 @@ def test_unrelated_me_block_still_short_circuits(client, monkeypatch):
     # The real-store case: a seeded Me note is always present, but it says
     # nothing about the throat — serious mode must not call the model.
     calls = _spy(monkeypatch)
-    monkeypatch.setattr(chat, "_me_block", lambda store: "## About the user\n\n- Bench PR 225 lb")
+    monkeypatch.setattr(chat, "_me_block", lambda store, *_: "## About the user\n\n- Bench PR 225 lb")
     r = _chat(client, THROAT, mode="serious")
     assert calls == []
     assert r["reply"].startswith("That's not in your notes.")
@@ -108,7 +108,7 @@ def test_unrelated_me_block_still_short_circuits(client, monkeypatch):
 
 def test_retrieval_hit_calls_the_model(client, monkeypatch):
     calls = _spy(monkeypatch)
-    monkeypatch.setattr(chat, "_me_block", lambda store: None)
+    monkeypatch.setattr(chat, "_me_block", lambda store, *_: None)
     _chat(client, "when does my Minfy contract renew?", mode="serious")
     [text] = calls
     assert "Minfy contract renews in January." in text
@@ -116,29 +116,29 @@ def test_retrieval_hit_calls_the_model(client, monkeypatch):
 
 def test_day_bundle_alone_calls_the_model(client, monkeypatch):
     calls = _spy(monkeypatch)
-    monkeypatch.setattr(chat, "_me_block", lambda store: None)
-    monkeypatch.setattr(chat, "_day_blocks", lambda messages: "## 2026-10-26 — that day's record\n\nRan 5k")
+    monkeypatch.setattr(chat, "_me_block", lambda store, *_: None)
+    monkeypatch.setattr(chat, "_day_blocks", lambda messages, *_: "## 2026-10-26 — that day's record\n\nRan 5k")
     _chat(client, THROAT, mode="serious")
     assert len(calls) == 1
 
 
 def test_folder_scope_is_unaffected(client, monkeypatch):
     calls = _spy(monkeypatch)
-    monkeypatch.setattr(chat, "_me_block", lambda store: None)
+    monkeypatch.setattr(chat, "_me_block", lambda store, *_: None)
     _chat(client, THROAT, mode="serious", folder="Fitness")
     assert len(calls) == 1
 
 
 def test_topic_scope_is_unaffected(client, monkeypatch):
     calls = _spy(monkeypatch)
-    monkeypatch.setattr(chat, "_me_block", lambda store: None)
+    monkeypatch.setattr(chat, "_me_block", lambda store, *_: None)
     _chat(client, THROAT, mode="serious", folder="career", slug="contract-work")
     assert len(calls) == 1
 
 
 def test_legacy_fallback_is_unaffected(client, monkeypatch):
     calls = _spy(monkeypatch)
-    monkeypatch.setattr(chat, "_me_block", lambda store: None)
+    monkeypatch.setattr(chat, "_me_block", lambda store, *_: None)
 
     def down(*a, **k):
         raise RuntimeError("retrieval index not initialized")
@@ -151,13 +151,13 @@ def test_legacy_fallback_is_unaffected(client, monkeypatch):
 
 def test_kb_off_is_unaffected(client, monkeypatch):
     calls = _spy(monkeypatch)
-    monkeypatch.setattr(chat, "_me_block", lambda store: None)
+    monkeypatch.setattr(chat, "_me_block", lambda store, *_: None)
     _chat(client, THROAT, mode="serious", use_kb=False)
     assert len(calls) == 1
 
 
 def test_build_context_flag_directly(client, monkeypatch):
-    monkeypatch.setattr(chat, "_me_block", lambda store: None)
+    monkeypatch.setattr(chat, "_me_block", lambda store, *_: None)
     from quintacle_core.nodes.kb.api import get_store
 
     store = get_store()

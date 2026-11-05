@@ -239,7 +239,7 @@ def _todos_section(d: date) -> str | None:
     return "\n".join(lines) if lines else None
 
 
-def _connections_section(d: date) -> str | None:
+def _connections_section(d: date, gate=None) -> str | None:
     """The day's graph neighborhood: events linked to the day (pre-grouped
     member labels via day_bundle.day_events-style queries) plus 1-hop
     people/place edge labels for the journal node and every note linked to
@@ -262,8 +262,12 @@ def _connections_section(d: date) -> str | None:
         )
         seen: set[tuple[str, str]] = set()
         for node_id in day_node_ids:
-            for n in neighbor_labels(node_id):
+            if gate is not None and not gate.admit(node_id):
+                continue  # 2026-11-05: a private note's links stay out of cloud context
+            for n in neighbor_labels(node_id, gate.exclude_hook() if gate is not None else None):
                 if n["edge_type"] not in _PEOPLE_PLACE_KINDS:
+                    continue
+                if gate is not None and not gate.admit(n["id"]):
                     continue
                 key = (n["id"], n["edge_type"])
                 if key in seen:
@@ -277,6 +281,8 @@ def _connections_section(d: date) -> str | None:
                         "SELECT DISTINCT source_id FROM edges WHERE target_id = ? AND kind = 'part_of'", (node_id,)
                     ).fetchall()
                 )
+                if gate is not None:
+                    members = [m for m in members if gate.admit(m)]
                 if members:
                     lines.append(f"- {node_id}: {', '.join(members)} (same capture)")
     except Exception:
@@ -284,7 +290,7 @@ def _connections_section(d: date) -> str | None:
     return "\n".join(lines) if lines else None
 
 
-def day_bundle(d: date) -> str:
+def day_bundle(d: date, gate=None) -> str:
     """The day's full picture as finished context text — all code, zero model
     calls, every number already computed in SQL. Sections in a fixed order
     (journal, log rows, todos, people/places/events); the ~6,000-char cap
@@ -295,7 +301,7 @@ def day_bundle(d: date) -> str:
         ("Journal", _journal_section(d)),
         ("Logged that day", _rows_section(d)),
         ("Todos", _todos_section(d)),
-        ("People, places & events", _connections_section(d)),
+        ("People, places & events", _connections_section(d, gate)),
     ]
     parts: list[str] = []
     total = 0
@@ -349,7 +355,7 @@ ORDER BY b.metric
 """
 
 
-def _curated_me_notes(store) -> str | None:
+def _curated_me_notes(store, gate=None) -> str | None:
     """Every note in the KB folder `Me` (the §10 quick-reference self —
     injuries, preferences, people facts the user chose to write down),
     capped. Folder absent → None, silently."""
@@ -360,6 +366,9 @@ def _curated_me_notes(store) -> str | None:
     parts: list[str] = []
     total = 0
     for slug in slugs:
+        # 2026-11-05: a private Me note only ever reaches a local model.
+        if gate is not None and not gate.admit(f"note:{_ME_FOLDER.lower()}/{slug}"):
+            continue
         entry = store.read_full(_ME_FOLDER, slug)
         if entry is None or not entry["content"].strip():
             continue
@@ -428,11 +437,11 @@ _ME_INSTRUCTION = (
 )
 
 
-def me_context(store) -> str | None:
+def me_context(store, gate=None) -> str | None:
     """The `## About the user` block chat prepends to EVERY context: curated
     `Me` notes + live computed facts. Both halves empty → None (the heading
     never appears over nothing)."""
-    curated = _curated_me_notes(store)
+    curated = _curated_me_notes(store, gate)
     computed = _computed_me_facts()
     if curated is None and computed is None:
         return None

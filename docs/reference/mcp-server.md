@@ -271,3 +271,26 @@ called from `init()` with the same data dir/connection. Its
 - The "recent writes" UI page over the ledger, and the 24 h undo-offer
   window, are not built; `list_recent_writes`/`undo_write` are the only
   consumers today.
+
+
+## 2026-11-05 — private notes are invisible over MCP
+
+Every MCP client is a cloud model, so a `private: true` KB note behaves as
+if it doesn't exist (helpers in `nodes/kb/privacy.py`):
+
+- `kb_get_entry` → the same `no such entry` error a missing note gets;
+- `kb_search_entries` skips private notes; `search_index` passes
+  `exclude=private_filter(kb_store)` to retrieval (before the k cut, and on
+  every neighbor label) plus a `without_private_hits` second pass;
+- `day_recall` drops private notes from `photos` and from event `members`;
+- `describe_photo` / `perceive_photo` refuse a private note's slug
+  (not-found) and a direct `assets/...` path any private note in that folder
+  references;
+- `kb_attach_file` treats a private note as missing; `kb_create_entry`
+  refuses to overwrite a private note (judgment call: a cloud client must
+  not clobber content it cannot see — this does reveal that the title is
+  taken).
+
+Not filtered: `kb_list_folders` (folder names only), `import_work_log`'s
+`links` (titles the client itself wrote in the log), `link_event` (ids the
+client passed). Tests: `core/tests/test_private_notes.py`.

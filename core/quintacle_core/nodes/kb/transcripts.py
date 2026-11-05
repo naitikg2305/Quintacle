@@ -126,12 +126,23 @@ class TranscriptStore:
         post["date"] = now.isoformat()
         post["topic"] = topic
         post["message_count"] = len(messages)
+        # 2026-11-05 private flag: assistant turns answered with private-note
+        # context stay in the verbatim FILE (the owner's record) but never
+        # enter the FTS row — the only lane anything reads the archive by
+        # (recent-chats recall, transcript search), whose output can reach a
+        # cloud model. The file itself lives outside kb/, invisible to models.
+        private_turns = [i for i, m in enumerate(messages) if m.get("role") == "assistant" and m.get("private_notes")]
+        if private_turns:
+            post["private_turns"] = len(private_turns)
         path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        indexed_body = (
+            _render_turns([m for i, m in enumerate(messages) if i not in set(private_turns)]) if private_turns else body
+        )
 
         rel_path = f"{topic}/{path.name}"
         self.conn.execute(
             "INSERT INTO transcript_fts (path, topic, date, body) VALUES (?, ?, ?, ?)",
-            (rel_path, topic, now.isoformat(), body),
+            (rel_path, topic, now.isoformat(), indexed_body),
         )
         self.conn.commit()
         return {
@@ -222,6 +233,9 @@ class TranscriptTurn(BaseModel):
     # Same shape as kb/api.py's ChatMessage: a plain string, or Anthropic-style
     # content blocks when a photo/PDF was attached to a turn.
     content: str | list[dict]
+    # 2026-11-05: private note ids the reply used (see kb/api.py ChatMessage)
+    # — such turns are kept in the file but left out of the FTS index.
+    private_notes: list[str] = []
 
 
 class ArchiveRequest(BaseModel):

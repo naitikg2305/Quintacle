@@ -30,6 +30,7 @@ import {
   ProviderUsed,
   pushKBEntry,
   pushKBEntryWithAsset,
+  privateHandoffNotice,
   readKBEntry,
   recordThat,
   RecordThatProposal,
@@ -66,6 +67,7 @@ import {
   FileSearch,
   Info,
   ImagePlus,
+  Lock,
   NotebookPen,
   Paperclip,
   Plus,
@@ -149,6 +151,9 @@ function KBPageInner() {
   // to the backend each send; adopted from each response.
   const [chatMode, setChatMode] = useState<ChatMode>("unserious");
   const [modeNotice, setModeNotice] = useState<string | null>(null);
+  // 2026-11-05: "N private notes were left out of the cloud handoff." —
+  // set when a cloud request stripped turns that used private notes.
+  const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
   // "Record that" review state — the proposed dated append, edited here
   // before the explicit save (propose→review→Save; nothing writes until then).
   const [recordProposal, setRecordProposal] = useState<RecordThatProposal | null>(null);
@@ -169,6 +174,9 @@ function KBPageInner() {
   const att = useDropAttachments();
   // "Already-finished document" — AI only places it, never rewrites it.
   const [keepAsIs, setKeepAsIs] = useState(false);
+  // "Private, skip AI" (2026-11-05): Sort makes NO model call — one private
+  // kb_entry card comes back for the owner to file by hand.
+  const [privateSkipAI, setPrivateSkipAI] = useState(false);
   // Journal: also keep the raw scratchpad text verbatim as this day's journal
   // entry. Long text is almost always a day's narrative worth keeping
   // verbatim, so it defaults on past the threshold — until the user decides
@@ -252,6 +260,7 @@ function KBPageInner() {
     setChatSubject("");
     setKeepTranscript(true);
     setModeNotice(null);
+    setPrivacyNotice(null);
     setChatLog([]);
     setTarget(null);
     setChatFile(null);
@@ -351,6 +360,24 @@ function KBPageInner() {
     // Generate-image also stays exclusively on this old sortKBEntry → push()
     // lane (decided): a pending generated image needs the KB-suggestion panel
     // so push() can attach it the way a dropped photo would be.
+    if (privateSkipAI && !target) {
+      // Zero model calls: the backend only wraps the text as a private
+      // kb_entry proposal; the owner picks folder + title in the card.
+      setBusy(true);
+      setStatus("preparing a private note...");
+      try {
+        const { entries: proposed } = await proposeDrop(scratchpad, att.file, false, null, dropDate, undefined, true);
+        setEntries((prev) => [...prev, ...proposed]);
+        setProviderUsed(null);
+        setLastSort(null);
+        setSuggestion(null);
+        setStatus("private note — no AI used; pick a folder and title below");
+      } catch (e) {
+        setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      setBusy(false);
+      return;
+    }
     if (target || generatedImageFile) {
       if (!scratchpad.trim()) return;
       setBusy(true);
@@ -410,7 +437,7 @@ function KBPageInner() {
   // snapshot (text AND files) with provider=cloud, replacing (not appending
   // to) the current proposals. Nothing commits until Save, same as always.
   async function redoWithCloud() {
-    if (!lastSort) return;
+    if (!lastSort || hasPrivatePending) return;
     setBusy(true);
     setStatus("redoing with cloud...");
     try {
@@ -470,6 +497,7 @@ function KBPageInner() {
       setLastSort(null);
       att.onFileChosen(null);
       setKeepAsIs(false);
+      setPrivateSkipAI(false);
       setActiveSession(session);
       if (faces.length > 0) setPendingFaces((prev) => [...prev, ...faces]);
     } catch (e) {
@@ -668,6 +696,7 @@ function KBPageInner() {
     if (!chatInput.trim() && !chatFile) return;
     setChatError(null);
     setModeNotice(null);
+    setPrivacyNotice(null);
     if (model === CUSTOM_BEDROCK && !customBedrockId.trim()) {
       setChatError("Enter a Bedrock model id first (or pick a model from the list).");
       return;
@@ -700,13 +729,26 @@ function KBPageInner() {
     try {
       // A chat continued on a note sends its folder+slug — the backend
       // hydrates that topic's content + graph neighborhood (next-wave §4).
-      const { reply, mode, mode_switched } = await chatWithKB(next, useKB, false, target?.folder, effectiveModel, target?.slug, chatMode);
+      const { reply, mode, mode_switched, private_notes, private_stripped } = await chatWithKB(
+        next,
+        useKB,
+        false,
+        target?.folder,
+        effectiveModel,
+        target?.slug,
+        chatMode
+      );
       // Older backends omit `mode` — keep the current one.
       if (mode) setChatMode(mode);
       if (mode_switched && mode) setModeNotice(modeSwitchNotice(mode));
+      if (private_stripped) setPrivacyNotice(privateHandoffNotice(private_stripped));
       // `model` is client-side bookkeeping: it labels the answer and, for a
       // `local:` model, enables the per-answer Escalate ↗ affordance.
-      finalLog = [...next, { role: "assistant" as const, content: reply, model: effectiveModel }];
+      // `private_notes` rides along so a later cloud request strips this turn.
+      finalLog = [
+        ...next,
+        { role: "assistant" as const, content: reply, model: effectiveModel, ...(private_notes?.length ? { private_notes } : {}) },
+      ];
     } catch (e) {
       finalLog = [...next, { role: "assistant" as const, content: `(error: ${e instanceof Error ? e.message : String(e)})` }];
     }
@@ -721,14 +763,26 @@ function KBPageInner() {
   // never deleted — the user compares the two.
   async function escalate(messageIndex: number, cloudModel: string) {
     setChatError(null);
+    setPrivacyNotice(null);
     setChatBusy(true);
     try {
       const context = chatLog.slice(0, messageIndex);
       // Same scope as the original ask — the escalation transfers the SAME context.
-      const { reply, mode, mode_switched } = await chatWithKB(context, useKB, false, target?.folder, cloudModel, target?.slug, chatMode);
+      // Turns that used private notes are stripped server-side before the
+      // cloud call (2026-11-05) — the backend reports how many notes that was.
+      const { reply, mode, mode_switched, private_stripped } = await chatWithKB(
+        context,
+        useKB,
+        false,
+        target?.folder,
+        cloudModel,
+        target?.slug,
+        chatMode
+      );
       // Adopt the effective mode exactly like sendChat (older backends omit it).
       if (mode) setChatMode(mode);
       if (mode_switched && mode) setModeNotice(modeSwitchNotice(mode));
+      if (private_stripped) setPrivacyNotice(privateHandoffNotice(private_stripped));
       setChatLog([...chatLog, { role: "assistant" as const, content: reply, model: cloudModel }]);
     } catch (e) {
       setChatError(e instanceof Error ? e.message : String(e));
@@ -750,6 +804,8 @@ function KBPageInner() {
   }
 
   const label = "font-mono text-[10px] uppercase tracking-[0.14em] text-muted";
+  // Any pending kb_entry ticked Private blocks the cloud redo (2026-11-05).
+  const hasPrivatePending = entries.some((e) => e.type === "kb_entry" && e.private);
   const suggestionButtons = [
     { onClick: suggestMeal, icon: Utensils, text: "Meal" },
     { onClick: suggestOutfit, icon: Shirt, text: "Outfit" },
@@ -916,6 +972,11 @@ function KBPageInner() {
               <Info size={13} /> {modeNotice}
             </div>
           )}
+          {privacyNotice && (
+            <div role="status" className="flex shrink-0 items-center gap-1.5 px-3 pb-2 text-xs text-accent">
+              <Lock size={13} /> {privacyNotice}
+            </div>
+          )}
           {chatError && (
             <div className="flex shrink-0 items-center gap-1.5 px-3 pb-2 text-xs text-danger">
               <TriangleAlert size={13} /> {chatError}
@@ -1060,8 +1121,30 @@ function KBPageInner() {
                 Also save this text to my journal for {dropDate}
               </label>
             )}
+            {!target && !generatedImageFile && (
+              <label
+                className="flex cursor-pointer items-center gap-2 text-xs text-muted"
+                title="No AI at all — not even a local model. You pick the folder and title; the note is saved as private (never sent to a cloud model or the MCP server)."
+              >
+                <input
+                  type="checkbox"
+                  checked={privateSkipAI}
+                  onChange={(e) => setPrivateSkipAI(e.target.checked)}
+                  className="accent-[var(--color-accent)]"
+                />
+                <Lock size={12} /> Private, skip AI
+              </label>
+            )}
             <Button variant="primary" className="w-full" onClick={sortWithAI} disabled={busy || (!scratchpad.trim() && !att.file)}>
-              <Sparkles size={16} /> {target ? "Update with AI" : "Sort with AI"}
+              {privateSkipAI && !target && !generatedImageFile ? (
+                <>
+                  <Lock size={16} /> Add as private note
+                </>
+              ) : (
+                <>
+                  <Sparkles size={16} /> {target ? "Update with AI" : "Sort with AI"}
+                </>
+              )}
             </Button>
             {!target && saveToJournal && scratchpad.trim() && (
               <Button
@@ -1268,8 +1351,12 @@ function KBPageInner() {
               {providerUsed === "local" && entries.length > 0 && (
                 <button
                   onClick={redoWithCloud}
-                  disabled={busy}
-                  title="Not happy with the local sort? Re-run from the original input on the cloud API — replaces these proposals."
+                  disabled={busy || hasPrivatePending}
+                  title={
+                    hasPrivatePending
+                      ? "A pending note is marked Private — private content never goes to a cloud model. Untick Private to redo with cloud."
+                      : "Not happy with the local sort? Re-run from the original input on the cloud API — replaces these proposals."
+                  }
                   className="text-xs text-accent hover:underline disabled:opacity-40"
                 >
                   Redo with cloud ↻

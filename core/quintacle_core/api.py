@@ -41,6 +41,7 @@ from .nodes.journal.llm import parse_journal_dump
 from .nodes.journal.normalize import canonicalize_entries, canonicalize_name
 from .nodes.kb.drop import describe_drop, extract_photo_date, extract_photo_location
 from .nodes.kb.photo_organizer import compute_photo_folder
+from .nodes.kb.privacy import private_manual_entry, public_notes_index
 from .nodes.kb.llm import suggest_kb_entry, suggest_kb_placement
 from .nodes.logs.meal_composer import resolve_composition, suggest_meal_composition
 from .nodes.logs.routine_llm import resolve_workout_routine, suggest_workout_routine
@@ -366,6 +367,7 @@ def create_app() -> FastAPI:
         keep_as_is: bool = Form(False),
         reference_date: str = Form(""),
         provider: str | None = Form(None),
+        private_skip_ai: bool = Form(False),
     ) -> dict:
         """The one general drop, covering schedule/journal/finance/KB entries.
         Deterministic keyword-prefix routing first (parse_prefix — no AI call);
@@ -383,9 +385,18 @@ def create_app() -> FastAPI:
         re-prompting over local output). Vision calls stay on their own
         QUINTACLE_VISION switch. `provider_used` in the response is who
         actually answered the routed calls ("mixed" when auto fell back
-        mid-request, null when handling was fully deterministic/vision)."""
+        mid-request, null when handling was fully deterministic/vision).
+
+        `private_skip_ai` (2026-11-05, the scratchpad's "Private, skip AI"
+        toggle): ZERO model calls of any kind — no classification, no
+        vision, no local perception — just one kb_entry proposal carrying
+        the text verbatim, `private: true`, an empty folder and a first-line
+        title for the owner to pick/confirm by hand in the review card. Any
+        attached file still rides along at Save, exactly like a normal drop."""
         if not text.strip() and file is None:
             raise HTTPException(400, "nothing to drop — provide text and/or a file")
+        if private_skip_ai:
+            return {"entries": [private_manual_entry(text, file.filename if file is not None else None)], "provider_used": None}
         if provider is not None and provider.strip().lower() not in llm_dispatch.VALID_PROVIDERS:
             raise HTTPException(400, f"provider must be one of {', '.join(llm_dispatch.VALID_PROVIDERS)}")
         used = llm_dispatch.collect_providers()
@@ -607,7 +618,8 @@ def create_app() -> FastAPI:
             experience_check_text = None
         elif entry_type == "kb_entry":
             description = get_description()
-            existing_notes = get_kb_store().notes_index()
+            # 2026-11-05: private notes' titles never ride into a (possibly cloud) suggester.
+            existing_notes = public_notes_index(get_kb_store())
             # A real camera photo (has EXIF date) overrides wherever AI would
             # have filed it — goes to Media/Photos/<Year>/<Month>/... instead,
             # same deterministic date/geo placement batch-drop uses.
@@ -692,7 +704,7 @@ def create_app() -> FastAPI:
                     photo_date = extract_photo_date(data)
                     if photo_date is not None:
                         photo_location = extract_photo_location(data)
-                        existing_notes = get_kb_store().notes_index()
+                        existing_notes = public_notes_index(get_kb_store())
                         suggestion = suggest_kb_entry(get_description(), get_kb_store().list_folders(), existing_notes, provider=provider)
                         folder = compute_photo_folder(photo_date, photo_location, None, profile_store.load().home_countries)
                         journal_link = (

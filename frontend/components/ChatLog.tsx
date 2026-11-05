@@ -259,6 +259,14 @@ export default function ChatLog({
               )}
               {m.role === "assistant" && (m.model || onAddToScratchpad || onAddAttachmentToDrop) && (
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {!!m.private_notes?.length && (
+                    <span
+                      className="font-mono text-[10px] uppercase tracking-wider text-accent"
+                      title="This answer used private notes — it is left out of anything sent to a cloud model."
+                    >
+                      private · stays local
+                    </span>
+                  )}
                   {m.model && (
                     <span className="font-mono text-[10px] uppercase tracking-wider text-muted" title="Which model wrote this answer">
                       {m.model}

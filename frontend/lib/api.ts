@@ -439,6 +439,10 @@ export type ParsedKBEntry = {
   // faces) computed at propose time — passed through verbatim on commit so
   // the backend doesn't have to re-run perception on the same bytes.
   perception?: Record<string, unknown> | null;
+  // The review card's Private checkbox (2026-11-05): Save writes
+  // `private: true` — the note never reaches a cloud model or the MCP server.
+  // A "Private, skip AI" proposal arrives with it already set.
+  private?: boolean;
 };
 export type MicroEstimate = { nutrient: string; amount: number; unit: string };
 export type ParsedIngredientPreset = {
@@ -1097,7 +1101,10 @@ export async function proposeDrop(
   keepAsIs = false,
   file2: File | null = null,
   referenceDate = "",
-  provider?: IngestProvider
+  provider?: IngestProvider,
+  // "Private, skip AI" (2026-11-05): the backend makes ZERO model calls and
+  // returns one private kb_entry for the owner to file by hand.
+  privateSkipAI = false
 ): Promise<{ entries: ParsedEntry[]; provider_used: ProviderUsed }> {
   const form = new FormData();
   form.append("text", text);
@@ -1106,6 +1113,7 @@ export async function proposeDrop(
   form.append("keep_as_is", String(keepAsIs));
   if (referenceDate) form.append("reference_date", referenceDate);
   if (provider) form.append("provider", provider);
+  if (privateSkipAI) form.append("private_skip_ai", "true");
   const res = await fetch(`${API_BASE}/drop`, { method: "POST", body: form });
   if (!res.ok) throw new Error(`drop failed: ${res.status} ${await res.text()}`);
   return res.json();
@@ -1189,6 +1197,22 @@ export type KBEntryFull = {
 export const readKBEntry = (folder: string, slug: string) =>
   request<KBEntryFull>(`/kb/entry?folder=${encodeURIComponent(folder)}&slug=${encodeURIComponent(slug)}`);
 
+// The private flag (2026-11-05) lives in frontmatter, so it arrives as
+// `meta.private` — same spellings the backend's is_private_meta accepts.
+export function isPrivateMeta(meta: Record<string, unknown> | undefined): boolean {
+  const v = meta?.private;
+  if (typeof v === "boolean") return v;
+  if (typeof v === "string") return ["true", "yes", "1", "on"].includes(v.trim().toLowerCase());
+  return typeof v === "number" ? v !== 0 : false;
+}
+
+// Set/clear a note's private flag — touches only that frontmatter key.
+export const setKBEntryPrivate = (folder: string, slug: string, isPrivate: boolean) =>
+  request<{ folder: string; slug: string; private: boolean }>("/kb/entry/private", {
+    method: "POST",
+    body: JSON.stringify({ folder, slug, private: isPrivate }),
+  });
+
 export type KBEntryRow = { slug: string; title: string; meta: Record<string, unknown>; assets: string[]; snippet: string };
 export type KBLayout = "list" | "gallery" | "cards" | "table";
 export type KBView = {
@@ -1224,6 +1248,7 @@ export type KBSuggestion = {
   links?: string[];
   fields?: Record<string, string>;
   perception?: Record<string, unknown> | null;
+  private?: boolean; // Save stamps `private: true` (never clears an existing flag)
 };
 
 // What a photo commit reports back from the auto photo-journal step:
@@ -1282,6 +1307,7 @@ export async function pushKBEntryWithAsset(
   // Perception computed at propose time rides through review to the commit
   // so the backend reuses it instead of re-running on the same bytes.
   if (suggestion.perception) form.append("perception", JSON.stringify(suggestion.perception));
+  if (suggestion.private) form.append("private", "true");
   const res = await fetch(`${API_BASE}/kb/entries/with-asset`, { method: "POST", body: form });
   if (!res.ok) throw new Error(`push failed: ${res.status} ${await res.text()}`);
   return res.json();
@@ -1417,7 +1443,16 @@ export type ChatContentBlock =
 // assistant reply — drives the "Escalate" affordance and the per-answer model
 // label); the backend's pydantic validation strips it before the API call and
 // the chat store never persists it.
-export type ChatMessage = { role: "user" | "assistant"; content: string | ChatContentBlock[]; model?: string };
+//
+// `private_notes` (2026-11-05) is NOT client-only: it's the private note ids
+// a local reply was answered with, echoed from /kb/chat and sent back with
+// the history so a cloud request can strip those turns server-side.
+export type ChatMessage = {
+  role: "user" | "assistant";
+  content: string | ChatContentBlock[];
+  model?: string;
+  private_notes?: string[];
+};
 
 const CHAT_IMAGE_MIME: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp" };
 
@@ -1475,7 +1510,14 @@ export const listChatModels = () => request<ChatModel[]>("/kb/models");
 // returned. An older backend omits `mode`/`mode_switched`; callers treat a
 // missing `mode` as "keep current".
 export type ChatMode = "serious" | "unserious";
-export type ChatReply = { reply: string; mode?: ChatMode; mode_switched?: boolean };
+// `private_notes`: private note ids this reply used (local models only) —
+// keep them on the message. `private_stripped`: how many private notes a
+// cloud request left out of the handoff (both omitted when zero).
+export type ChatReply = { reply: string; mode?: ChatMode; mode_switched?: boolean; private_notes?: string[]; private_stripped?: number };
+
+// The owner-requested notice for a cloud handoff that left private notes out.
+export const privateHandoffNotice = (n: number) =>
+  `${n} private note${n === 1 ? " was" : "s were"} left out of the cloud handoff.`;
 
 export const chatWithKB = (messages: ChatMessage[], use_kb: boolean, research: boolean, folder?: string, model?: string, slug?: string, mode?: ChatMode) =>
   request<ChatReply>("/kb/chat", {

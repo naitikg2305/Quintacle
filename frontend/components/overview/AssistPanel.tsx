@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Inbox, Send, Sparkles } from "lucide-react";
+import { ArrowUpRight, Inbox, Lock, Send, Sparkles } from "lucide-react";
 import ChatLog from "@/components/ChatLog";
 import ModeChip from "@/components/ModeChip";
 import { Panel } from "@/components/ui/Panel";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
-import { archiveTranscript, ChatMessage, ChatMode, chatWithKB, listChatModels } from "@/lib/api";
+import { archiveTranscript, ChatMessage, ChatMode, chatWithKB, listChatModels, privateHandoffNotice } from "@/lib/api";
 
 const DEFAULT_LOCAL_MODEL = "local:qwen3:8b";
 
@@ -26,6 +26,8 @@ export default function AssistPanel() {
   const [mode, setMode] = useState<ChatMode>("unserious");
   const [model, setModel] = useState<string>(DEFAULT_LOCAL_MODEL);
   const [capture, setCapture] = useState("");
+  // 2026-11-05: shown when a cloud request left private-note turns out.
+  const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
 
@@ -59,10 +61,16 @@ export default function AssistPanel() {
     setMessages(next);
     setInput("");
     setBusy(true);
+    setPrivacyNotice(null);
     try {
       const res = await chatWithKB(next, true, false, undefined, model, undefined, mode);
       if (res.mode) setMode(res.mode);
-      setMessages([...next, { role: "assistant", content: res.reply, model }]);
+      if (res.private_stripped) setPrivacyNotice(privateHandoffNotice(res.private_stripped));
+      // Keep private_notes on the reply so a later cloud request strips it.
+      setMessages([
+        ...next,
+        { role: "assistant", content: res.reply, model, ...(res.private_notes?.length ? { private_notes: res.private_notes } : {}) },
+      ]);
     } catch (e) {
       setMessages([...next, { role: "assistant", content: `Couldn't reach the chat backend — ${(e as Error).message}` }]);
     } finally {
@@ -96,6 +104,11 @@ export default function AssistPanel() {
           )}
           {busy && <p className="text-xs text-muted">Thinking…</p>}
         </div>
+        {privacyNotice && (
+          <p role="status" className="flex items-center gap-1.5 text-xs text-accent">
+            <Lock size={12} /> {privacyNotice}
+          </p>
+        )}
         <form
           onSubmit={(e) => {
             e.preventDefault();

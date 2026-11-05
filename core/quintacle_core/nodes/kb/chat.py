@@ -14,6 +14,7 @@ from openai import OpenAI
 
 from ... import clock
 from ...llm_config import DEFAULT_MODEL, RESEARCH_MODEL
+from .privacy import PrivacyGate, note_node_id
 from .store import KBStore
 
 _PHOTO_TAG_RE = re.compile(r"\{\{photo:([^}]+)\}\}")
@@ -77,7 +78,7 @@ def _render_entry(store: KBStore, folder: str, slug: str, content: str) -> str:
     return f"### {folder}/{slug}\n{field_lines}\n\n{content}"
 
 
-def _kb_context_everything(store: KBStore) -> str:
+def _kb_context_everything(store: KBStore, gate: PrivacyGate | None = None) -> str:
     """The ORIGINAL dump-everything context — kept strictly as the fallback
     for when the retrieval index isn't available (uninitialized process,
     never backfilled, or any retrieval error). The default path is the
@@ -86,6 +87,8 @@ def _kb_context_everything(store: KBStore) -> str:
     sections = []
     for folder in store.list_folders():
         for slug in store.list_entries(folder):
+            if gate is not None and not gate.admit(note_node_id(folder, slug)):
+                continue  # 2026-11-05: a private note never reaches a cloud model
             content = store.read(folder, slug)
             if content:
                 sections.append(_render_entry(store, folder, slug, content))
@@ -126,11 +129,16 @@ def _last_user_text(messages: list[dict]) -> str:
     return ""
 
 
-def _neighbor_line(neighbors: list[dict]) -> str:
+def _neighbor_line(neighbors: list[dict], gate: PrivacyGate | None = None) -> str:
     if not neighbors:
         return ""
     # §12: archived transcripts are second-tier — never named as a neighbor.
-    parts = [f"{n['title']} ({n['edge_type']}, id: {n['id']})" for n in neighbors if not str(n["id"]).startswith("transcript:")]
+    # 2026-11-05: a private note's title is content too — gated like a body.
+    parts = [
+        f"{n['title']} ({n['edge_type']}, id: {n['id']})"
+        for n in neighbors
+        if not str(n["id"]).startswith("transcript:") and (gate is None or gate.admit(str(n["id"])))
+    ]
     if not parts:
         return ""
     return "Connected: " + "; ".join(parts)
@@ -169,7 +177,7 @@ def _prose_body(store: KBStore, hit_id: str, cap: int) -> str | None:
 _PROSE_TYPES = {"note", "place", "person", "journal_day"}
 
 
-def _hit_section(store: KBStore, hit: dict, *, with_body: bool) -> str:
+def _hit_section(store: KBStore, hit: dict, *, with_body: bool, gate: PrivacyGate | None = None) -> str:
     """One retrieved node as context. Prose nodes (notes, places, people,
     journal days) get their FULL current content (capped); everything else —
     log rows, meals, routines, todos, events — is its finished one-line
@@ -185,13 +193,13 @@ def _hit_section(store: KBStore, hit: dict, *, with_body: bool) -> str:
         lines.append(body)
     elif hit.get("summary"):
         lines.append(hit["summary"])
-    neighbor = _neighbor_line(hit.get("neighbors") or [])
+    neighbor = _neighbor_line(hit.get("neighbors") or [], gate)
     if neighbor:
         lines.append(neighbor)
     return "\n".join(lines)
 
 
-def _kb_context(store: KBStore, query: str, exclude_id: str | None = None) -> str:
+def _kb_context(store: KBStore, query: str, exclude_id: str | None = None, gate: PrivacyGate | None = None) -> str:
     """The rebuilt context: retrieve(query, k≈8), fetch full content only for
     the selected prose hits, finished summary lines for structured rows,
     1-hop neighbor labels per hit. Deterministic assembly in retrieve()'s own
@@ -206,15 +214,20 @@ def _kb_context(store: KBStore, query: str, exclude_id: str | None = None) -> st
         # An existing-but-empty index (fresh process over an old store that
         # was never backfilled) must not silently answer "nothing matched".
         raise LookupError("retrieval index is empty — run the backfill")
-    hits = [h for h in index.retrieve(query, k=_RETRIEVE_K) if h["id"] != exclude_id]
+    # 2026-11-05: a cloud turn's top-k is drawn from public nodes only
+    # (exclude hook applied before the k cut, neighbors included).
+    exclude = gate.exclude_hook() if gate is not None else None
+    hits = [h for h in index.retrieve(query, k=_RETRIEVE_K, exclude=exclude) if h["id"] != exclude_id]
     if not hits:
         return _NO_MATCH
     sections: list[str] = []
     total = 0
     for hit in hits:
-        section = _hit_section(store, hit, with_body=True)
+        if gate is not None and not gate.admit(hit["id"]):
+            continue  # defense in depth — the exclude hook already dropped it
+        section = _hit_section(store, hit, with_body=True, gate=gate)
         if total + len(section) > _CONTEXT_CHAR_BUDGET:
-            section = _hit_section(store, hit, with_body=False)
+            section = _hit_section(store, hit, with_body=False, gate=gate)
             if total + len(section) > _CONTEXT_CHAR_BUDGET:
                 break
         sections.append(section)
@@ -222,11 +235,13 @@ def _kb_context(store: KBStore, query: str, exclude_id: str | None = None) -> st
     return "\n\n".join(sections)
 
 
-def _topic_context(store: KBStore, folder: str, slug: str) -> str | None:
+def _topic_context(store: KBStore, folder: str, slug: str, gate: PrivacyGate | None = None) -> str | None:
     """Topic hydration (next-wave-plan §4): a chat opened ON a note starts
     from that node's current state — full content + fields + its graph
     neighborhood labels — never from any saved transcript (those are
     second-tier by decision, reachable only via the explicit search lane)."""
+    if gate is not None and not gate.admit(f"note:{folder}/{slug}"):
+        return None  # 2026-11-05: a private topic note never hydrates a cloud turn
     content = store.read(folder, slug)
     if content is None:
         return None
@@ -242,7 +257,8 @@ def _topic_context(store: KBStore, folder: str, slug: str) -> str | None:
     try:
         from ...retrieval import neighbor_labels
 
-        neighbor = _neighbor_line(neighbor_labels(f"note:{folder}/{slug}"))
+        exclude = gate.exclude_hook() if gate is not None else None
+        neighbor = _neighbor_line(neighbor_labels(f"note:{folder}/{slug}", exclude), gate)
     except Exception:
         neighbor = ""
     if neighbor:
@@ -250,7 +266,7 @@ def _topic_context(store: KBStore, folder: str, slug: str) -> str | None:
     return "\n".join(line for line in lines if line)
 
 
-def _kb_context_for_folder(store: KBStore, folder: str) -> str:
+def _kb_context_for_folder(store: KBStore, folder: str, gate: PrivacyGate | None = None) -> str:
     """Same shape as _kb_context(), but only entries filed under `folder` or
     one of its subfolders — a scoped chat about one specific parent
     directory (e.g. a person's folder) shouldn't have your entire KB in
@@ -261,6 +277,8 @@ def _kb_context_for_folder(store: KBStore, folder: str) -> str:
         if f != folder and not f.startswith(folder + "/"):
             continue
         for slug in store.list_entries(f):
+            if gate is not None and not gate.admit(note_node_id(f, slug)):
+                continue  # 2026-11-05: private notes stay out of cloud turns
             content = store.read(f, slug)
             if content:
                 sections.append(_render_entry(store, f, slug, content))
@@ -398,18 +416,18 @@ _LINK_RULES = (
 _MAX_DAY_BUNDLES = 3  # at most this many date mentions hydrate per turn
 
 
-def _me_block(store: KBStore) -> str | None:
+def _me_block(store: KBStore, gate: PrivacyGate | None = None) -> str | None:
     """The §10 Me lane — prepended to every KB-grounded context. Any failure
     (stores not wired, SQL hiccup) silently drops the block, never the chat."""
     try:
         from .day_context import me_context
 
-        return me_context(store)
+        return me_context(store, gate=gate)
     except Exception:
         return None
 
 
-def _day_blocks(messages: list[dict]) -> str | None:
+def _day_blocks(messages: list[dict], gate: PrivacyGate | None = None) -> str | None:
     """§10 time grounding: date words in the newest user message resolve IN
     CODE (day_context.detect_dates, today = clock.today()) and each resolved
     day hydrates its full deterministic record alongside normal retrieval,
@@ -426,7 +444,7 @@ def _day_blocks(messages: list[dict]) -> str | None:
     blocks: list[str] = []
     for d in dates:
         try:
-            bundle = day_bundle(d)
+            bundle = day_bundle(d, gate=gate)
         except Exception:
             continue
         if bundle:
@@ -640,9 +658,10 @@ def _system_text(
     slug: str | None,
     messages: list[dict],
     mode: str = "unserious",
+    gate: PrivacyGate | None = None,
 ) -> str | None:
     """The assembled system context (see _build_context for the full order)."""
-    return _build_context(store, use_kb, folder, slug, messages, mode)[0]
+    return _build_context(store, use_kb, folder, slug, messages, mode, gate)[0]
 
 
 def _build_context(
@@ -652,8 +671,15 @@ def _build_context(
     slug: str | None,
     messages: list[dict],
     mode: str = "unserious",
+    gate: PrivacyGate | None = None,
 ) -> tuple[str | None, bool]:
     """(system text, nothing_to_ground).
+
+    `gate` (2026-11-05, the private-note flag — see privacy.py) decides
+    whether `private: true` notes may enter: run_kb_chat passes one that
+    allows them ONLY for a local model. Omitted = the cloud-safe default
+    (private notes excluded everywhere: Me lane, retrieval hits + neighbor
+    labels, topic hydration, folder scope, legacy dump, day bundles).
 
     `nothing_to_ground` (§12 correction 2026-10-27) is True ONLY when the
     KB is on, the scope is NOT folder-only, there is no topic hydration,
@@ -706,9 +732,11 @@ def _build_context(
     if not use_kb:
         return _now_line(), False  # §10: chat always knows now, even with the KB off
 
+    if gate is None:
+        gate = PrivacyGate(store, allow_private=False)
     serious = mode == "serious"
     parts: list[str] = [_now_line()]
-    me = _me_block(store)
+    me = _me_block(store, gate)
     if me:
         parts.append(me)
 
@@ -718,19 +746,19 @@ def _build_context(
             "not their whole knowledge base. Only the notes below exist for this conversation."
         )
         rules = f"{_GROUNDING_RULES} {_LINK_RULES}" + (f" {_SERIOUS_RULES}" if serious else "")
-        parts.append(f"{intro} {rules}\n\n{_kb_context_for_folder(store, folder)}")
+        parts.append(f"{intro} {rules}\n\n{_kb_context_for_folder(store, folder, gate)}")
         return "\n\n".join(parts), False  # folder scope: unaffected by the short-circuit
 
-    topic = _topic_context(store, folder, slug) if folder and slug else None
+    topic = _topic_context(store, folder, slug, gate) if folder and slug else None
 
     query = _last_user_text(messages)
     retrieved: str | None = None
     if query:
         try:
-            retrieved = _kb_context(store, query, exclude_id=f"note:{folder}/{slug}" if topic else None)
+            retrieved = _kb_context(store, query, exclude_id=f"note:{folder}/{slug}" if topic else None, gate=gate)
         except Exception:
             retrieved = None  # uninitialized / empty / any retrieval error → legacy fallback
-    day_blocks = _day_blocks(messages)
+    day_blocks = _day_blocks(messages, gate)
 
     def recent_for(body_text: str) -> str | None:
         # unserious only; sized to what's left of the context budget so it
@@ -757,7 +785,7 @@ def _build_context(
         elif folder:
             # Retrieval down: the topic note still hydrates; its folder's
             # entries stand in for retrieval (the legacy scoped behavior).
-            body.append(_kb_context_for_folder(store, folder))
+            body.append(_kb_context_for_folder(store, folder, gate))
         if day_blocks:
             body.append(day_blocks)
         recent = recent_for("\n\n".join(body))
@@ -785,7 +813,7 @@ def _build_context(
         )
         context = retrieved
     else:
-        context = _kb_context_everything(store)
+        context = _kb_context_everything(store, gate)
     if day_blocks:
         context = f"{context}\n\n{day_blocks}"
     recent = recent_for(context)
@@ -1189,11 +1217,18 @@ def run_kb_chat(
     model: str | None = None,
     slug: str | None = None,
     mode: str = "unserious",
+    used_private: set[str] | None = None,
 ) -> str:
     entry = resolve_model(model, research)
     # Context is assembled once, identically for every provider — escalating
-    # the same conversation to a cloud model transfers the SAME context.
-    kb_text, nothing_to_ground = _build_context(store, use_kb, folder, slug, messages, mode)
+    # the same conversation to a cloud model transfers the SAME context,
+    # EXCEPT private notes (2026-11-05): only a local model may see them.
+    # `used_private` (optional collector) receives the private note ids that
+    # actually entered this turn's context — always empty for cloud.
+    gate = PrivacyGate(store, allow_private=entry["provider"] == "local")
+    kb_text, nothing_to_ground = _build_context(store, use_kb, folder, slug, messages, mode, gate)
+    if used_private is not None:
+        used_private.update(gate.used)
     if mode == "serious" and nothing_to_ground:
         # §12 correction: zero-match short-circuit. Serious mode is the
         # escape hatch FROM hallucination, so with nothing to ground on the

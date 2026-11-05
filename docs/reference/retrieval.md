@@ -152,3 +152,15 @@ ordered by `updated_at DESC`. Every write path re-indexes on save, so
 Serves `/kb/recent` and `/kb/recent-graph` (the overview page). Excluded ids
 never enter the index, so nothing extra to filter.
 
+
+## 2026-11-05 — `exclude` hook (private notes)
+
+`RetrievalIndex.retrieve(..., exclude=None)`, `_neighbors(node_id,
+exclude=None)` and `neighbor_labels(node_id, exclude=None)` take an optional
+`node_id -> bool` predicate. Excluded ids are skipped BEFORE the k cut (a
+cloud caller still gets k public hits) and never appear as neighbor labels.
+Callers pass `nodes/kb/privacy.private_filter(store)` (True for `private:
+true` notes): cloud chat (via `PrivacyGate.exclude_hook()`) and MCP
+`search_index`. The owner's own `/retrieve`, `/kb/recent`, `/kb/recent-graph`
+stay unfiltered — the owner always sees private notes. Private notes are
+still indexed (their one-liner comes from `prose_summary`, pinned local).

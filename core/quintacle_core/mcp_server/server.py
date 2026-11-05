@@ -17,6 +17,7 @@ from ..graph_capture import link_event as capture_link_event
 from ..markdown_paths import resolve_nested, slugify
 from ..nodes.journal.store import JournalStore
 from ..nodes.kb.drop import _IMAGE_MIME, describe_images
+from ..nodes.kb.privacy import is_private_node, private_filter, without_private_hits
 from ..nodes.kb.store import KBStore
 from ..nodes.logs.log_store import LogFileStore, home_for
 from ..nodes.logs.repository import LogsRepository
@@ -81,6 +82,34 @@ def init(data_dir: Path | None = None) -> None:
 
 
 init()
+
+
+# --- the private-note boundary (2026-11-05) ---------------------------------
+#
+# Every MCP client is a cloud model, so a `private: true` KB note is invisible
+# here, full stop: reads answer exactly like the note doesn't exist, searches
+# and listings skip it, graph neighbor labels never name it. One helper set
+# (nodes/kb/privacy.py) — never ad-hoc checks.
+
+
+def _not_found(folder: str, slug: str) -> ValueError:
+    return ValueError(f"no such entry: {folder}/{slug}")
+
+
+def _refuse_private(folder: str, slug: str) -> None:
+    """Raise the SAME not-found error a missing note gets — a private note's
+    existence is not something a cloud client gets to learn either."""
+    if kb_store.is_private(folder, slug):
+        raise _not_found(folder, slug)
+
+
+def _asset_owned_by_private_note(folder: str, asset_path: str) -> bool:
+    """A direct "assets/..." path is private when any private note in that
+    folder references it (body [asset] line or frontmatter assets)."""
+    for row in kb_store.list_entries_meta(folder):
+        if asset_path in row["assets"] and kb_store.is_private(folder, row["slug"]):
+            return True
+    return False
 
 
 def _session(tool: str, summary: str) -> WriteSession:
@@ -159,6 +188,9 @@ def kb_create_entry(
     (mileage, cost, make/model...) that Phase E's view inference can render
     as a table. Commits immediately, independently undoable."""
     target_path = resolve_nested(kb_store.root, folder) / f"{slugify(title)}.md"
+    if kb_store.is_private(folder, title):
+        # A cloud client must not overwrite a note it can't see (2026-11-05).
+        raise ValueError(f"refusing to overwrite {folder}/{slugify(title)} — pick a different title")
     session = _session("kb.create_entry", f"Created KB entry '{title}' in {folder}")
     session.stage_file(target_path)
     folder_slug, entry_slug = kb_store.write(folder, title, content, links, fields=fields)
@@ -172,8 +204,8 @@ def kb_create_entry(
 def kb_get_entry(folder: str, slug: str) -> dict:
     """Read a KB entry's full content, fields, and other metadata."""
     entry = kb_store.read_full(folder, slug)
-    if entry is None:
-        raise ValueError(f"no such entry: {folder}/{slug}")
+    if entry is None or kb_store.is_private(folder, slug):
+        raise _not_found(folder, slug)
     return entry
 
 
@@ -181,7 +213,7 @@ def kb_get_entry(folder: str, slug: str) -> dict:
 def kb_search_entries(query: str) -> list[dict]:
     """Case-insensitive substring search across every KB entry's filename and
     body, regardless of folder — {folder, slug, snippet} per match."""
-    return kb_store.search(query)
+    return [h for h in kb_store.search(query) if not kb_store.is_private(h["folder"], h["slug"])]
 
 
 # Hard ceiling on one kb_attach_file call — a contract PDF or a resume is a
@@ -251,6 +283,7 @@ def kb_attach_file(folder: str, slug: str, local_path: str, filename: str | None
     INTO it either. Commits as ONE ledger entry; undo_write removes the
     asset and restores the note's exact prior bytes."""
     note_path = kb_store.entry_path(folder, slug)
+    _refuse_private(folder, slug)  # a private note reads as nonexistent here (2026-11-05)
     if not note_path.is_file() or not note_path.resolve().is_relative_to(kb_store.root.resolve()):
         raise ValueError(f"no such entry: {folder}/{slug} (kb_attach_file never creates notes — use kb_create_entry first)")
     source = _validated_local_file(local_path)
@@ -295,7 +328,9 @@ def search_index(query: str, k: int = 10, types: list[str] | None = None) -> lis
     fetch exactly what you need. Deterministic and read-only: FTS5 +
     optional local vectors fused by reciprocal rank in code — no AI call,
     no ledger entry, nothing to undo."""
-    return retrieval.retrieve(query, k=k, types=types)
+    # Private notes are dropped BEFORE the k cut (and from every neighbor
+    # label); without_private_hits is the belt-and-braces second pass.
+    return without_private_hits(kb_store, retrieval.retrieve(query, k=k, types=types, exclude=private_filter(kb_store)))
 
 
 # --- Logs: expenses ---
@@ -615,7 +650,7 @@ def day_recall(for_date: str) -> dict:
     read-only: no AI call, no ledger entry — YOU do the narrating. Same
     assembly the app's own GET /day/{date} uses. Pair with describe_photo
     for a fresh (billed) look at any listed photo."""
-    return build_day_bundle(
+    bundle = build_day_bundle(
         date.fromisoformat(for_date),
         journal_store=journal_store,
         todo_store=todo_store,
@@ -623,6 +658,12 @@ def day_recall(for_date: str) -> dict:
         kb_store=kb_store,
         edges_conn=db_conn,
     )
+    # Private notes linked to the day never surface — neither as a photo
+    # nor as a labelled event member.
+    bundle["photos"] = [p for p in bundle["photos"] if not kb_store.is_private(p["folder"], p["slug"])]
+    for event in bundle["events"]:
+        event["members"] = [m for m in event["members"] if not is_private_node(kb_store, m["id"])]
+    return bundle
 
 
 @mcp.tool()
@@ -639,10 +680,12 @@ def describe_photo(folder: str, slug_or_path: str, question: str | None = None) 
     read: no ledger entry, nothing to undo."""
     if slug_or_path.startswith("assets/"):
         asset_path = slug_or_path
+        if _asset_owned_by_private_note(folder, asset_path):
+            raise ValueError(f"asset not found: {folder}/{asset_path}")
     else:
         entry = kb_store.read_full(folder, slug_or_path)
-        if entry is None:
-            raise ValueError(f"no such entry: {folder}/{slug_or_path}")
+        if entry is None or kb_store.is_private(folder, slug_or_path):
+            raise _not_found(folder, slug_or_path)
         asset_path = next(
             (a for a in entry_assets(entry) if a.rsplit(".", 1)[-1].lower() in _IMAGE_MIME),
             None,
@@ -678,10 +721,12 @@ def perceive_photo(folder: str, slug_or_path: str) -> dict:
 
     if slug_or_path.startswith("assets/"):
         asset_path = slug_or_path
+        if _asset_owned_by_private_note(folder, asset_path):
+            raise ValueError(f"asset not found: {folder}/{asset_path}")
     else:
         entry = kb_store.read_full(folder, slug_or_path)
-        if entry is None:
-            raise ValueError(f"no such entry: {folder}/{slug_or_path}")
+        if entry is None or kb_store.is_private(folder, slug_or_path):
+            raise _not_found(folder, slug_or_path)
         asset_path = next(
             (a for a in entry_assets(entry) if a.rsplit(".", 1)[-1].lower() in _IMAGE_MIME),
             None,

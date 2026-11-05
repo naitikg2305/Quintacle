@@ -24,7 +24,7 @@ from ..profile.api import get_store as get_profile_store
 from ..travel.api import get_store as get_travel_store
 from .auto_journal import process_photo_commit
 from ... import clock
-from .chat import CHAT_MODELS, BedrockError, OllamaError, UnknownModelError, resolve_mode, run_kb_chat
+from .chat import CHAT_MODELS, BedrockError, OllamaError, UnknownModelError, resolve_mode, resolve_model, run_kb_chat
 from .chat_store import ChatStore, _as_text
 from .drop import _IMAGE_MIME, describe_drop, describe_images, extract_photo_date, extract_photo_location, is_image
 from .image_gen import generate_image
@@ -37,6 +37,7 @@ from .llm import (
     suggest_record_fold_new,
 )
 from .photo_organizer import compute_photo_folder
+from .privacy import PRIVATE_MARKER, public_notes_index, strip_private_turns
 from .spreadsheet import read_spreadsheet, write_spreadsheet
 from .store import KBStore, _ASSET_LINES_RE
 from .view import ViewConfig, infer_view
@@ -126,6 +127,23 @@ def read_entry(folder: str, slug: str) -> dict:
     return entry
 
 
+class PrivateFlagRequest(BaseModel):
+    folder: str
+    slug: str
+    private: bool
+
+
+@router.post("/entry/private")
+def set_entry_private(body: PrivateFlagRequest) -> dict:
+    """2026-11-05: set/clear a note's `private` flag from Browse — the
+    owner's own explicit click on their own note (the toggle IS the review,
+    and flipping it back is the undo). Touches ONLY that frontmatter key:
+    body, every other key and `edited` stay byte-for-byte (store.set_private)."""
+    if not get_store().set_private(body.folder, body.slug, body.private):
+        raise HTTPException(404, "entry not found")
+    return {"folder": body.folder, "slug": body.slug, "private": get_store().is_private(body.folder, body.slug)}
+
+
 @router.get("/entries-meta")
 def list_entries_meta(folder: str) -> list[dict]:
     """Every entry in a folder with its metadata + thumbnails' asset paths in
@@ -179,28 +197,44 @@ def sort_entry(
     Approval before write).
     `provider` (local|cloud|auto) overrides the ingest default for this one
     sort — "redo with cloud" re-sends the SAME content with provider=cloud.
-    `provider_used` in the response is who actually answered."""
+    `provider_used` in the response is who actually answered.
+    2026-11-05 private flag: a merge into a PRIVATE target note is pinned to
+    the local model (provider=cloud is refused — `auto` could fall back to
+    cloud), and the notes-index titles handed to any suggester never
+    include private notes (see privacy.py)."""
     used = llm_dispatch.collect_providers()
     try:
         if target_folder and target_slug:
             existing = get_store().read(target_folder, target_slug)
             if existing is None:
                 raise HTTPException(404, "target entry not found")
+            provider = _private_provider(get_store().is_private(target_folder, target_slug), provider)
             first_line, _, rest = existing.partition("\n")
             title = first_line.lstrip("# ").strip() or target_slug
             merged_body = suggest_kb_update(rest.lstrip("\n"), content, provider=provider)
             result = {"folder": target_folder, "title": title, "content": merged_body}
         elif target_folder:
-            scoped = suggest_kb_entry_for_folder(content, get_store().notes_index(), provider=provider)
+            scoped = suggest_kb_entry_for_folder(content, public_notes_index(get_store()), provider=provider)
             result = {"folder": target_folder, **scoped.model_dump()}
         else:
-            suggestion = suggest_kb_entry(content, get_store().list_folders(), get_store().notes_index(), provider=provider)
+            suggestion = suggest_kb_entry(content, get_store().list_folders(), public_notes_index(get_store()), provider=provider)
             result = suggestion.model_dump()
     except (OllamaError, ValueError) as e:
         # provider=local with the daemon down / model missing / schema-invalid
         # output, or a bogus provider value — readable, not a 500.
         raise HTTPException(400, str(e))
     return {**result, "provider_used": llm_dispatch.summarize_providers(used)}
+
+
+def _private_provider(private: bool, provider: str | None) -> str | None:
+    """The ingest provider for a call whose input carries private-note
+    content: pinned to "local" (never "auto", which can fall back to cloud);
+    an explicit cloud request is refused with a readable 400."""
+    if not private:
+        return provider
+    if (provider or "").strip().lower() == "cloud":
+        raise HTTPException(400, "this note is private — private notes never go to a cloud model")
+    return "local"
 
 
 def _sync_note_graph_links(note_id: str, title: str, content: str, link_titles: list[str] | None) -> None:
@@ -240,12 +274,18 @@ class EntryCreate(BaseModel):
     content: str
     links: list[str] | None = None
     fields: dict[str, str] | None = None
+    # 2026-11-05: the review card's Private checkbox — Save stamps
+    # `private: true` (False never CLEARS an existing flag; that's
+    # POST /kb/entry/private's job, explicitly).
+    private: bool = False
 
 
 @router.post("/entries")
 def create_entry(body: EntryCreate) -> dict:
     content = _localize_remote_images(body.content, body.folder, get_store())
     folder_slug, entry_slug = get_store().write(body.folder, body.title, content, body.links, fields=body.fields)
+    if body.private:
+        get_store().set_private(folder_slug, entry_slug, True)
     _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", body.title, content, body.links)
     # Retrieval index (retrieval.py) — failure-isolated, never fails the save.
     safe_index_note(folder_slug, entry_slug, body.title, content)
@@ -405,7 +445,7 @@ async def drop_file(file: UploadFile = File(...), description: str = Form("")) -
     propose from write for plain text."""
     data = await file.read()
     description_text = describe_drop(file.filename or "upload", data, description)
-    suggestion = suggest_kb_entry(description_text, get_store().list_folders(), get_store().notes_index())
+    suggestion = suggest_kb_entry(description_text, get_store().list_folders(), public_notes_index(get_store()))
     return suggestion.model_dump()
 
 
@@ -460,7 +500,7 @@ async def batch_drop(
             if location is not None:
                 locations_by_id[file_id] = location
 
-    suggestion = suggest_kb_batch(entries, get_store().list_folders(), get_store().notes_index())
+    suggestion = suggest_kb_batch(entries, get_store().list_folders(), public_notes_index(get_store()))
 
     buckets: dict[str, list[dict]] = {}
     for file_suggestion in suggestion.files:
@@ -495,6 +535,7 @@ async def create_entry_with_asset(
     files: list[UploadFile] = File(...),  # as many as you want — one [asset](...) line per file
     links: str = Form(""),  # comma-separated — multipart forms don't carry real arrays cleanly
     perception: str = Form(""),  # optional JSON PerceptionResult dump carried through review from the drop proposal
+    private: bool = Form(False),  # 2026-11-05: the review card's Private checkbox
 ) -> dict:
     file_data = [(f.filename or "asset", await f.read()) for f in files]
     link_list = [l.strip() for l in links.split(",") if l.strip()]
@@ -510,6 +551,8 @@ async def create_entry_with_asset(
     asset_lines = "\n".join(f"[asset]({p})" for p in asset_paths)
     linked_content = f"{content}\n\n{asset_lines}" if asset_lines else content
     get_store().write(folder, title, linked_content, link_list, location)
+    if private:
+        get_store().set_private(folder_slug, entry_slug, True)
     _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", title, linked_content, link_list)
     # Retrieval index (retrieval.py) — failure-isolated, never fails the save.
     safe_index_note(folder_slug, entry_slug, title, linked_content)
@@ -522,8 +565,10 @@ async def create_entry_with_asset(
         perception_payload = json.loads(perception) if perception.strip() else None
     except ValueError:
         perception_payload = None
+    # A PRIVATE photo note skips the auto-journal: its line would copy the
+    # note's title into the (never-private) journal, which cloud chat reads.
     try:
-        perception_summary = process_photo_commit(folder_slug, entry_slug, title, file_data, perception_payload)
+        perception_summary = None if private else process_photo_commit(folder_slug, entry_slug, title, file_data, perception_payload)
     except Exception:
         perception_summary = None
 
@@ -614,6 +659,10 @@ class ChatMessage(BaseModel):
     # attachment is context for THIS answer, not something the scratch chat
     # store should hold onto as raw base64 forever.
     content: str | list[dict]
+    # 2026-11-05: the private note ids an assistant reply was answered with
+    # (echoed from /kb/chat's `private_notes`, kept on the message by the
+    # frontend). A cloud request strips those turns — never sent to a model.
+    private_notes: list[str] = []
 
 
 class ChatRequest(BaseModel):
@@ -638,11 +687,37 @@ def list_chat_models() -> list[dict]:
 
 @router.post("/chat")
 def chat_endpoint(body: ChatRequest) -> dict:
-    messages = [m.model_dump() for m in body.messages]
+    """2026-11-05 private flag: `private_notes` lists the private note ids
+    this reply's context used (only ever non-empty for a local model).
+    For a CLOUD model, every earlier assistant turn carrying such ids is
+    stripped (with the user turn that prompted it) before anything is sent
+    — the local→cloud handoff never carries private content — and
+    `private_stripped` counts the distinct private notes left out, for the
+    UI's notice."""
+    raw = [m.model_dump() for m in body.messages]
+    try:
+        cloud = resolve_model(body.model, body.research)["provider"] != "local"
+    except UnknownModelError as e:
+        raise HTTPException(400, str(e))
+    if cloud:
+        messages, stripped = strip_private_turns(raw)
+    else:
+        messages, stripped = [{k: v for k, v in m.items() if k != PRIVATE_MARKER} for m in raw], 0
+    if not messages:
+        raise HTTPException(400, "nothing left to send once private turns are stripped")
     mode, mode_switched = resolve_mode(body.mode, messages)
+    used_private: set[str] = set()
     try:
         reply = run_kb_chat(
-            get_store(), messages, body.use_kb, body.research, body.folder, body.model, body.slug, mode=mode
+            get_store(),
+            messages,
+            body.use_kb,
+            body.research,
+            body.folder,
+            body.model,
+            body.slug,
+            mode=mode,
+            used_private=used_private,
         )
     except UnknownModelError as e:
         raise HTTPException(400, str(e))
@@ -658,7 +733,14 @@ def chat_endpoint(body: ChatRequest) -> dict:
         if "api_key" in str(e) or "credentials" in str(e):
             raise HTTPException(400, "OPENAI_API_KEY not set — add it to core/.env to use GPT models")
         raise HTTPException(502, f"OpenAI error: {e}")
-    return {"reply": reply, "mode": mode, "mode_switched": mode_switched}
+    out = {"reply": reply, "mode": mode, "mode_switched": mode_switched}
+    # Additive keys, present only when non-trivial (older clients and the
+    # existing response-shape contract see the exact same dict otherwise).
+    if used_private:
+        out["private_notes"] = sorted(used_private)
+    if stripped:
+        out["private_stripped"] = stripped
+    return out
 
 
 # --- "record that" (next-wave-plan §4) — explicit consolidation, gated ------
@@ -691,16 +773,22 @@ def record_that(body: RecordThatRequest) -> dict:
         raise HTTPException(400, "nothing to record — the conversation is empty")
     convo = _conversation_text(body.messages)
     used = llm_dispatch.collect_providers()
+    # 2026-11-05: a conversation that pulled private notes (any assistant
+    # turn marked) or targets a private note distills on the LOCAL model only.
+    has_private = any(m.private_notes for m in body.messages) or bool(
+        body.folder and body.slug and get_store().is_private(body.folder, body.slug)
+    )
+    provider = _private_provider(has_private, body.provider)
     try:
         if body.folder and body.slug:
             existing = get_store().read(body.folder, body.slug)
             if existing is None:
                 raise HTTPException(404, "target entry not found")
             title = existing.partition("\n")[0].lstrip("# ").strip() or body.slug
-            points = suggest_record_fold(convo, title, provider=body.provider).points
+            points = suggest_record_fold(convo, title, provider=provider).points
             folder = body.folder
         else:
-            fold = suggest_record_fold_new(convo, get_store().list_folders(), get_store().notes_index(), provider=body.provider)
+            fold = suggest_record_fold_new(convo, get_store().list_folders(), public_notes_index(get_store()), provider=provider)
             folder, title, points = fold.folder, fold.title, fold.points
     except (OllamaError, ValueError) as e:
         raise HTTPException(400, str(e))

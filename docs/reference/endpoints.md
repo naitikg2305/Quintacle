@@ -247,3 +247,20 @@ Full semantics in [sync.md](sync.md).
 | GET | `/sync/manifest` | — | `{rel_path: {mtime, size, sha256}}` for every syncable file | filesystem |
 | GET | `/sync/file` | `?path` | Raw bytes of one syncable file; 403 on traversal/excluded paths | filesystem |
 | POST | `/sync/pull` | `{peer_url, push_back?, self_url?}` | Pull from the peer (merge/copy/snapshot per the rules), rebuild derived indexes, optionally ask the peer to pull back | filesystem + LogsRepository + GraphEdgeStore |
+
+
+## 2026-11-05 additions — the private note flag
+
+| Method | Path | Input | Purpose | Store |
+|---|---|---|---|---|
+| POST | `/kb/entry/private` | `{folder, slug, private}` | Set/clear a note's `private` flag; touches only that frontmatter key (no `edited` restamp); 404 when missing | KBStore |
+
+Changed: `POST /kb/entries` (+`private: bool`), `POST /kb/entries/with-asset`
+(+`private` form field; a private photo note skips the auto-journal),
+`POST /drop` (+`private_skip_ai` form field — zero model calls, one private
+kb_entry proposal), `POST /kb/chat` (messages may carry `private_notes`;
+response adds `private_notes` / `private_stripped` when non-empty),
+`POST /kb/sort` (private target → local only; cloud 400),
+`POST /kb/record-that` (private turns/target → local only). Every suggester
+fed a notes index (`/kb/sort`, `/kb/drop`, `/kb/batch-drop`, `/drop`,
+record-that) now gets `public_notes_index` — no private titles.
