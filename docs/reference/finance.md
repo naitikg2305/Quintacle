@@ -117,10 +117,60 @@ Flow (the review gate, end to end):
 Property check (CLAUDE.md "writes are gated or undoable"): this lane is
 gated — nothing is written before the user's per-row review and Save.
 
+## 2026-11-05 — ONE Finances page; manual account balances + net worth
+
+Owner: "finances + stocks whatever becomes Finances — with my budgets, my
+spend, my subscriptions", plus "where I can update what I have in my 401k,
+what stocks I own, how much liquid I have".
+
+**Frontend.** `/finance` is now a tabbed page (`?tab=` search param, so it
+works in the static export): Overview · Accounts · Investments · Spend &
+budgets · Subscriptions · Income. Shell: `frontend/app/finance/page.tsx`;
+tabs in `frontend/app/finance/_components/` (private folder, not routes).
+Everything the old page had moved, nothing dropped: the per-kind expense
+ledger + add-expense form and the spend insights (this month by kind,
+monthly spend/income/savings, top merchants, movers) → Spend & budgets
+(plus budget lines = active `metric="spend"` habits with
+`/logs/habits/{id}/progress` bars); detected recurring charges + logged
+`kind=subscription` groups → Subscriptions; income form/list + monthly
+income → Income; the KB / credit-card / static-holdings / statement-import
+links → a footer strip on every tab. The Stocks page became the
+Investments tab (see stocks.md). `/stocks` and `/investments` are tiny
+client-side redirect pages to `/finance?tab=investments`.
+
+**Backend — accounts** (`core/quintacle_core/nodes/finance/accounts.py`,
+endpoints on `finance_router` in `api.py`). One markdown file per account
+under `Organisation/Finance/Accounts/` (markdown is truth, no SQLite
+mirror). Types → buckets: checking/savings/cash → liquid;
+brokerage/crypto → investments; 401k/ira/roth_ira/hsa → retirement;
+other_asset → other; credit_card/loan → liabilities (entered as the
+positive amount owed, subtracted). Balances are an append-only list of
+dated snapshots in frontmatter; "update balance" appends, history is never
+overwritten, and an explicit per-snapshot DELETE is the undo (CLAUDE.md
+"gated or undoable": the in-app form is the review/Save). Kept separate
+from `CreditCardStore`, which records card *benefits/points* — a
+`credit_card` account records the *balance owed*. The old static
+`InvestmentStore` (`/investments`, `/finance/investments` page) is
+untouched and still linked.
+
+**Net worth rule (no double counting)** — computed in `summarize()`:
+net worth = latest balance of every account (liabilities negative) + the
+stock-ledger value of every OPEN position that is *not covered* by a
+recorded account. A position is covered when every account name on its
+transactions matches (case-insensitive) a recorded brokerage/crypto/
+retirement account that has a balance — that balance already includes it.
+Positions with no account name always count. Uncovered positions count at
+market value when a price snapshot exists, else at cost basis
+(`stock_holdings_at_cost` flags it). `investments_total` = brokerage +
+crypto balances + uncovered holdings (retirement is its own bucket). The
+net-worth *history* series uses recorded account snapshots only (at each
+snapshot date, each account's latest balance as of then) — the stock
+ledger has no per-date valuation worth trusting there.
+
 ## Tests
 
 `core/tests/`: `test_budget_lines.py`, `test_finance_insights.py`,
-`test_income.py`, `test_statements.py` (+ fixture statements under
+`test_income.py`, `test_statements.py`, `test_finance_accounts.py` (2026-11-05: append-only history, buckets/liabilities/history, the no-double-count rule, endpoint round-trip) (+ fixture statements under
 `tests/fixtures/`). All seeded with hand-computed expectations; the suite
 passes without optional deps. Note: `docs/reference/endpoints.md` predates
 these endpoints — restamp it on its next regeneration.

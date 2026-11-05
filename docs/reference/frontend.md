@@ -54,7 +54,7 @@ read correctly on the dark background).
 | `/wardrobe` | Items + outfits, photos, suggest-outfit composer |
 | `/home` | Residences + per-residence item inventory |
 | `/travel` | Experiences by city/kind with rating/would-return |
-| `/finance` | Spending by `kind` tabs (Subscriptions/Food/Alcohol/…) over `/logs/expenses` |
+| `/finance` | Spending by `kind` tabs (Subscriptions/Food/Alcohol/…) over `/logs/expenses` — *2026-11-05: now the unified Finances page, see the note at the end* |
 | `/finance/cards` | Credit cards (upsert forms) |
 | `/finance/investments` | Investment holdings |
 | `/people` | Friends and Dating as two separate rosters (others collapsed), person folders link into Browse |
@@ -215,3 +215,19 @@ Supersedes the "AppShell navigation" section above (kept as history).
   (`LogsRepository.body_stats_between`), oldest first and read-only, with
   the metric lowercased. Client: `listBodyStats` in `lib/api.ts`.
   Tests: `core/tests/test_body_stats_read.py`.
+
+## 2026-11-05 — one Finances page (Stocks folded in)
+
+`/finance` is a tabbed page — Overview · Accounts · Investments · Spend &
+budgets · Subscriptions · Income — addressed by `?tab=` (read with
+`useSearchParams` inside `<Suspense>`, switched with `router.replace`, so
+the static export needs nothing server-side). Tab components live in
+`app/finance/_components/` (underscore = private, not routes) with shared
+display helpers in `_components/shared.tsx` (`money`, `Bar`, `Sparkline`,
+`Donut`; plain SVG, no new deps). `/stocks` and `/investments` are tiny
+client-side redirect stubs to `/finance?tab=investments`. The drawer entry
+change (point at `/finance`, drop Stocks) is the main session's, in
+`lib/apps.ts`. New client functions in `lib/api.ts`: `getAccounts`,
+`upsertAccount`, `addAccountBalance`, `deleteAccountBalance`,
+`deleteAccount` (+ `AccountsSummary` types). Details:
+[finance.md](finance.md), [stocks.md](stocks.md).

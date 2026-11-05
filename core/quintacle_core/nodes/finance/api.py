@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from ..journal.normalize import canonicalize_name
 from ...retrieval import safe_index_log_row
 from . import insights, statements
+from .accounts import ACCOUNT_TYPES, AccountStore, summarize
 from .store import CreditCardStore, InvestmentStore
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ _store: CreditCardStore | None = None
 
 investments_router = APIRouter(prefix="/investments", tags=["finance"])
 _investment_store: InvestmentStore | None = None
+_account_store: AccountStore | None = None
 
 # Spend insights + the statement-drop import lane (next-wave-plan §1/§2b).
 # Lives here rather than logs/api.py because it's finance-page surface area;
@@ -35,9 +37,16 @@ def _logs_repo():
 
 
 def init_store(kb_root) -> None:
-    global _store, _investment_store
+    global _store, _investment_store, _account_store
     _store = CreditCardStore(kb_root)
     _investment_store = InvestmentStore(kb_root)
+    _account_store = AccountStore(kb_root)
+
+
+def get_account_store() -> AccountStore:
+    if _account_store is None:
+        raise RuntimeError("account store not initialized — call init_store() first")
+    return _account_store
 
 
 def get_store() -> CreditCardStore:
@@ -172,6 +181,95 @@ def insights_subscriptions() -> dict:
     """Recurring charges detected by cadence arithmetic (same merchant +
     similar amount at a weekly/monthly/yearly gap) — no model judgment."""
     return insights.detect_subscriptions(_logs_repo().conn)
+
+
+# --- accounts: manually-recorded balances + net worth (2026-11-05) ---
+# Write gating: these are the Save step of the in-app form (propose→review→
+# Save); balance history is append-only, with an explicit per-snapshot delete
+# as the undo. See nodes/finance/accounts.py for the net-worth rule.
+
+
+class AccountUpsert(BaseModel):
+    name: str
+    account_type: str
+    institution: str = ""
+    notes: str = ""
+    # Optional opening balance, appended as the first/next snapshot.
+    balance: float | None = None
+    as_of: date | None = None
+
+
+class BalanceIn(BaseModel):
+    balance: float
+    as_of: date | None = None
+    note: str = ""
+
+
+def _stock_positions() -> dict | None:
+    # Late import: the stocks node is initialized independently in create_app().
+    try:
+        from ..stocks.api import get_stocks_repo
+        from ..stocks.positions import compute_positions
+
+        repo = get_stocks_repo()
+        return compute_positions([dict(r) for r in repo.transactions()], repo.latest_prices())
+    except RuntimeError:
+        return None
+
+
+@finance_router.get("/accounts")
+def list_accounts() -> dict:
+    """Every account with its full snapshot history + latest balance, the
+    bucket totals and net worth (incl. uncovered stock-ledger holdings) —
+    all computed in code."""
+    result = summarize(get_account_store().all(), _stock_positions())
+    result["account_types"] = ACCOUNT_TYPES
+    return result
+
+
+@finance_router.post("/accounts")
+def upsert_account(body: AccountUpsert) -> dict:
+    """Upsert by name (slug). Descriptive fields only — the balance history
+    is never rewritten; a supplied `balance` is APPENDED as a snapshot."""
+    from ...clock import today
+
+    store = get_account_store()
+    try:
+        slug = store.upsert(body.name, body.account_type, body.institution, body.notes)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if body.balance is not None:
+        store.add_balance(slug, body.balance, body.as_of or today())
+    return {"slug": slug}
+
+
+@finance_router.post("/accounts/{slug}/balance")
+def add_account_balance(slug: str, body: BalanceIn) -> dict:
+    from ...clock import today
+
+    try:
+        acct = get_account_store().add_balance(slug, body.balance, body.as_of or today(), body.note)
+    except KeyError:
+        raise HTTPException(404, f"no account {slug!r}")
+    return {"slug": acct["slug"], "snapshots": len(acct["balances"])}
+
+
+@finance_router.delete("/accounts/{slug}/balance/{index}")
+def delete_account_balance(slug: str, index: int) -> dict:
+    try:
+        acct = get_account_store().delete_balance(slug, index)
+    except KeyError:
+        raise HTTPException(404, f"no account {slug!r}")
+    except IndexError:
+        raise HTTPException(404, f"no snapshot #{index}")
+    return {"slug": acct["slug"], "snapshots": len(acct["balances"])}
+
+
+@finance_router.delete("/accounts/{slug}")
+def delete_account(slug: str) -> dict:
+    if not get_account_store().delete(slug):
+        raise HTTPException(404, f"no account {slug!r}")
+    return {"deleted": slug}
 
 
 # --- statement import lane (§2b: statements come in as DROPS) ---

@@ -126,6 +126,28 @@ transaction form/list with delete, research section with status badges and
 links into each company's KB folder. API client types/functions in
 `frontend/lib/api.ts` (`StockTransaction`, `StockPositions`, …).
 
+> **2026-11-05 — page moved into Finances; discusser planned.** The
+> standalone Stocks page is gone from the UI: owner asked first for "a simple
+> investments page", then the same day for ONE Finances page. The ledger UI
+> now lives in the **Investments tab** of `/finance`
+> (`frontend/app/finance/_components/InvestmentsTab.tsx`): totals (invested,
+> current or *last known* value with the EOD date, unrealized P/L $ and %,
+> realized + dividends), holdings with an allocation bar each, an SVG
+> allocation donut, recent transactions with delete, the add-transaction
+> form, the recorded brokerage/retirement account balances, and a
+> "Watchlist & hunches — coming soon" placeholder card. `/stocks` (and the
+> briefly-existing `/investments`) are client-side redirects to
+> `/finance?tab=investments`. **No endpoint or data was removed**; the
+> research section isn't surfaced for now (`/stocks/research` still
+> served). `compute_positions` gained additive fields so the page never
+> does valuation math: per-position `unrealized_pnl_pct` and
+> `allocation_pct` (open positions only), totals `priced_cost_basis`,
+> `unrealized_pnl_pct` (over priced cost only) and `allocation_basis`
+> (`market_value` when every open position is priced, else `cost_basis` for
+> all). **Planned (not built):** a stocks *discusser* — "what is going on,
+> recorded news and hunches that I follow like Rivian" — which will grow
+> out of that placeholder card and the existing research folders.
+
 ## Tests
 
 `core/tests/test_stocks.py` — 15 tests, fully offline: FIFO basis across
