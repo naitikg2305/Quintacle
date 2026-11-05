@@ -435,6 +435,21 @@ export type ParsedStatementImport = {
   // the review card can re-parse after a column-mapping correction.
   raw_text?: string;
 };
+// Deterministic file metadata extracted at drop (2026-11-05,
+// nodes/kb/file_meta.py) — display only on the review card; Save
+// re-extracts it from the stored file, so nothing here is sent back.
+export type FileMetaInfo = {
+  filename: string;
+  ext: string;
+  size: number;
+  kind?: string;
+  title?: string;
+  author?: string;
+  created?: string;
+  pages?: number;
+  line: string; // the 🗂 summary line, as it will appear in the note
+  [key: string]: unknown;
+};
 export type ParsedKBEntry = {
   type: "kb_entry";
   folder: string;
@@ -449,6 +464,7 @@ export type ParsedKBEntry = {
   // `private: true` — the note never reaches a cloud model or the MCP server.
   // A "Private, skip AI" proposal arrives with it already set.
   private?: boolean;
+  file_meta?: FileMetaInfo[];
 };
 export type MicroEstimate = { nutrient: string; amount: number; unit: string };
 export type ParsedIngredientPreset = {
@@ -1424,7 +1440,7 @@ export const saveKBSpreadsheet = (folder: string, path: string, sheets: Spreadsh
 export type Photo = { folder: string; slug: string; title: string; assets: string[] };
 export const listPhotos = () => request<Photo[]>("/kb/photos");
 
-export type BatchFile = { filename: string; title: string; content: string; links?: string[] };
+export type BatchFile = { filename: string; title: string; content: string; links?: string[]; file_meta?: FileMetaInfo[] };
 export type Bucket = { folder: string; files: BatchFile[] };
 
 // One AI call sees every dropped file at once and buckets them by shared

@@ -17,6 +17,7 @@ from ..graph_capture import link_event as capture_link_event
 from ..markdown_paths import resolve_nested, slugify
 from ..nodes.journal.store import JournalStore
 from ..nodes.kb.drop import _IMAGE_MIME, describe_images
+from ..nodes.kb.file_meta import apply_file_meta
 from ..nodes.kb.photo_place import bake_photo_place, is_image_name
 from ..nodes.kb.privacy import is_private_node, private_filter, without_private_hits
 from ..nodes.kb.store import KBStore
@@ -319,8 +320,26 @@ def kb_attach_file(folder: str, slug: str, local_path: str, filename: str | None
             full = kb_store.read_full(folder, slug) or {}
             retrieval.safe_index_note(folder_slug, entry_slug, full.get("title") or entry_slug, baked.extra["body"])
         stage_place_links(session, folder_slug, entry_slug)  # 2026-11-05: place edges, staged for undo
+    _bake_file_meta(session, folder, slug, folder_slug, entry_slug, {written: source.name})
     ledger_id = session.commit(result={"folder": folder_slug, "slug": entry_slug, "asset_path": written})
     return {"folder": folder_slug, "slug": entry_slug, "asset_path": written, "bytes": len(data), "ledger_id": ledger_id}
+
+
+def _bake_file_meta(session: WriteSession, folder: str, slug: str, folder_slug: str, entry_slug: str, names: dict[str, str]) -> None:
+    """2026-11-05: 🗂 file metadata re-extracted from the stored asset into
+    the note body + `file_meta` (the note file is already staged, so undo
+    restores its prior bytes), on_day edge(s) to the created day's journal
+    staged on the same session, then re-index. Never fails the attach."""
+    fm = apply_file_meta(kb_store, folder, slug, names, journal_store=journal_store)
+    if fm is None:
+        return
+    edges_dir = DATA_DIR / "graph" / "edges"
+    for edge_id in fm.new_edge_ids:
+        session.stage_new_file(edges_dir / f"{edge_id}.md")
+        session.stage_sqlite_insert(_db_path, "edges", "id", edge_id)
+    if fm.changed:
+        full = kb_store.read_full(folder, slug) or {}
+        retrieval.safe_index_note(folder_slug, entry_slug, full.get("title") or entry_slug, fm.body)
 
 
 # --- Universal retrieval ---

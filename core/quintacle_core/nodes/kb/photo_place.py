@@ -53,6 +53,11 @@ def is_image_name(name: str) -> bool:
     return name.rsplit(".", 1)[-1].lower() in IMAGE_EXTENSIONS if "." in name else False
 
 
+def _is_file_meta_line(line: str) -> bool:
+    s = line.strip()
+    return s.startswith("🗂") and s.endswith("<!-- filemeta -->")
+
+
 def is_place_line(line: str) -> bool:
     s = line.strip()
     return s.startswith(PLACE_PREFIX) and s.endswith(PLACE_MARKER)
@@ -223,9 +228,15 @@ def insert_place_line(body: str, line: str | None) -> str:
     trailing_nl = body.endswith("\n")
     lines = [l for l in body.rstrip("\n").split("\n") if not is_place_line(l)]
     i = len(lines)
-    while i > 0 and (_ASSET_LINE_RE.match(lines[i - 1].strip()) or not lines[i - 1].strip()):
+    # 🗂 file-meta lines (nodes/kb/file_meta.py) sit between 📍 and the
+    # assets, so they count as part of the trailing block here.
+    while i > 0 and (_ASSET_LINE_RE.match(lines[i - 1].strip()) or not lines[i - 1].strip() or _is_file_meta_line(lines[i - 1])):
         i -= 1
     head, tail = lines[:i], [l for l in lines[i:] if l.strip()]
+    fm_lines = [l for l in tail if _is_file_meta_line(l)]
+    if fm_lines:
+        rest = [l for l in tail if not _is_file_meta_line(l)]
+        tail = fm_lines + ([""] if rest else []) + rest
     while head and not head[-1].strip():
         head.pop()
     out = list(head)

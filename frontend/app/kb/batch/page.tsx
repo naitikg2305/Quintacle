@@ -198,6 +198,11 @@ export default function BatchDropPage() {
                       }}
                     />
                   </div>
+                  {(file.file_meta ?? []).map((m) => (
+                    <p key={m.line} className="text-xs opacity-60" title="Read from the file itself — saved into the note">
+                      File info: {m.line}
+                    </p>
+                  ))}
                   <textarea
                     className="w-full border rounded p-2 text-xs"
                     rows={3}

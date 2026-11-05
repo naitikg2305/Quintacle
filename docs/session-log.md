@@ -20,6 +20,20 @@ out for cloud. `/graph` shows the place nodes with a `level`, and the frontend d
 continents and countries bigger. 858 passed. Details: `docs/reference/graph-engine.md`
 (2026-11-05 place hierarchy).
 
+## 2026-11-05 — File metadata baked at drop + save, linked to journal days (worktree agent)
+
+Owner asked for file metadata to be baked in at the drop step and linked
+on the graph. New `nodes/kb/file_meta.py` extracts metadata with no model
+call: PDF title, author, dates and pages; DOCX/XLSX/PPTX core.xml; image
+camera and size; MP4 duration, date and GPS. It writes a
+`🗂 … <!-- filemeta -->` line (after 📍, before the assets) and `file_meta`
+frontmatter. It also adds an `on_day` edge to the created day's journal
+when that day exists. Drop proposals carry `file_meta` and the review cards
+show a "File info" line. The save hooks re-extract from the stored file and
+sit right after the photo_place call. `POST /kb/files/backfill-meta`
+covers existing notes. 871 passed. Details: `docs/reference/drop-pipeline.md`
+(2026-11-05 file metadata).
+
 ## 2026-11-05 — Photo place baked into the note body (worktree agent)
 
 Owner asked that a photo's location be "baked into the markdown so it can be retrieved".

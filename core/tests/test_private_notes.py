@@ -339,6 +339,7 @@ def test_private_skip_ai_drop_makes_zero_model_calls(client, monkeypatch):
     body = r.json()
     assert body["provider_used"] is None
     [entry] = body["entries"]
+    assert entry.pop("file_meta")[0]["filename"] == "sketch.png"  # deterministic, no model (2026-11-05)
     assert entry == {
         "type": "kb_entry",
         "folder": "",
