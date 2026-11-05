@@ -285,3 +285,40 @@ deterministic (no model call) place tree to the edges table:
   level}` (label read back from the retrieval index); the 2D/3D views size
   continent > country > city and only offer "open note" when a node has a
   folder/slug.
+
+## Trip ↔ photos (trip_photos.py) — 2026-11-05
+
+Photos taken during a planned trip attach to it automatically, no model
+call. `core/quintacle_core/trip_photos.py`:
+
+- **Rule**: photo note → plan note (a note under `Fun/Travel/Planned/**`,
+  `about-*` / `_*` / `assets/` excluded) when the photo's capture day is in
+  `[start, end]` inclusive AND (the plan has no destinations OR a destination
+  token equals the photo's `place` city / state / country / continent,
+  compared as `place_slug`s — "Austria" catches a Salzburg photo).
+- **Edge**: kind `during_trip` (new), `source_of_edge="trip_photos"`,
+  direction photo → plan. Idempotent. A photo save re-syncs that photo's
+  outgoing edges; a plan save re-syncs the plan's incoming ones. Stale edges
+  from this module are removed; nobody else's are touched.
+- **Capture day**: `file_meta[].taken` of an image asset (EXIF), else the
+  `taken YYYY-MM-DD` on the 📍 line. No capture date → never linked.
+- **Plan window**: `fields.start`/`fields.end`; when missing, a small regex
+  set over the body: explicit ranges first (`2027-05-12 – 2027-05-21`,
+  `May 12 – May 21, 2027`, `May 12–21, 2027`, `12–21 May 2027`, year-wrap
+  `Dec 28 – Jan 3, 2028`), else min..max of standalone full dates if they
+  span ≤ 60 days. A lone start/end stands in for the other.
+- **Plan destinations**: `fields.destinations` only. With none, the body is
+  checked against city names that ALREADY exist as place nodes (virtual
+  `place:*/*/<city>` ids + real `places/**` notes) — never guessed from prose.
+- **Hook**: `place_graph.link_note_places` calls
+  `trip_photos.link_note_trip_photos` at the end of every non-dry-run call, so
+  every place-linking save point also syncs trips (KB saves, with-asset,
+  `planned/move`, MCP writes inside the staged session). Correction to the
+  place-hierarchy hook list above: `/kb/entry/asset` and MCP `kb_attach_file`
+  now run the place/trip linking AFTER the file-meta bake (so the EXIF day is
+  on the note), still only for image attachments.
+- **Backfill**: `POST /travel/planned/backfill-photos?dry_run=true` re-syncs
+  every plan in one pass and drops edges whose plan no longer exists.
+- **Read side**: `GET /travel/planned` rows gain `photo_count` + `photos`
+  (first 6 `{folder, slug, asset}`, by source id) straight off the edges; the
+  Travel → Planned cards show "N photos" + thumbnails linking to Browse.

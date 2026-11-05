@@ -7,6 +7,7 @@ from ...graph import get_graph_store, link_new_entry, sync_frontmatter_links
 from ...graph_capture import emerge_places_for_text, mention_candidates
 from ...markdown_paths import resolve_nested, slugify
 from ...place_graph import link_experience_places, link_note_places
+from ...trip_photos import backfill_trip_photos, photos_for_plan
 from ...retrieval import safe_index_experience, safe_index_note, safe_remove_node
 from . import states as travel_states
 from ..journal.api import get_store as get_journal_store
@@ -132,7 +133,23 @@ def _drop_graph_node(node_id: str) -> None:
 
 @router.get("/planned")
 def list_planned() -> list[dict]:
-    return travel_states.list_planned(_kb())
+    kb = _kb()
+    rows = travel_states.list_planned(kb)
+    # 2026-11-05 (trip_photos.py): photos taken during the trip — count + the
+    # first 6 for thumbnails, read straight off the during_trip edges.
+    for row in rows:
+        row["photo_count"], row["photos"] = photos_for_plan(kb, row["folder"], row["slug"], limit=6)
+    return rows
+
+
+@router.post("/planned/backfill-photos")
+def backfill_planned_photos(dry_run: bool = True) -> dict:
+    """2026-11-05 (trip_photos.py): link every existing dated photo to the
+    planned trip(s) it was taken during — capture day inside the plan's
+    start..end AND (no destinations, or city/state/country/continent
+    matches one). Deterministic, no model. dry_run (default) writes
+    nothing; re-running adds no duplicates and drops stale edges."""
+    return backfill_trip_photos(_kb(), dry_run=dry_run)
 
 
 @router.get("/unsorted")

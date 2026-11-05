@@ -15,6 +15,7 @@ import {
   createExperience,
   deleteBucketPlace,
   Experience,
+  kbAssetUrl,
   listBucketPlaces,
   listExperiences,
   listPlannedTrips,
@@ -161,19 +162,47 @@ function PlannedTab() {
             <Panel key={g} title={g} icon={MapIcon} bodyClassName="space-y-2">
               {items.map((t) => {
                 const dates = dateRange(t.start, t.end);
+                const photos = t.photos ?? [];
+                const photoCount = t.photo_count ?? 0;
                 return (
-                  <Link
+                  <div
                     key={`${t.folder}/${t.slug}`}
-                    href={kbLink(t.folder, t.slug)}
-                    className="block rounded-lg border border-line bg-surface-2/60 p-3 transition-colors hover:border-accent/60"
+                    className="rounded-lg border border-line bg-surface-2/60 p-3 transition-colors hover:border-accent/60"
                   >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="min-w-0 break-words text-sm font-medium">{t.title}</span>
-                      {t.status && <Badge tone={statusTone(t.status)}>{t.status}</Badge>}
-                    </div>
-                    {dates && <p className="mt-1 font-mono text-xs text-accent">{dates}</p>}
-                    {t.destinations && <p className="mt-1 break-words text-xs text-muted">{t.destinations}</p>}
-                  </Link>
+                    <Link href={kbLink(t.folder, t.slug)} className="block">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="min-w-0 break-words text-sm font-medium">{t.title}</span>
+                        {t.status && <Badge tone={statusTone(t.status)}>{t.status}</Badge>}
+                      </div>
+                      {dates && <p className="mt-1 font-mono text-xs text-accent">{dates}</p>}
+                      {t.destinations && <p className="mt-1 break-words text-xs text-muted">{t.destinations}</p>}
+                    </Link>
+                    {/* 2026-11-05 (trip_photos.py): photos taken during the trip. */}
+                    {photoCount > 0 && (
+                      <div className="mt-2">
+                        <p className="font-mono text-[11px] text-muted">
+                          {photoCount} {photoCount === 1 ? "photo" : "photos"}
+                        </p>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {photos.map((ph) => (
+                            <Link
+                              key={`${ph.folder}/${ph.slug}`}
+                              href={kbLink(ph.folder, ph.slug)}
+                              className="block h-12 w-12 shrink-0 overflow-hidden rounded-md border border-line hover:border-accent/60"
+                              title={ph.slug}
+                            >
+                              {ph.asset ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={kbAssetUrl(ph.folder, ph.asset)} alt="" loading="lazy" className="h-full w-full object-cover" />
+                              ) : (
+                                <span className="block h-full w-full bg-surface-2" />
+                              )}
+                            </Link>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </Panel>

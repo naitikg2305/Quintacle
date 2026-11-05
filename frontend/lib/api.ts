@@ -850,6 +850,10 @@ export type PlannedTrip = {
   destinations: string | null;
   status: string | null;
   edited: string | null;
+  // 2026-11-05 (trip_photos.py): photos taken during the trip — present on
+  // /travel/planned rows only (not /travel/unsorted). First 6 for thumbnails.
+  photo_count?: number;
+  photos?: { folder: string; slug: string; asset: string | null }[];
 };
 
 export const listPlannedTrips = () => request<PlannedTrip[]>("/travel/planned");

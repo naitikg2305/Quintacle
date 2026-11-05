@@ -388,8 +388,12 @@ async def add_entry_asset(folder: str = Form(...), slug: str = Form(...), file: 
             full = get_store().read_full(folder, slug) or {}
             folder_slug = str(get_store().entry_path(folder, slug).parent.relative_to(get_store().root)).replace("\\", "/")
             safe_index_note(folder_slug, get_store().entry_path(folder, slug).stem, full.get("title") or slug, baked.extra["body"])
-        link_note_places(get_store(), folder, slug)  # 2026-11-05: photo → city → country → continent edges
     _bake_file_meta_and_index(folder, slug, {asset_path: file.filename or asset_path})
+    if is_image_name(file.filename or ""):
+        # 2026-11-05: photo → city → country → continent edges, then the
+        # trip it was taken during (trip_photos) — AFTER the file-meta bake
+        # so the EXIF capture day is already on the note.
+        link_note_places(get_store(), folder, slug)
     return {"folder": folder, "slug": slug, "asset": asset_path}
 
 
