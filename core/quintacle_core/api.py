@@ -56,6 +56,7 @@ from .nodes.kb.api import init_store as init_kb_store, init_chat_store, get_stor
 from .nodes.kb.transcripts import init_transcript_store, router as transcripts_router
 from .nodes.kb.soft_record import init_soft_record_store, router as soft_record_router
 from .nodes.kb.perception_api import router as perception_router
+from .nodes.knowledge.api import router as knowledge_router
 from .nodes.profile.api import init_store as init_profile_store, router as profile_router
 from .nodes.wardrobe.api import (
     init_store as init_wardrobe_store,
@@ -186,6 +187,7 @@ def create_app() -> FastAPI:
     init_chat_store(DATA_DIR / "kb_chats")
     app.include_router(kb_router)
     app.include_router(perception_router)
+    app.include_router(knowledge_router)  # /knowledge page (read-only over kb/knowledge)
 
     # Transcript archive — conversations/ at the data-dir root, deliberately
     # OUTSIDE kb_root (same structural-invisibility pattern as the vault):

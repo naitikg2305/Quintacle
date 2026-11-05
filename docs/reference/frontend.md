@@ -215,3 +215,44 @@ Supersedes the "AppShell navigation" section above (kept as history).
   (`LogsRepository.body_stats_between`), oldest first and read-only, with
   the metric lowercased. Client: `listBodyStats` in `lib/api.ts`.
   Tests: `core/tests/test_body_stats_read.py`.
+
+## 2026-11-05 — Knowledge page (`app/knowledge/page.tsx`)
+
+*Added 2026-11-05 (worktree agent).* A website-style index over the KB's
+`Knowledge/**` tree, modelled on the PersonalWebsite's `/knowledge` page
+(title + summary grouped by category) but in the HUD theme and with a
+filter bar. Route `/knowledge`. It is not in `lib/apps.ts` yet; the
+integrator adds the drawer entry.
+
+- **Data**: one `GET /knowledge` on load (`lib/knowledgeApi.ts`, a separate
+  file from `lib/api.ts`). The topic and tag filters are applied
+  client-side. Search debounces 250 ms and calls `GET /knowledge?q=`, which
+  returns ranked ids. Topic/tag narrowing still applies on top of that
+  ranking.
+- **Filters are dynamic**: topic chips come from the folder tree (a new
+  folder such as `Knowledge/Planes` shows up on the next load). Clicking a
+  top-level chip opens a drill row with a breadcrumb and child chips
+  ("Tech Notes › Graphs"), and shows the folder's `about-*` charter as its
+  description. Tag chips come from frontmatter `tags`/`category` plus
+  graph-linked place/project hubs (pin/folder icons). Up to 14 are shown,
+  then "+N more".
+- **Grid** (`components/knowledge/NoteCard.tsx`): each card has a topic
+  chip (click to filter), a lock badge for private notes, a paperclip when
+  the note has assets, the title, a 3-line summary, the edited date and
+  tags. Sort options are Recent (server order, `edited` desc), A–Z, and By
+  topic, which groups cards under section headers the way the website
+  does. Columns: 1 at 390px, 2 from `sm`, 3 from `xl`.
+- **Reading view**: `?n=<folder>/<slug>`, a query param rather than a
+  dynamic route so it works in the static export
+  (`components/knowledge/NoteReader.tsx`). The body renders with
+  ReactMarkdown + remark-gfm + rehype-highlight (same stack as Browse).
+  Relative URLs inside markdown (`![](assets/x.png)`) are rewritten to
+  `kbAssetUrl`. Trailing `[asset]` lines and frontmatter assets render
+  inline: images in a lightbox, PDFs in an iframe, video in a player,
+  anything else as a link. Buttons: "Open in Browse"
+  (`/kb/browse?path=&open=`) and "Chat about this"
+  (`/kb?continueFolder=&continueSlug=`, same as Browse). The Related panel
+  lists 1-hop graph neighbours: knowledge notes open in place, other notes
+  link to Browse.
+- Private notes are shown, with a lock. This is an owner surface; nothing
+  on it feeds a model.

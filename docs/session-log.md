@@ -3,6 +3,37 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-05 — Knowledge page with dynamic topic/tag filters (worktree agent)
+
+The owner asked for "a knowledge page with a filter (that gets updated as
+new folders and topics are introduced …) very similar" to the
+PersonalWebsite's `/knowledge`. New route `/knowledge`
+(`frontend/app/knowledge/page.tsx`, `components/knowledge/*`,
+`lib/knowledgeApi.ts`). It shows a card grid with title, topic chip,
+summary, edited date and tags; a lock marks private notes. A "By topic"
+sort groups the cards under headers like the website does. The filter bar
+has a search box, topic chips and tag chips. Topics come from the
+`Knowledge/` folder tree, and nested folders drill in as "Tech Notes ›
+Graphs" with the folder's `about-*` charter as a description. Tags come
+from frontmatter `tags`/`category` plus graph-linked place/project hubs.
+The reading view uses `?n=<folder>/<slug>` (works in the static export).
+It renders the full markdown with inline assets, has Open in Browse and
+Chat about this, and shows related notes from graph neighbours.
+
+Backend: new `core/quintacle_core/nodes/knowledge/` with `GET /knowledge`
+(`?q`, `?topic`, `?tag`) and `GET /knowledge/note`, registered in `api.py`.
+It is deterministic and derives everything per request, so nothing is
+hard-coded and a new folder becomes a new chip. Search uses the retrieval
+index restricted to `note:knowledge/*`, plus a substring fallback for
+unindexed files. Tests: `core/tests/test_knowledge_page.py` (6). Results:
+956 passed, tsc 0, eslint clean on the touched files,
+`CAPACITOR_BUILD=true next build` OK. Checked with screenshots at 390px
+(grid + reader) against a sandboxed backend on 8105.
+
+Not done: no `lib/apps.ts` drawer entry (parallel agents own that file),
+so the integrator should add `/knowledge`. Reference:
+`docs/reference/frontend.md` + `endpoints.md` (2026-11-05 Knowledge page).
+
 ## 2026-11-05 — Dashboard-first nav + ⊞ Apps drawer + widget dashboard (worktree agent)
 
 This follows the owner's design: "the dashboard should be the landing
