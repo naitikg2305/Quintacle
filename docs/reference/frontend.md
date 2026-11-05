@@ -215,3 +215,59 @@ Supersedes the "AppShell navigation" section above (kept as history).
   (`LogsRepository.body_stats_between`), oldest first and read-only, with
   the metric lowercased. Client: `listBodyStats` in `lib/api.ts`.
   Tests: `core/tests/test_body_stats_read.py`.
+
+## 2026-11-05 — Projects page (`/projects`)
+
+The owner asked for this to look like the PersonalWebsite's `/projects`
+page. It shows projects done, doing and planned, along with their GitHub
+repos, STL files and markdown notes.
+
+- **Data model.** A project is a top-level KB folder `projects/<slug>/`. Its
+  hub is the note whose slug equals the folder slug (the career/hubs.py
+  rule). Everything else in that folder tree belongs to the project. An
+  older single note directly in `projects/` also counts as a project, and it
+  owns only the assets it references. A folder with files but no hub still
+  shows up (badge "no hub note"), and the first field edit creates its hub.
+  The hub's `fields` hold `status` (done | doing | planned; doing by
+  default; synonyms like finished or idea are normalized), `repo` (or
+  `github`), `summary` (falls back to the body's first line), `stack` (list
+  or comma string, falls back to `tags`), `start`/`end`, and `cover` (asset
+  path relative to the project folder). `public`, `public_name` and
+  `public_repo` are the same keys the Career alias table uses. They are
+  shared, not copied.
+- **Card visual**, deterministic. Uses the `cover` field if set, otherwise
+  `card.stl` (the website's convention), otherwise an image named
+  cover/image/card/banner/thumbnail, otherwise the first image, otherwise
+  the first STL. A project with no visual gets the website's terminal title
+  bar (`~/projects/<slug>`).
+- **Work logs** come from graph edges from `note:daily-log/work-logs/*` into
+  the hub (the work-log importer creates these), plus work logs whose
+  frontmatter `links` name the hub title. These are the same two sources
+  `career/worklogs.py` trusts. Other graph neighbors (people, places,
+  notes) are listed under "Connected". Private neighbors are skipped.
+- **Page.** `app/projects/page.tsx` has sections Doing, Planned and Done in
+  the website's centered-section style, a status filter
+  (`?status=doing|planned|done`) and a name/stack filter. The detail view is
+  `/projects?p=<slug>`, a query param because the phone build is a static
+  export. The detail view shows the header with a status badge and dates, a
+  cover banner or a 400px orbit STL viewer, the summary, stack chips, "View
+  on GitHub" and "Public repo" buttons, the About section (hub body), 3D
+  models, images (lightbox grid), PDFs and docs (inline PDF iframe or DOCX
+  viewer), videos, notes (collapsible, markdown rendered), other files,
+  work-log day chips and Connected. Only one STL canvas is live at a time:
+  you pick a model file to view it, because several WebGL contexts on a
+  phone run out. Edit fields and New project open in a `BottomSheet` form.
+  Edits send only the keys that changed.
+- **Files.** Components live in `components/projects/`: `ProjectCard`
+  (ported from the website's ProjectCard + SoftwareProjectCard),
+  `ProjectDetailView`, `ProjectForm`, `ProjectMarkdown` (Browse's
+  react-markdown + GFM + highlight; relative image and link targets resolve
+  through `/kb/asset`; `[asset]` and `<!-- filemeta -->` plumbing lines are
+  hidden) and `GithubIcon` (lucide 1.x has no brand marks). The client
+  lives in `lib/projectsApi.ts`, a new file kept out of `lib/api.ts` so
+  parallel page builds don't collide there. `request` is now exported from
+  `lib/api.ts` for it. Endpoint rows are in [endpoints.md](endpoints.md).
+  Tests: `core/tests/test_projects_page.py`.
+- **Not done here:** the Apps-drawer entry (`lib/apps.ts`), which the main
+  session adds.
+
