@@ -9,9 +9,7 @@ import ModeChip from "@/components/ModeChip";
 import { Panel } from "@/components/ui/Panel";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
-import { archiveTranscript, ChatMessage, ChatMode, chatWithKB, listChatModels, privateHandoffNotice } from "@/lib/api";
-
-const DEFAULT_LOCAL_MODEL = "local:qwen3:8b";
+import { archiveTranscript, ChatMessage, ChatMode, chatWithKB, DEFAULT_LOCAL_MODEL, listChatModels, privateHandoffNotice } from "@/lib/api";
 
 // The overview's right column: a compact chat (same /kb/chat, same sticky
 // §12 mode, same model the Chat page last picked) over a capture box that

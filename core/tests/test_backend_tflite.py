@@ -110,9 +110,26 @@ def test_tflite_selected_but_deps_missing_degrades_to_none(perception_home, monk
     monkeypatch.setenv(backend_tflite.BACKEND_ENV, "tflite")
     monkeypatch.setitem(sys.modules, "ai_edge_litert", None)
     monkeypatch.setitem(sys.modules, "ai_edge_litert.interpreter", None)
+    monkeypatch.setitem(sys.modules, "tflite_runtime", None)
+    monkeypatch.setitem(sys.modules, "tflite_runtime.interpreter", None)
     assert not backend_tflite.available()
     assert not perception.perception_available()
     assert perception.perceive_photo(_photo(), "image/jpeg") is None
+
+
+def test_interpreter_falls_back_to_tflite_runtime(monkeypatch):
+    # Termux (bionic) has no ai-edge-litert wheel but ships
+    # `pkg install python-tflite-runtime` — same Interpreter/load_delegate API.
+    import types
+
+    fake_pkg = types.ModuleType("tflite_runtime")
+    fake_interp = types.ModuleType("tflite_runtime.interpreter")
+    fake_interp.Interpreter = object
+    fake_pkg.interpreter = fake_interp
+    monkeypatch.setitem(sys.modules, "ai_edge_litert", None)
+    monkeypatch.setitem(sys.modules, "tflite_runtime", fake_pkg)
+    monkeypatch.setitem(sys.modules, "tflite_runtime.interpreter", fake_interp)
+    assert backend_tflite._interpreter_module() is fake_interp
 
 
 @pytest.mark.skipif(not _have_litert(), reason="needs ai-edge-litert")

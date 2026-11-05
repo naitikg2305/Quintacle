@@ -627,3 +627,28 @@ def test_settings_record_location_is_configurable(app):
     assert (st["folder"], st["slug"]) == ("career/records", "career-record")
     assert st["exists"] is True
     assert app.post("/career/record/import", json={"content": RECORD}).status_code == 409
+
+
+# --- phone / Termux: no PersonalWebsite checkout, maybe no git (2026-11-05) ---
+
+
+def test_website_repo_missing_is_a_clear_error(tmp_path):
+    with pytest.raises(web_mod.WebsiteRepoError, match="website repo not found"):
+        web_mod.write_branch(tmp_path / "no-such-site", "frontend/public/content", {"knowledge/x.md": "x"}, "msg")
+
+
+def test_git_missing_is_a_clear_error_not_a_crash(tmp_path, monkeypatch):
+    (tmp_path / "site").mkdir()
+
+    def no_git(*a, **kw):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(web_mod.subprocess, "run", no_git)
+    with pytest.raises(web_mod.WebsiteRepoError, match="git is not installed"):
+        web_mod.check_repo(tmp_path / "site")
+
+
+def test_website_status_works_without_repo(app):
+    r = app.get("/career/website")
+    assert r.status_code == 200
+    assert r.json()["repo"].endswith("site")

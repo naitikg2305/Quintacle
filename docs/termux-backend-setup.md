@@ -253,3 +253,79 @@ device — they're listed here so nothing gets silently skipped.
   probably the `pydantic-core` Rust build described above; let it run
   (check `top`/`htop` for an active `rustc`/`cargo` process before assuming
   it's actually stuck).
+
+## 2026-11-05 — updates, local models, perception, Max (addition)
+
+New and changed scripts (all `bash -n` checked, none run on a device yet):
+
+- **`scripts/termux/update.sh [branch]`**: the day-to-day update. Runs
+  `git pull --ff-only` (refuses if there are local edits), then
+  `pip install -r core/requirements.txt` (same Pillow/opencv filter as
+  `setup.sh`). If Ollama is installed it makes sure the daemon is up and that
+  `qwen3:4b` + `qwen2.5:1.5b` are pulled (only missing ones download). Then
+  it restarts the backend: if the `start-backend.sh` restart loop is alive it
+  stops uvicorn and the loop relaunches it on the new code; otherwise it
+  launches `start-backend.sh` detached the way the Termux:Boot entry does.
+  Last, it waits for `127.0.0.1:8000/documents`. Safe to re-run. The UI is
+  inside the APK, so a frontend change still needs a new APK.
+- **`start-backend.sh` now starts Ollama too**, when `ollama` is installed
+  and not answering, via `install-ollama-termux.sh --serve`, detached with
+  its own wake lock and restart loop. The single `start-quintacle` boot entry
+  therefore brings up both. The serve loop now idles when another instance
+  already owns port 11434, so also installing `boot-ollama` can't
+  crash-loop. `QUINTACLE_NO_OLLAMA=1` opts out.
+- **Local models**: `install-ollama-termux.sh` now pulls `qwen3:4b` (the
+  phone's parse and chat default) and `qwen2.5:1.5b` (fast fallback) by
+  default, with a 6 GiB free-space guard. `quintacle-phone-env.sh` sets
+  `QUINTACLE_LOCAL_PARSE_MODEL=qwen3:4b`; the desktop default stays
+  `qwen3:8b`. The APK's chat picker defaults to `local:qwen3:4b`
+  (`next.config.ts` bakes `NEXT_PUBLIC_DEFAULT_LOCAL_MODEL` in the Capacitor
+  build only).
+- **`scripts/termux/setup-perception.sh [tflite-dir]`**: Tier 2 on the
+  phone (object tags + face detect/embed). Termux main ships a bionic
+  **`python-tflite-runtime` (2.21.0)**, which the 2026-10-15 tier-2 README
+  said didn't exist. `backend_tflite.py` now falls back to `tflite_runtime`
+  when `ai_edge_litert` is absent (same API), so stock Termux runs the lane
+  with no proot. The script `pkg install`s numpy/Pillow/tflite-runtime and
+  pip-installs `core/requirements-phone-perception.txt`. It then checks that
+  the three `*_dynamic_range_quant.tflite` models are in
+  `$QUINTACLE_DATA_DIR/perception/models/tflite/`. The `migrate-export.sh`
+  tarball already carries them, along with face enrollments; a folder path
+  argument copies them from elsewhere. Finally it smoke-imports the runtime.
+  The env profile sets `QUINTACLE_PERCEPTION_BACKEND=tflite` +
+  `QUINTACLE_TFLITE_VARIANT=dynamic_range_quant`. If either the runtime or
+  the models are missing, `perceive_photo()` returns None and drops keep
+  working.
+- **`scripts/termux/setup-claude-max.sh`** (optional, **untested**):
+  proot-distro Ubuntu, Claude Code's native installer inside it, and a
+  `$PREFIX/bin/claude` wrapper (`proot-distro login ubuntu --
+  /root/.local/bin/claude "$@"`), so `max_backend.available()` finds it with
+  no code change. You log in once interactively (`claude`, then `/login`).
+  Any failure falls back to the API key; `--remove` drops the wrapper.
+- **On-phone photo descriptions (optional)**: Ollama exists in Termux now,
+  so the Tier 3 VLM can also run through it. The client's default model is
+  `qwen2.5vl:3b` (`local_vlm/ollama.py`), and `QUINTACLE_VISION=auto` is
+  already set. Run
+  `bash phone/tier1-local-llm/install-ollama-termux.sh --model qwen2.5vl:3b`
+  (~3.2 GB; RAM is tight next to qwen3:4b, see phone/tier3-vlm/README.md). It
+  is not pulled by default.
+- `setup.sh`'s opencv warning is corrected: `opencv-python` isn't in Termux
+  main as of 2026-11-05, and missing cv2 only disables video-frame captioning.
+
+Ordered first-time playbook (in Termux, repo at `~/quintacle`):
+
+```
+pkg install -y git && git clone <your remote> ~/quintacle && cd ~/quintacle
+git checkout redone-UI
+bash scripts/termux/setup.sh
+cp core/.env.example core/.env && nano core/.env        # ANTHROPIC_API_KEY
+termux-setup-storage                                    # once, grants ~/storage/downloads
+bash scripts/termux/migrate-import.sh ~/storage/downloads/quintacle-data-*.tar.gz
+bash phone/tier1-local-llm/install-ollama-termux.sh     # qwen3:4b + qwen2.5:1.5b
+bash scripts/termux/setup-perception.sh
+bash scripts/termux/install-boot-autostart.sh           # + the manual Termux:Boot steps
+bash scripts/termux/update.sh                           # starts/restarts everything, waits for :8000
+bash scripts/termux/setup-claude-max.sh                 # optional, untested; then: claude → /login
+```
+
+After that, `bash scripts/termux/update.sh` is the only command an update needs.

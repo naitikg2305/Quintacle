@@ -10,7 +10,8 @@
 # Usage:
 #   bash phone/tier1-local-llm/install-ollama-termux.sh
 #       install ollama via pkg, disk-space check, start the daemon,
-#       pull the default model (qwen2.5:1.5b, ~1 GB)
+#       pull the default models: qwen3:4b (~2.5 GB, the phone's parse +
+#       chat default since 2026-11-05) and qwen2.5:1.5b (~1 GB, fast fallback)
 #   bash phone/tier1-local-llm/install-ollama-termux.sh --model llama3.2:1b
 #       smaller/faster model (~0.8 GB); --model is repeatable
 #   bash phone/tier1-local-llm/install-ollama-termux.sh --model qwen3:4b
@@ -46,11 +47,11 @@ SCRIPT_PATH="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 LOG_DIR="$HOME/.quintacle-logs"   # same log home as scripts/termux/boot-autostart.sh
 
 OLLAMA_URL="http://127.0.0.1:11434"
-DEFAULT_MODEL="qwen2.5:1.5b"
+DEFAULT_MODELS=("qwen3:4b" "qwen2.5:1.5b")
 # Models land under ~/.ollama; the pull also needs scratch headroom, so ask
-# for 4 GiB free to cover the default ~1 GB model (or ~2.5 GB for qwen3:4b)
-# comfortably. Override with --skip-disk-check if you know better.
-MIN_FREE_KB=$((4 * 1024 * 1024))
+# for 6 GiB free to cover the default pair (~3.5 GB) comfortably. Override
+# with --skip-disk-check if you know better.
+MIN_FREE_KB=$((6 * 1024 * 1024))
 
 MODELS=()
 SERVE_ONLY=0
@@ -69,7 +70,7 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     -h|--help)
-      sed -n '2,39p' "$SCRIPT_PATH"   # print the header comment as help
+      sed -n '2,40p' "$SCRIPT_PATH"   # print the header comment as help
       exit 0
       ;;
     *)
@@ -80,7 +81,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ ${#MODELS[@]} -eq 0 ]; then
-  MODELS=("$DEFAULT_MODEL")
+  MODELS=("${DEFAULT_MODELS[@]}")
 fi
 
 if [ -z "${PREFIX:-}" ] || [ ! -d "${PREFIX:-/nonexistent}" ]; then
@@ -106,6 +107,13 @@ serve_loop() {
   fi
   echo "Starting ollama serve on $OLLAMA_URL with restart-on-crash ..."
   while true; do
+    # Another serve loop (boot-ollama, start-backend.sh's auto-start, a
+    # manual run) already owns the port: idle instead of crash-looping on
+    # "address already in use".
+    if curl -sf --max-time 2 "$OLLAMA_URL/api/version" >/dev/null 2>&1; then
+      sleep 30
+      continue
+    fi
     ollama serve
     EXIT_CODE=$?
     echo "$(date -Iseconds) ollama serve exited with code $EXIT_CODE — restarting in 5s" >&2
@@ -117,7 +125,7 @@ if [ "$SERVE_ONLY" = 1 ]; then
   serve_loop   # never returns
 fi
 
-echo "== 1/4: disk-space check (models are ~1-3 GB) =="
+echo "== 1/4: disk-space check (default models are ~3.5 GB) =="
 # Models are stored under ~/.ollama, so measure $HOME's filesystem.
 AVAIL_KB="$(df -Pk "$HOME" | awk 'NR==2 {print $4}')"
 if [ "$SKIP_DISK_CHECK" = 1 ]; then

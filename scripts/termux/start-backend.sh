@@ -64,6 +64,21 @@ else
   echo "!! 'pkg install termux-api' for this to work (see docs/termux-backend-setup.md)."
 fi
 
+# 2026-11-05: bring the on-device Ollama (local: chat models + local parse)
+# up alongside the backend, so the one Termux:Boot entry starts both. Only
+# when ollama is installed (phone/tier1-local-llm/install-ollama-termux.sh)
+# and not already answering; its --serve loop holds its own wake lock and
+# restart-on-crash, detached the same nohup+disown way boot-autostart.sh
+# launches this script. QUINTACLE_NO_OLLAMA=1 skips it.
+OLLAMA_SCRIPT="$REPO_ROOT/phone/tier1-local-llm/install-ollama-termux.sh"
+if [ -z "${QUINTACLE_NO_OLLAMA:-}" ] && command -v ollama >/dev/null 2>&1 \
+   && ! curl -sf --max-time 2 http://127.0.0.1:11434/api/version >/dev/null 2>&1; then
+  mkdir -p "$HOME/.quintacle-logs"
+  nohup bash "$OLLAMA_SCRIPT" --serve >> "$HOME/.quintacle-logs/ollama.log" 2>&1 &
+  disown
+  echo "Started ollama serve loop (log: ~/.quintacle-logs/ollama.log)"
+fi
+
 run_once() {
   exec uvicorn quintacle_core.api:app --host 127.0.0.1 --port "$PORT"
 }

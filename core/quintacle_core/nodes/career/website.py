@@ -449,13 +449,18 @@ def render_employment(repo: Path, content_dir: str, rel: str, hub: Hub, rec: Par
 
 
 def _git(repo: Path, *args: str, env: dict | None = None, input_text: str | None = None) -> str:
-    proc = subprocess.run(
-        ["git", "-C", str(repo), *args],
-        capture_output=True,
-        text=True,
-        input=input_text,
-        env={**os.environ, **(env or {})},
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            input=input_text,
+            env={**os.environ, **(env or {})},
+        )
+    except FileNotFoundError as e:
+        # 2026-11-05: e.g. a phone/Termux backend without `pkg install git` —
+        # a readable 409, never a 500.
+        raise WebsiteRepoError("git is not installed on this machine — Update website needs git and the PersonalWebsite checkout (desktop feature)") from e
     if proc.returncode != 0:
         raise WebsiteRepoError(f"git {' '.join(args[:2])} failed: {proc.stderr.strip() or proc.stdout.strip()}")
     return proc.stdout
@@ -469,6 +474,8 @@ def check_repo(repo: Path) -> None:
     try:
         _git(repo, "rev-parse", "--git-dir")
     except WebsiteRepoError as e:
+        if isinstance(e.__cause__, FileNotFoundError):
+            raise  # git itself is missing — keep that message
         raise WebsiteRepoError(f"{repo} is not a git repository") from e
     dirty = _git(repo, "status", "--porcelain").strip()
     if dirty:

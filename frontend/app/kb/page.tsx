@@ -15,6 +15,7 @@ import {
   createMealFromIngredients,
   createOutfit,
   createWardrobeItem,
+  DEFAULT_LOCAL_MODEL,
   createRoutine,
   generateImage,
   KBSuggestion,
@@ -90,8 +91,6 @@ type TargetFile = { folder: string; slug: string; title: string };
 const CUSTOM_BEDROCK = "__custom_bedrock__";
 // Same for "type your own local Ollama model" — sent as `local:<id>`.
 const CUSTOM_LOCAL = "__custom_local__";
-// The picker's default when no choice is stored yet — local-first.
-const DEFAULT_LOCAL_MODEL = "local:qwen3:8b";
 // Scratchpad text at/past this length auto-ticks "also save to journal" —
 // long text is almost always a day's narrative (same rule Drop had).
 const JOURNAL_AUTO_CHARS = 200;

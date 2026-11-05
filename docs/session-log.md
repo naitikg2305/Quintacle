@@ -15,6 +15,21 @@ GET/POST/DELETE. `visited` is computed in code with whole-word city matching.
 batch prompts got the new-subfolder and travel rules. 810 passed. Details:
 `docs/reference/endpoints.md` (2026-11-05 travel section).
 
+## 2026-11-05 — Phone build check + Termux update/local-model/perception scripts (worktree agent)
+
+The static export (`CAPACITOR_BUILD=true next build`) passes with every page
+from today (`/`, `/career`, `/travel`, `/kb/graph` 3D), so the export needed
+no fixes. `cap sync android` OK. The APK was not built: no JDK 21 / Android
+SDK 36 on this machine (exact commands in `docs/reference/android.md`).
+Phone defaults: `local:qwen3:4b` chat (baked via `next.config.ts` for the
+Capacitor build) and `QUINTACLE_LOCAL_PARSE_MODEL=qwen3:4b`.
+`backend_tflite.py` falls back to Termux's `python-tflite-runtime`, so
+perception runs in stock Termux. `career/website.py`: missing git gives a
+clean 409. New `scripts/termux/{update,setup-perception,setup-claude-max}.sh`;
+`start-backend.sh` also starts Ollama. Suite: 807 passed full venv; phone sim
+(numpy/onnx/litert/cv2 blocked) green with 9 skipped. Playbook:
+`docs/termux-backend-setup.md` (2026-11-05). Nothing has run on a device.
+
 ## 2026-11-05 — Claude Max wired in as the cloud tier (main session)
 
 Owner asked to use the Max subscription "everywhere" on the computer, with the phone

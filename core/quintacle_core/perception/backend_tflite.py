@@ -17,7 +17,9 @@ tflite. All preprocessing, decode, NMS, alignment and embedding code runs
 unchanged — which is the point: parity bugs can only come from the converted
 weights, never from a second copy of the pipeline.
 
-Runtime library: ai-edge-litert (Google's maintained LiteRT Python package).
+Runtime library: ai-edge-litert (Google's maintained LiteRT Python package),
+falling back to tflite_runtime (2026-11-05: Termux main ships a bionic build,
+`pkg install python-tflite-runtime`, so stock Termux needs no proot).
 Chosen over the abandoned tflite-runtime because ai-edge-litert ships current
 wheels for cp310-cp314 including manylinux aarch64 (tflite-runtime stopped at
 cp311/TF2.14). On-device honesty: manylinux wheels do NOT install in stock
@@ -97,6 +99,19 @@ def model_path(onnx_name: str) -> Path:
     return tflite_models_dir() / f"{stem}_{variant()}.tflite"
 
 
+def _interpreter_module():
+    """The LiteRT interpreter module: ai-edge-litert first (desktop / glibc
+    aarch64), else tflite_runtime — Termux ships a bionic-native build of it
+    as `pkg install python-tflite-runtime` (2026-11-05), the only LiteRT that
+    installs in stock Termux. Both expose the same Interpreter/load_delegate
+    API. Raises ImportError when neither is installed."""
+    try:
+        from ai_edge_litert import interpreter
+    except ImportError:
+        from tflite_runtime import interpreter  # type: ignore[no-redef]
+    return interpreter
+
+
 def available() -> bool:
     """True when the LiteRT stack can actually serve perceive_photo: deps
     importable AND all three converted models present for the active variant.
@@ -104,7 +119,8 @@ def available() -> bool:
     builds them.)"""
     try:
         import numpy  # noqa: F401
-        from ai_edge_litert.interpreter import Interpreter  # noqa: F401
+
+        _interpreter_module()
     except ImportError:
         return False
     return all(model_path(m).is_file() for m in (YOLO_MODEL, FACE_DETECT_MODEL, FACE_EMBED_MODEL))
@@ -125,9 +141,7 @@ def _load_delegates() -> list:
         exc = FileNotFoundError(spec)
     else:
         try:
-            from ai_edge_litert.interpreter import load_delegate
-
-            return [load_delegate(spec)]
+            return [_interpreter_module().load_delegate(spec)]
         except Exception as load_exc:  # noqa: BLE001 — delegate failure means CPU, never a crash
             exc = load_exc
     if not _warned_delegate:
@@ -166,8 +180,8 @@ class _LiteRTSession:
 
     def __init__(self, onnx_name: str):
         import numpy as np
-        from ai_edge_litert.interpreter import Interpreter
 
+        Interpreter = _interpreter_module().Interpreter
         self._np = np
         path = model_path(onnx_name)
         if not path.is_file():
