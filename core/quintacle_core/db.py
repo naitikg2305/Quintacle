@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 
 SCHEMA = """
@@ -255,7 +256,90 @@ _MIGRATIONS = [
 ]
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
+class _Rows:
+    """A fully-read result standing in for a sqlite3.Cursor: rows were
+    fetched while the lock was held, so iterating/fetching later can't race
+    another thread's statement on the shared connection."""
+
+    def __init__(self, cur: sqlite3.Cursor):
+        self._rows = cur.fetchall() if cur.description is not None else []
+        self._i = 0
+        self.lastrowid = cur.lastrowid
+        self.rowcount = cur.rowcount
+        self.description = cur.description
+
+    def fetchone(self):
+        if self._i >= len(self._rows):
+            return None
+        row = self._rows[self._i]
+        self._i += 1
+        return row
+
+    def fetchall(self):
+        rest = self._rows[self._i:]
+        self._i = len(self._rows)
+        return rest
+
+    def fetchmany(self, size: int = 1):
+        chunk = self._rows[self._i:self._i + size]
+        self._i += len(chunk)
+        return chunk
+
+    def __iter__(self):
+        while (row := self.fetchone()) is not None:
+            yield row
+
+
+class LockedConnection:
+    """2026-11-05 fix: ONE sqlite3 connection is shared by every FastAPI
+    worker thread (check_same_thread=False). Concurrent requests (the
+    dashboard fires many at once) interleaved statements on it and failed
+    with `sqlite3.InterfaceError: bad parameter or other API misuse` or
+    phantom "no habit with id N". Every statement now runs under one lock
+    and returns already-fetched rows. Statements are milliseconds, so the
+    serialization costs nothing noticeable; slow model calls never hold it."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+        self._lock = threading.RLock()
+
+    def execute(self, sql, params=()):
+        with self._lock:
+            return _Rows(self._conn.execute(sql, params))
+
+    def executemany(self, sql, seq):
+        with self._lock:
+            return _Rows(self._conn.executemany(sql, seq))
+
+    def executescript(self, script):
+        with self._lock:
+            return _Rows(self._conn.executescript(script))
+
+    def commit(self):
+        with self._lock:
+            self._conn.commit()
+
+    def rollback(self):
+        with self._lock:
+            self._conn.rollback()
+
+    def close(self):
+        with self._lock:
+            self._conn.close()
+
+    @property
+    def row_factory(self):
+        return self._conn.row_factory
+
+    @row_factory.setter
+    def row_factory(self, value):
+        self._conn.row_factory = value
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def connect(db_path: Path) -> "LockedConnection":
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -268,4 +352,4 @@ def connect(db_path: Path) -> sqlite3.Connection:
             if "duplicate column" not in str(e):
                 raise
     conn.commit()
-    return conn
+    return LockedConnection(conn)

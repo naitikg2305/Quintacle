@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from ... import clock
 from ...graph_capture import safe_journal_graph_links
@@ -186,6 +186,29 @@ class BodyStatCreate(BaseModel):
     unit: str = ""
 
 
+
+# 2026-11-05 fix: POST/PATCH /logs/habits stored whatever target_period it
+# was given ("weekly"), and every later progress read for that habit failed —
+# the quota engine only knows day | week | 2weeks | month. Normalize the
+# obvious spellings; reject anything else with a clear 422 at write time.
+_PERIOD_ALIASES = {
+    "day": "day", "daily": "day", "per day": "day", "a day": "day",
+    "week": "week", "weekly": "week", "per week": "week", "a week": "week", "wk": "week",
+    "2weeks": "2weeks", "2 weeks": "2weeks", "two weeks": "2weeks", "biweekly": "2weeks",
+    "bi-weekly": "2weeks", "fortnight": "2weeks", "fortnightly": "2weeks", "2wk": "2weeks",
+    "month": "month", "monthly": "month", "per month": "month", "a month": "month",
+}
+
+
+def _normalize_period(value):
+    if value is None:
+        return value
+    key = " ".join(str(value).strip().lower().replace("_", " ").split())
+    if key in _PERIOD_ALIASES:
+        return _PERIOD_ALIASES[key]
+    raise ValueError("target_period must be one of: day, week, 2weeks, month")
+
+
 class HabitCreate(BaseModel):
     name: str
     target_amount: float
@@ -198,6 +221,8 @@ class HabitCreate(BaseModel):
     # expense kinds and match_category holds comma-separated whole-word text
     # terms (merchant/category/notes) — see repository.spend_for_habit_between.
     match_kind: str | None = None
+
+    _period = field_validator("target_period")(classmethod(lambda cls, v: _normalize_period(v)))
 
 
 @router.post("/meals")
@@ -486,6 +511,8 @@ class HabitUpdate(BaseModel):
     metric: str | None = None
     direction: str | None = None
     match_kind: str | None = None
+
+    _period = field_validator("target_period")(classmethod(lambda cls, v: _normalize_period(v)))
 
 
 @router.patch("/habits/{habit_id}")

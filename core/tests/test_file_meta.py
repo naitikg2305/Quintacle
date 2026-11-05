@@ -431,3 +431,21 @@ def test_backfill_dry_run_then_apply(client, tmp_path):
     assert on_day_targets("note:docs/old-doc") == ["journal:2026-05-12"]
     assert "note:docs/old-doc" in hit_ids("Naitik")
     assert client.post("/kb/files/backfill-meta?dry_run=false").json()["count"] == 0
+
+
+# --- 2026-11-05: text files are READ at the drop step ------------------------
+
+
+def test_markdown_drop_is_read_not_no_description():
+    from quintacle_core.nodes.kb.drop import describe_drop
+
+    text = "# Austria plan\n\nVienna 3 nights, then Salzburg."
+    out = describe_drop("chat-answer.md", text.encode())
+    assert "no description" not in out and "Vienna 3 nights" in out
+
+
+def test_text_drop_keeps_user_words_and_caps_huge_files():
+    from quintacle_core.nodes.kb.drop import describe_drop
+
+    out = describe_drop("big.txt", b"x" * 50_000, "my notes")
+    assert out.startswith("my notes") and "truncated" in out and len(out) < 25_000

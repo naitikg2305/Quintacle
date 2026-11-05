@@ -295,6 +295,24 @@ def extract_photo_location(data: bytes) -> dict | None:
         return None
 
 
+# Plain-text formats are READ, not described (2026-11-05 fix): a chat answer
+# turned into a .md file and then "Sort with AI" used to reach the sorter as
+# "Dropped file: x.md (no description given)" — no branch handled text at all.
+# Decoded as UTF-8 (lossy), capped so a huge log can't blow the prompt.
+_TEXT_EXT = {
+    "md", "markdown", "txt", "text", "csv", "tsv", "json", "jsonl", "yaml", "yml", "toml", "ini", "cfg",
+    "html", "htm", "xml", "log", "rst", "tex", "py", "js", "ts", "tsx", "jsx", "sh", "sql", "css",
+}
+_TEXT_CAP = 20_000
+
+
+def _read_text(data: bytes) -> str:
+    text = data.decode("utf-8", errors="replace").strip()
+    if len(text) > _TEXT_CAP:
+        text = text[:_TEXT_CAP] + f"\n\n[…truncated — {len(data):,} bytes total]"
+    return text
+
+
 def describe_drop(
     filename: str,
     data: bytes,
@@ -323,6 +341,8 @@ def describe_drop(
         extracted = _describe_docx(data)
     elif ext in _VIDEO_EXT:
         extracted = _describe_video(data)
+    elif ext in _TEXT_EXT:
+        extracted = _read_text(data)
     elif ext in _NO_EXTRACTION:
         extracted = ""  # e.g. STL geometry — nothing to read, user's words carry it
 
