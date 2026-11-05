@@ -67,6 +67,40 @@ file). Add it when merging.
 Reference: `docs/reference/frontend.md` and `docs/reference/endpoints.md`
 (2026-11-05 Business Ideas sections).
 
+## 2026-11-05 — Career page (website-style timeline) + updaters moved to /career/updates (worktree agent)
+
+The owner asked for a "careerish page with minfy/tech minfy/sales … and
+other contracts", very similar to the PersonalWebsite's experience page.
+`/career` is now that page. The record/website updaters moved unchanged
+to `/career/updates`, and the new page links to them ("Career updates →").
+
+- Backend `core/quintacle_core/nodes/career/timeline.py` (zero model
+  calls). `GET /career/timeline` returns every `Career/**` folder hub as a
+  tree: orgs with nested roles (`Career/Minfy/Engineering`,
+  `Career/Minfy/Sales`), contracts (`Career/Contracts/<Client>`) and
+  education. Each hub carries its date range parsed in code, a `present`
+  flag, fields and bullets, work-log day count + last 5 dates + a
+  12-month sparkline, the mapped master-record entry's bullets, and the
+  files in its folder. `POST /career/hubs` creates an org, role or
+  contract hub. `PUT /career/hubs/{folder}/fields` edits one (no body
+  change, no restamp). The existing updater endpoints are untouched, and
+  depth-3 role/contract hubs stay out of the updaters' alias table.
+- A role counts a work-log day only when that log also links its parent
+  org. The importer links every Career note whose title appears in a
+  log, so "Sales" would otherwise match any log that says "sales".
+- Frontend: `app/career/page.tsx`, `components/careerpage/`,
+  `lib/careerPageApi.ts`. Detail view is `?hub=<folder>`.
+  `lib/apps.ts` / `AppShell.tsx` were not touched; the drawer entry is
+  for the main session to repoint.
+- Tests `core/tests/test_career_timeline.py` (11): 961 passed. tsc 0,
+  eslint clean on touched files, and `CAPACITOR_BUILD=true npx next build`
+  succeeds. No screenshot pass was done (no servers bound).
+
+Open: the owner's real Minfy hub is `career/minfy/minfy.md`. Its roles
+need creating (Add role on Minfy's detail) and dates/bullets filling in.
+Reference: `docs/reference/career-updates.md` + `frontend.md` (2026-11-05
+sections).
+
 ## 2026-11-05 — Dashboard-first nav + ⊞ Apps drawer + widget dashboard (worktree agent)
 
 This follows the owner's design: "the dashboard should be the landing

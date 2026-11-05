@@ -291,3 +291,36 @@ integrator adds the drawer entry.
   dropping files with Sort with AI files them into `Business Ideas/<Idea>`.
 - **Client**: `lib/businessApi.ts`. It is kept separate from `lib/api.ts`
   and reuses `API_BASE` and `kbAssetUrl`.
+
+## 2026-11-05 — Career page at `/career`; updaters moved to `/career/updates`
+
+- **Route move.** The "Career updates" page (record + website updaters)
+  moved unchanged from `app/career/page.tsx` to
+  `app/career/updates/page.tsx`. Nothing in the frontend linked to `/career`
+  except the `lib/apps.ts` drawer entry, which the main session repoints
+  (`Career` → `/career`, `Career updates` → `/career/updates`).
+- **Career page** (`app/career/page.tsx`). It copies the PersonalWebsite's
+  experience page (`app/experience`, `WorkExperienceSection`,
+  `CareerTimeline`) in the HUD theme: a `$ git log --oneline career/`
+  prompt chip, then a vertical timeline line with glowing dots (green on
+  current entries), newest first. Each hub is a dark panel with the org
+  name, "dates • location" in italics, a `present` badge, and its
+  positions as "Role — dates" with `·` bullets (roles nested under the
+  org, e.g. Minfy → Engineering, Sales). Current entries open expanded;
+  the chevron toggles the rest. Each card shows a 12-month work-log
+  sparkline, the log-day count with the last date, and a file count.
+  Filter chips (`Segmented`): All · Employment · Contracts · Education.
+  "Add role / contract" opens the create form; "Career updates →" links
+  to the updaters.
+- **Detail** is `/career?hub=<folder>` (a query param, so it works with
+  static export; wrapped in `Suspense` for `useSearchParams`). It shows the
+  full fields and bullets, Edit fields, Add role (orgs), the roles list,
+  the last 5 work-log days (each links to `/kb/browse` on that log), files
+  in the folder (notes → Browse, raw/`assets/` files → `kbAssetUrl`,
+  subfolders → Browse), and the mapped master-record entry's bullets, or
+  its candidates when none is mapped.
+- Code: `components/careerpage/{CareerTimeline,HubDetail,HubForm,Sparkline}.tsx`,
+  client `lib/careerPageApi.ts` (kept out of `lib/api.ts`). Backend +
+  semantics: [career-updates.md](career-updates.md) (2026-11-05 section).
+  Layout uses `min-w-0`/`break-words`/`flex-wrap` throughout and is
+  built to work at 390px.

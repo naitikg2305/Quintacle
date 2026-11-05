@@ -6,6 +6,9 @@ Derived from code on 2026-11-05 (worktree agent, branch off `redone-UI`
 `validate.py`, `website.py`, `state.py`); page `frontend/app/career/page.tsx`
 ("Career updates", Productivity group). Tests:
 `core/tests/test_career_updates.py`. Endpoint rows: [endpoints.md](endpoints.md).
+*(2026-11-05 correction: that page now lives at `/career/updates`
+(`frontend/app/career/updates/page.tsx`); `/career` is the new Career
+page. See the dated section at the end.)*
 
 Both updaters run only when the owner clicks, and both are
 propose → review → Save: the `run` endpoints never write.
@@ -169,3 +172,39 @@ Zero approved items = just move the watermark ("Finish run").
   `summaryPoints` without positions). New file: `title, order, company
   (public_name), dates, location, slug, summaryPoints`. Note: re-dumping the
   YAML can change quoting style on the branch (visible in the diff).
+
+## 2026-11-05 — route move + the Career page (status note)
+
+The updaters page moved from `/career` to **`/career/updates`**
+(`frontend/app/career/updates/page.tsx`, content unchanged). `/career` is
+now the **Career page** (`frontend/app/career/page.tsx`,
+`components/careerpage/`, client `lib/careerPageApi.ts`), with a
+"Career updates →" link back here. Backend `nodes/career/timeline.py`;
+routes `GET /career/timeline`, `POST /career/hubs`,
+`PUT /career/hubs/{folder}/fields` (rows in [endpoints.md](endpoints.md));
+tests `core/tests/test_career_timeline.py`. The updater endpoints are
+unchanged.
+
+- **Timeline hubs** are folder hubs at ANY depth under `career/`
+  (`career/minfy/minfy.md`, `career/minfy/sales/sales.md`,
+  `career/contracts/acme/acme.md`). That is wider than `hubs.py`'s updater
+  rule (depth ≤ 2), which is deliberately untouched, so role and contract
+  hubs do NOT enter the updaters' alias table. Root-level `career/*.md`
+  notes and the record note are not timeline hubs.
+- **Fields**: `type` (employer | role | contract | education | other;
+  absent → role when nested under a hub, contract under
+  `career/contracts/`, else employer), `role`/`title`, `start`, `end`
+  ("present", or absent with a start = ongoing), `location`, `summary`,
+  `bullets`, `order`, plus the existing `public`/`public_name`/
+  `record_entry`. Dates parse in code (`2026-01`, `Jan 2026`,
+  `2026-01-15`, `2026`). An org with no dates spans its roles'. Sort:
+  present first, then latest end, then latest start.
+- **Work-log days**: a `Daily Log/Work Logs` note counts for a hub when it
+  links it (frontmatter `links` title or a graph edge). Private logs never
+  count. A **role counts a day only when the log also links its parent
+  org**. The work-log importer links every `Career/**` note whose title
+  appears in the log, so a role hub titled "Sales" would otherwise collect
+  every log that says "sales". Org totals are the union with their roles.
+- **Record entry**: `map_hub`'s deterministic mapping (an explicit
+  `record_entry` field, or a unique title match). Bullets are the entry's
+  phrasing/detail bullets with tags stripped; otherwise candidates are listed.
