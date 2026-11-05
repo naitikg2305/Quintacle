@@ -21,6 +21,21 @@ machine. `/kb` has a "Web: auto/on/off" chip next to Mode. Tests:
 `core/tests/test_web_search.py` (28, no network). 919 passed. Details:
 `docs/reference/chat-context.md` (2026-11-05 web lane).
 
+## 2026-11-05 — Chat shows the owner's own photos inline (worktree agent)
+
+Before this, "show me photos from Vienna" got Wikipedia pictures at best.
+New `nodes/kb/my_photos.py` changes that. Photo notes among the retrieval
+hits and neighbors (including place-hierarchy members) get `[photo:Pn]`
+handles in the context, plus a one-line rule: write `{{myphoto:Pn}}` to show
+one. After the reply, code turns each tag into a `/kb/asset?…&open=<slug>`
+markdown image and drops unknown handles. If the user asked for photos and
+the model showed none, code appends a gallery of up to 6 query-ranked
+matches. Handles only register through the request's `PrivacyGate`, so cloud
+never sees a private photo. `ChatLog.tsx` renders these as a thumbnail grid,
+and a click opens the note in Browse. The `chat.py` edits are small (one
+kwarg threaded through, and the post-pass). 896 passed, tsc 0. Details:
+`docs/reference/chat-context.md` (2026-11-05 own photos).
+
 ## 2026-11-05 — Place hierarchy in the graph (worktree agent)
 
 Owner: "link everything on that graph so weak AIs can answer stuff". New

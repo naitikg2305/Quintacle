@@ -240,3 +240,44 @@ and fetches and the model only reads (`core/quintacle_core/web_search.py`).
 - **UI:** a "Web: auto / on / off" chip next to the Mode chip on `/kb`.
   Its tooltip notes that cloud models search natively. AssistPanel sends
   auto.
+
+## 2026-11-05 — the owner's own photos inline (code-derived)
+
+`core/quintacle_core/nodes/kb/my_photos.py`, wired from `chat.py` in three
+small places (`_kb_context(photos=)`, `_build_context(photos=)`, and the
+reply post-pass in `run_kb_chat`).
+
+- **Handles.** `run_kb_chat` makes one `PhotoRegistry` per request. After
+  `_kb_context` assembles its sections, `PhotoRegistry.collect` walks the
+  hits and their neighbors in retrieval order. That includes the place
+  hierarchy's `located_in` members, so "photos from Europe" reaches photos in
+  Vienna. A `note:` node counts as a photo when its frontmatter
+  `assets`/`asset`/`asset2` or a body `[asset](…)` line names an existing
+  jpg/jpeg/png/webp/gif/avif. Each photo gets `P1`, `P2`… (at most 24 per
+  turn). One block, `## Your photos in this context`, lists
+  `[photo:Pn] title · City, Country · YYYY-MM-DD · first prose line (id: …)`.
+  The block carries the rule, so every provider gets it, and only when a
+  photo is present: write `{{myphoto:Pn}}` on its own line to show it.
+- **Rendering.** `render_my_photos` runs before `_resolve_photo_tags` and
+  `validate_reply_links`. Each tag becomes
+  `![City, Country · date](/kb/asset?folder=…&path=…&open=<slug>)`, and a
+  handle that isn't in the map is dropped silently. `validate_reply_links`
+  already checks that `/kb/asset` route exists. `open` is ignored by the
+  backend, and ChatLog uses it for the Browse link.
+- **Fallback for weak models.** If the user's message asks for photos
+  (photo/pic/picture/image/snap/selfie) and the reply showed none, code
+  appends `Your photos:` plus up to 6 handles. They are ranked by how many of
+  the query's content words appear in each photo's line, and ties keep
+  retrieval order.
+- **Privacy.** Every node passes through the request's `PrivacyGate.admit`
+  before it registers. For cloud, retrieval's exclude hook has already
+  dropped private nodes, and the gate refuses them again. So a cloud
+  context, and therefore a cloud reply, never holds a private photo. Local
+  requests may show them, and those photos land in `gate.used` like any
+  other private note.
+- **Frontend.** `ChatLog.tsx` renders `MarkdownImage` and
+  `MarkdownParagraph`. A `/kb/asset?` image becomes a square tile with its
+  src resolved against `API_BASE`; clicking it opens the note in Browse. A
+  paragraph made only of such tiles becomes a 2-column grid (3 columns from
+  `sm`). Transcripts keep the markdown as-is.
+- Tests: `core/tests/test_chat_my_photos.py`.

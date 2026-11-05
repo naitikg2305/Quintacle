@@ -89,6 +89,60 @@ function MarkdownLink({ href, children }: { href?: string; children?: ReactNode 
   return <span>{children}</span>;
 }
 
+// --- the owner's own photos inline (2026-11-05, core my_photos.py) ---------
+// The backend turns {{myphoto:Pn}} into `![alt](/kb/asset?folder=…&path=…&open=<slug>)`
+// (and appends a gallery when a photo request got none). Those render as
+// tiles: src resolved against API_BASE (Capacitor isn't same-origin), click →
+// the photo note in Browse. A paragraph made only of such images becomes a
+// responsive thumbnail grid. Span-only markup so a lone tile inside a text
+// paragraph is still valid DOM.
+const MY_PHOTO_PREFIX = "/kb/asset?";
+
+function isMyPhotoSrc(src: unknown): src is string {
+  return typeof src === "string" && src.startsWith(MY_PHOTO_PREFIX);
+}
+
+function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
+  if (!isMyPhotoSrc(src)) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={typeof src === "string" ? src : undefined} alt={alt ?? ""} />;
+  }
+  const q = new URLSearchParams(src.slice(MY_PHOTO_PREFIX.length));
+  const folder = q.get("folder") ?? "";
+  const slug = q.get("open");
+  const img = (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={`${API_BASE}${src}`} alt={alt ?? ""} loading="lazy" className="m-0! block aspect-square w-full rounded-md object-cover" />
+  );
+  return (
+    <span className="not-prose inline-block w-full max-w-48 align-top">
+      {slug ? (
+        <Link href={`/kb/browse?path=${encodeURIComponent(folder)}&open=${encodeURIComponent(slug)}`} title={alt}>
+          {img}
+        </Link>
+      ) : (
+        img
+      )}
+      {alt && <span className="mt-0.5 block truncate text-[11px] text-muted">{alt}</span>}
+    </span>
+  );
+}
+
+type HastChild = { type: string; tagName?: string; value?: string; properties?: Record<string, unknown> };
+
+function MarkdownParagraph({ node, children }: { node?: { children?: HastChild[] }; children?: ReactNode }) {
+  const kids = node?.children ?? [];
+  const imgs = kids.filter((c) => c.type === "element");
+  const onlyPhotos =
+    imgs.length > 0 &&
+    imgs.every((c) => c.tagName === "img" && isMyPhotoSrc(c.properties?.src)) &&
+    kids.every((c) => c.type === "element" || (c.type === "text" && !(c.value ?? "").trim()));
+  if (onlyPhotos) {
+    return <div className="not-prose my-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3">{children}</div>;
+  }
+  return <p>{children}</p>;
+}
+
 // --- chat TEXT → a file in the scratchpad tray (next-wave §10) --------------
 // Images/PDFs got this bridge in §9; this is the same funnel for drafted
 // text: the message becomes a real File among the pending drop attachments
@@ -250,7 +304,7 @@ export default function ChatLog({
               ))}
               {m.role === "assistant" ? (
                 <div className="prose prose-sm dark:prose-invert max-w-none prose-img:rounded-lg prose-a:text-accent">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={{ a: MarkdownLink }}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={{ a: MarkdownLink, img: MarkdownImage, p: MarkdownParagraph }}>
                     {text}
                   </ReactMarkdown>
                 </div>
