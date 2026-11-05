@@ -132,6 +132,36 @@ def compute_positions(transactions: list[dict], latest_price_by_symbol: dict[str
     for key in ("cost_basis", "market_value", "unrealized_pnl", "realized_pnl", "dividends"):
         totals[key] = round(totals[key], 2)
 
+    # Percentages (2026-11-05, for the simplified Investments page) — computed
+    # here so the page renders finished numbers, never its own valuation math.
+    # Unrealized % is over the cost basis of the PRICED open positions only
+    # (an unpriced lot has no unrealized figure to compare against).
+    # Allocation is by market value when every open position is priced,
+    # otherwise by cost basis for all (mixing the two would be meaningless);
+    # `allocation_basis` says which.
+    priced_cost = 0.0
+    for p in positions:
+        p["unrealized_pnl_pct"] = (
+            round(100 * p["unrealized_pnl"] / p["cost_basis"], 2)
+            if p["unrealized_pnl"] is not None and p["cost_basis"] > 1e-9
+            else None
+        )
+        if p["market_value"] is not None:
+            priced_cost += p["cost_basis"]
+    totals["priced_cost_basis"] = round(priced_cost, 2)
+    totals["unrealized_pnl_pct"] = (
+        round(100 * totals["unrealized_pnl"] / priced_cost, 2) if priced_cost > 1e-9 else None
+    )
+    open_positions = [p for p in positions if p["qty"] > 1e-9]
+    by_value = bool(open_positions) and all(p["market_value"] is not None for p in open_positions)
+    totals["allocation_basis"] = "market_value" if by_value else "cost_basis"
+    weight_key = "market_value" if by_value else "cost_basis"
+    denom = sum(p[weight_key] or 0 for p in open_positions)
+    for p in positions:
+        p["allocation_pct"] = (
+            round(100 * (p[weight_key] or 0) / denom, 2) if p["qty"] > 1e-9 and denom > 1e-9 else None
+        )
+
     # Open positions first (largest cost basis down), then closed ones, A→Z within each.
     positions.sort(key=lambda p: (p["qty"] <= 1e-9, -(p["cost_basis"] or 0), p["symbol"]))
     return {"positions": positions, "totals": totals}

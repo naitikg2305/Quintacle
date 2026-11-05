@@ -316,3 +316,32 @@ def test_research_note_indexes(tmp_path, monkeypatch):
 
     hits = client.get("/retrieve", params={"q": "datacenter demand"}).json()["results"]
     assert any(h["id"] == note_id for h in hits)
+
+
+def test_percentages_and_allocation_are_computed_server_side():
+    rows = [
+        {"id": 1, "date": "2026-01-05", "action": "buy", "symbol": "AAPL", "qty": 10, "price": 100, "fees": 0},
+        {"id": 2, "date": "2026-01-06", "action": "buy", "symbol": "RIVN", "qty": 30, "price": 10, "fees": 0},
+    ]
+    both = compute_positions(
+        rows,
+        {
+            "AAPL": {"price": 150.0, "price_date": "2026-11-04", "source": "stooq"},
+            "RIVN": {"price": 10.0, "price_date": "2026-11-04", "source": "stooq"},
+        },
+    )
+    by = {p["symbol"]: p for p in both["positions"]}
+    assert by["AAPL"]["unrealized_pnl_pct"] == 50.0
+    assert by["RIVN"]["unrealized_pnl_pct"] == 0.0
+    assert both["totals"]["allocation_basis"] == "market_value"
+    assert by["AAPL"]["allocation_pct"] == round(100 * 1500 / 1800, 2)
+    assert both["totals"]["unrealized_pnl_pct"] == round(100 * 500 / 1300, 2)
+
+    # One unpriced -> allocation falls back to cost basis for everyone.
+    partial = compute_positions(rows, {"AAPL": {"price": 150.0, "price_date": "2026-11-04", "source": "stooq"}})
+    by = {p["symbol"]: p for p in partial["positions"]}
+    assert partial["totals"]["allocation_basis"] == "cost_basis"
+    assert by["AAPL"]["allocation_pct"] == round(100 * 1000 / 1300, 2)
+    assert by["RIVN"]["unrealized_pnl_pct"] is None
+    assert partial["totals"]["unrealized_pnl_pct"] == 50.0
+    assert partial["totals"]["priced_cost_basis"] == 1000

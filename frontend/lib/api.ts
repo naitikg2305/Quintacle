@@ -1003,6 +1003,8 @@ export type StockPosition = {
   price_source: string | null;
   market_value: number | null;
   unrealized_pnl: number | null;
+  unrealized_pnl_pct: number | null;
+  allocation_pct: number | null; // open positions only; basis in totals.allocation_basis
 };
 
 export type StockPositions = {
@@ -1015,6 +1017,9 @@ export type StockPositions = {
     dividends: number;
     priced_symbols: number;
     unpriced_symbols: number;
+    priced_cost_basis: number;
+    unrealized_pnl_pct: number | null;
+    allocation_basis: "market_value" | "cost_basis";
   };
   prices_as_of: string | null;
 };
@@ -1136,6 +1141,81 @@ export type DetectedSubscription = {
 
 export const getDetectedSubscriptions = () =>
   request<{ subscriptions: DetectedSubscription[]; monthly_burn: number }>("/finance/insights/subscriptions");
+
+// --- finance accounts: manually-recorded balances + net worth (2026-11-05) ---
+// Balance history is append-only; every total below is computed server-side
+// (nodes/finance/accounts.py), including the stock-ledger no-double-count rule.
+export const ACCOUNT_TYPE_LABELS: Record<string, string> = {
+  checking: "Checking",
+  savings: "Savings",
+  cash: "Cash",
+  brokerage: "Brokerage",
+  crypto: "Crypto",
+  "401k": "401(k)",
+  ira: "IRA",
+  roth_ira: "Roth IRA",
+  hsa: "HSA",
+  other_asset: "Other asset",
+  credit_card: "Credit card (owed)",
+  loan: "Loan (owed)",
+};
+
+export type AccountBucket = "liquid" | "investments" | "retirement" | "other" | "liabilities";
+
+export type BalanceSnapshot = { date: string; balance: number; note: string };
+
+export type FinanceAccount = {
+  slug: string;
+  name: string;
+  account_type: string;
+  institution: string;
+  notes: string;
+  balances: BalanceSnapshot[]; // oldest → newest
+  bucket: AccountBucket;
+  latest_balance: number | null;
+  latest_date: string | null;
+};
+
+export type AccountsSummary = {
+  accounts: FinanceAccount[];
+  buckets: Record<AccountBucket, number>;
+  stock_holdings_counted: number;
+  stock_holdings_at_cost: boolean;
+  stock_symbols_counted: string[];
+  stock_symbols_covered: string[];
+  investments_total: number;
+  assets: number;
+  liabilities: number;
+  net_worth: number;
+  as_of: string | null;
+  history: { date: string; net_worth: number }[];
+  account_types: Record<string, AccountBucket>;
+};
+
+export const getAccounts = () => request<AccountsSummary>("/finance/accounts");
+
+export const upsertAccount = (body: {
+  name: string;
+  account_type: string;
+  institution?: string;
+  notes?: string;
+  balance?: number;
+  as_of?: string;
+}) => request<{ slug: string }>("/finance/accounts", { method: "POST", body: JSON.stringify(body) });
+
+export const addAccountBalance = (slug: string, body: { balance: number; as_of?: string; note?: string }) =>
+  request<{ slug: string; snapshots: number }>(`/finance/accounts/${encodeURIComponent(slug)}/balance`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const deleteAccountBalance = (slug: string, index: number) =>
+  request<{ slug: string; snapshots: number }>(`/finance/accounts/${encodeURIComponent(slug)}/balance/${index}`, {
+    method: "DELETE",
+  });
+
+export const deleteAccount = (slug: string) =>
+  request<{ deleted: string }>(`/finance/accounts/${encodeURIComponent(slug)}`, { method: "DELETE" });
 
 // Deterministic re-parse of a dropped CSV/OFX statement — used by the review
 // card when the user corrects the column mapping. Never writes.

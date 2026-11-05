@@ -223,6 +223,17 @@ Chat / generation:
 | POST | `/investments` | `{name, symbol?, shares?, cost_basis?, account?, purchase_date?, notes?}` | Same upsert/merge contract for holdings | InvestmentStore |
 | GET | `/investments` | — | All holdings | InvestmentStore |
 
+> *Added 2026-11-05 (unified Finances page; see [finance.md](finance.md)):
+> 5 routes on `finance_router` — manually-recorded account balances.*
+
+| Method | Path | Input | Purpose | Store |
+|---|---|---|---|---|
+| GET | `/finance/accounts` | — | Every account + full balance history, bucket totals, net worth (incl. uncovered stock-ledger holdings), net-worth history | AccountStore + StocksRepository (read) |
+| POST | `/finance/accounts` | `{name, account_type, institution?, notes?, balance?, as_of?}` | Upsert descriptive fields by name; a supplied `balance` is APPENDED as a snapshot; 400 on unknown type | AccountStore |
+| POST | `/finance/accounts/{slug}/balance` | `{balance, as_of?, note?}` | Append one dated snapshot (never overwrites); 404 unknown account | AccountStore |
+| DELETE | `/finance/accounts/{slug}/balance/{index}` | — | Remove one snapshot (index into the date-sorted list) — the undo | AccountStore |
+| DELETE | `/finance/accounts/{slug}` | — | Delete the account file | AccountStore |
+
 ## Vault (`/vault`, `nodes/vault/api.py`) — 8
 
 Full semantics in [vault.md](vault.md).

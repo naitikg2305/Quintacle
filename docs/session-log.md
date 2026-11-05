@@ -133,6 +133,40 @@ rendered them black, so this needs a look in a real browser.
 The Apps-drawer entry is left for the main session. Reference:
 `docs/reference/frontend.md` (2026-11-05 Projects page).
 
+## 2026-11-05 — One Finances page: accounts + net worth, Stocks folded in (worktree agent)
+
+Owner asks, in order: "make the stocks page a simple investments page",
+then "finances + stocks whatever becomes Finances — with my budgets, my
+spend, my subscriptions" and a place to update "what I have in my 401k,
+what stocks I own, how much liquid I have". Built the second (it
+supersedes the first).
+
+- `/finance` → tabs Overview · Accounts · Investments · Spend & budgets ·
+  Subscriptions · Income (`?tab=`; static-export safe). Every old Finance
+  feature moved into a tab; the Stocks UI is the Investments tab with a
+  "Watchlist & hunches — coming soon" placeholder for the planned stocks
+  discusser. `/stocks` + `/investments` are client-side redirects.
+- New backend: `nodes/finance/accounts.py` — manual account balances
+  (checking … 401k/IRA/HSA … credit card/loan as liabilities), markdown
+  under `Organisation/Finance/Accounts/`, append-only dated snapshots
+  with an explicit per-snapshot delete as undo. `GET/POST
+  /finance/accounts`, `POST /finance/accounts/{slug}/balance`, `DELETE
+  …/balance/{index}`, `DELETE /finance/accounts/{slug}`. Net worth =
+  account balances − liabilities + stock positions not covered by a
+  recorded brokerage/retirement account of the same name (no double
+  counting; rule in docs/reference/finance.md).
+- `compute_positions` gained additive `unrealized_pnl_pct`,
+  `allocation_pct`, totals `unrealized_pnl_pct`/`priced_cost_basis`/
+  `allocation_basis`, so the page does no valuation math.
+- Verified: pytest 955 passed (+5 new: `test_finance_accounts.py`, one in
+  `test_stocks.py`); tsc 0; eslint clean on touched files (pre-existing
+  set-state-in-effect errors in `finance/cards` + `finance/investments`
+  untouched); `CAPACITOR_BUILD=true next build` OK; headless screenshots at
+  390px against a sandboxed backend (8101) / frontend (3101).
+- Open: main session points the drawer at `/finance` and drops Stocks
+  (`lib/apps.ts`); stocks discusser (news + hunches per ticker) is next;
+  `/stocks/research` UI isn't surfaced until then.
+
 ## 2026-11-05 — Dashboard-first nav + ⊞ Apps drawer + widget dashboard (worktree agent)
 
 This follows the owner's design: "the dashboard should be the landing
