@@ -464,7 +464,8 @@ def _graph_store():
 def link_note_places(store, folder_slug: str, slug: str, *, dry_run: bool = False, graph_store=None) -> list[dict]:
     """THE save-time hook for a KB note: photo `place` frontmatter → its
     city; a Fun/Travel/Planned note's `fields.destinations` → each city.
-    Re-syncs this note's located_in edges. Never raises (returns [])."""
+    Re-syncs this note's located_in edges, then (not dry_run) its
+    trip_photos `during_trip` edges. Never raises (returns [])."""
     try:
         gs = graph_store or _graph_store()
         path = store.entry_path(folder_slug, slug)
@@ -476,10 +477,16 @@ def link_note_places(store, folder_slug: str, slug: str, *, dry_run: bool = Fals
         ctx = _Ctx(store, gs, dry_run)
         out = _sync_source(ctx, note_id, _note_chains(ctx, folder_slug, meta))
         _reindex(ctx)
-        return out
     except Exception as exc:
         logger.warning("place linking failed for %s/%s: %s", folder_slug, slug, exc)
         return []
+    if not dry_run:
+        # 2026-11-05 (trip_photos.py): same save points — a photo joins the
+        # planned trip it was taken during; a plan pulls in its photos.
+        from .trip_photos import link_note_trip_photos
+
+        link_note_trip_photos(store, folder_slug, path.stem, graph_store=gs)
+    return out
 
 
 def link_experience_places(store, experience: dict, *, dry_run: bool = False, graph_store=None) -> list[dict]:

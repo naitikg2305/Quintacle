@@ -3,6 +3,22 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-05 — Trip ↔ photos (worktree agent)
+
+Photos taken during a planned trip now attach to it on their own. New
+`core/quintacle_core/trip_photos.py` adds a `during_trip` edge (photo → plan,
+source `trip_photos`) when the photo's EXIF capture day falls in the plan's
+start..end and the photo's city/state/country/continent matches a destination
+(or the plan has none). There is no model call. Plans without `fields`
+dates get them from body regexes. Plans without destinations only match city
+names that already exist as place nodes. It runs from
+`place_graph.link_note_places`, so every save point syncs it, MCP included.
+`/kb/entry/asset` and `kb_attach_file` now link after the file-meta bake.
+`POST /travel/planned/backfill-photos` (dry run by default) handles existing
+data. `GET /travel/planned` adds `photo_count` + `photos`. Planned cards show
+"N photos" + up to 6 thumbnails. 901 passed. Details:
+`docs/reference/graph-engine.md` (2026-11-05 trip ↔ photos).
+
 ## 2026-11-05 — Place hierarchy in the graph (worktree agent)
 
 Owner: "link everything on that graph so weak AIs can answer stuff". New

@@ -319,8 +319,11 @@ def kb_attach_file(folder: str, slug: str, local_path: str, filename: str | None
         if baked is not None:
             full = kb_store.read_full(folder, slug) or {}
             retrieval.safe_index_note(folder_slug, entry_slug, full.get("title") or entry_slug, baked.extra["body"])
-        stage_place_links(session, folder_slug, entry_slug)  # 2026-11-05: place edges, staged for undo
     _bake_file_meta(session, folder, slug, folder_slug, entry_slug, {written: source.name})
+    if is_image_name(written):
+        # 2026-11-05: place edges + trip_photos during_trip edges, staged for
+        # undo — after the file-meta bake so the EXIF capture day is known.
+        stage_place_links(session, folder_slug, entry_slug)
     ledger_id = session.commit(result={"folder": folder_slug, "slug": entry_slug, "asset_path": written})
     return {"folder": folder_slug, "slug": entry_slug, "asset_path": written, "bytes": len(data), "ledger_id": ledger_id}
 
