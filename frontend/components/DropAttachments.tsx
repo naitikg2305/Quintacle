@@ -19,6 +19,10 @@ const VIDEO_EXT = ["mp4", "webm", "mov", "m4v"];
 // backend parses them without any model call; PDFs need a "statement:" prefix.
 export const STATEMENT_EXT = ["csv", "ofx", "qfx"];
 
+// Everything the drop step can read or attach (2026-11-05: + md/txt/office/3D).
+const ACCEPT =
+  "image/*,video/*,.pdf,.docx,.doc,.xlsx,.xls,.pptx,.ppt,.md,.markdown,.txt,.csv,.tsv,.json,.yaml,.yml,.html,.stl,.3mf,.obj,.ofx,.qfx";
+
 export function extFor(file: File): string {
   return file.name.split(".").pop()?.toLowerCase() ?? "";
 }
@@ -71,19 +75,31 @@ export function useDropAttachments() {
     else addExtraPhoto(f);
   }
 
-  return { file, previewUrl, videoPreviewUrl, extraPhotos, extraPreviewUrls, onFileChosen, addExtraPhoto, removeExtraPhoto, addFile };
+  // 2026-11-05: dropping/choosing files ADDS to the pending note instead of
+  // replacing it — keep attaching PDFs, slides, photos, notes as you go. The
+  // first file becomes the primary (what Sort with AI reads); every file is
+  // attached to the saved note.
+  function addFiles(files: File[]) {
+    if (files.length === 0) return;
+    const rest = file ? files : files.slice(1);
+    if (!file) onFileChosen(files[0]);
+    const urls = rest.map((f) => URL.createObjectURL(f));
+    setExtraPhotos((prev) => [...prev, ...rest]);
+    setExtraPreviewUrls((prev) => [...prev, ...urls]);
+  }
+
+  return { file, previewUrl, videoPreviewUrl, extraPhotos, extraPreviewUrls, onFileChosen, addExtraPhoto, removeExtraPhoto, addFile, addFiles };
 }
 
 // The tray itself — drag-and-drop zone, choose-file, scribble pad, previews,
 // and the extras grid. Compact enough for the scratchpad column.
 export function AttachmentTray({ att }: { att: DropAttachments }) {
-  const { file, previewUrl, videoPreviewUrl, extraPhotos, extraPreviewUrls, onFileChosen, addExtraPhoto, removeExtraPhoto } = att;
+  const { file, previewUrl, videoPreviewUrl, extraPhotos, extraPreviewUrls, onFileChosen, removeExtraPhoto, addFiles } = att;
   const [showScribble, setShowScribble] = useState(false);
 
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
-    const dropped = e.dataTransfer.files?.[0];
-    if (dropped) onFileChosen(dropped);
+    addFiles(Array.from(e.dataTransfer.files ?? []));
   }
 
   return (
@@ -103,17 +119,18 @@ export function AttachmentTray({ att }: { att: DropAttachments }) {
             <FileText size={16} className="text-accent" /> {file.name}
           </p>
         ) : (
-          <p className="text-xs text-muted">Drag a photo, video, PDF, DOCX or bank/card statement (CSV/OFX/QFX) here</p>
+          <p className="text-xs text-muted">Drag files here — photos, videos, PDFs, slides, docs, notes, STLs, statements. Keep adding; they all attach to one note.</p>
         )}
         <div className="flex flex-wrap items-center justify-center gap-2">
           <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line-strong px-3 py-1.5 text-xs transition-colors hover:border-accent/60 hover:bg-accent/10">
             <Upload size={13} /> Choose file
             <input
               type="file"
-              accept="image/*,video/*,.pdf,.docx,.stl,.csv,.ofx,.qfx"
+              accept={ACCEPT}
+              multiple
               capture="environment"
               onChange={(e) => {
-                onFileChosen(e.target.files?.[0] ?? null);
+                addFiles(Array.from(e.target.files ?? []));
                 e.target.value = "";
               }}
               className="hidden"
@@ -167,11 +184,11 @@ export function AttachmentTray({ att }: { att: DropAttachments }) {
           <Paperclip size={13} /> add another attachment — as many as you want
           <input
             type="file"
-            accept="image/*,video/*,.pdf,.docx,.stl"
-            capture="environment"
+            accept={ACCEPT}
+            multiple
             className="hidden"
             onChange={(e) => {
-              addExtraPhoto(e.target.files?.[0] ?? null);
+              addFiles(Array.from(e.target.files ?? []));
               e.target.value = "";
             }}
           />
