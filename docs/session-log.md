@@ -3,6 +3,23 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-05 — Place hierarchy in the graph (worktree agent)
+
+Owner: "link everything on that graph so weak AIs can answer stuff". New
+`core/quintacle_core/place_graph.py` builds `place:<continent>[/<country>[/<city>]]` nodes
+with no model call. Photos (frontmatter `place`), experiences (city) and Planned trips
+(`fields.destinations`) get a `located_in` edge to their city. Cities get `part_of` edges
+up to country and continent. A real Places note with the same title is used instead of
+the virtual node. A city with no known country is `place:_/_/<city>` until a save learns
+the country, then its edges move to the real id. All of this runs at save time on the KB
+saves, `/kb/entry/asset`, experience create, `planned/move`, and MCP note writes and
+`kb_attach_file` (staged, so undo covers it). `POST /kb/graph/backfill-places` (dry run by
+default) handles existing data. Place nodes are indexed for retrieval. A place hit also
+carries the photos, experiences and plans located under it, with private notes kept
+out for cloud. `/graph` shows the place nodes with a `level`, and the frontend draws
+continents and countries bigger. 858 passed. Details: `docs/reference/graph-engine.md`
+(2026-11-05 place hierarchy).
+
 ## 2026-11-05 — Photo place baked into the note body (worktree agent)
 
 Owner asked that a photo's location be "baked into the markdown so it can be retrieved".

@@ -236,3 +236,52 @@ reference, labelled from their real SQLite rows via
 `graph_capture.log_row_label` ("$14.50 Chipotle"); the day bundle gains
 `events` — each day-linked event with its member ids + labels, so
 `day_recall` hands the day's records pre-grouped.
+
+## Place hierarchy (place_graph.py) — 2026-11-05
+
+Owner: "we need to link everything on that graph so weak ais can answer
+stuff", baked at save time. `core/quintacle_core/place_graph.py` adds a
+deterministic (no model call) place tree to the edges table:
+
+- **Node ids** (graph-only, no files): `place:<continent>`,
+  `place:<continent>/<country>`, `place:<continent>/<country>/<city>`, each
+  segment ASCII-slugged (`Zürich` → `zurich`). An unknown part is `_`: a city
+  with no known country (experiences carry only a city) is `place:_/_/<city>`;
+  the first save that knows the country (a geocoded photo there) re-points
+  every edge on it to the real id. Level = id depth (continent/country/city).
+- **Real Places notes win**: a KB `places/**` note whose title matches the
+  place name (case-insensitive) is linked instead of the virtual node, and
+  gets the `part_of` edge to its country (at most one country parent).
+- **Edge kinds**: `located_in` (photo note / experience / trip plan → city,
+  or → country/continent for a destination that is only a country or
+  continent) — a new kind, distinct from `at_location` (mention of an
+  experience); `part_of` (city → country → continent) — reused, same
+  meaning as event membership. All tagged `source_of_edge="place_graph"`.
+  Idempotent; a source's `located_in` edges re-sync on each save (stale
+  ones removed); `part_of` edges are never removed.
+- **Inputs**: photo frontmatter `place` (photo_place.py); Fun/Travel/Planned
+  notes' `fields.destinations` (split on `, ; / | →`; a token that is a
+  country in photo_place's table becomes the country of the cities before
+  it); experience `city` (country borrowed from an existing hierarchical city
+  node of the same slug, else city-only).
+- **Hook points**: `nodes/kb/api.py::_sync_note_graph_links` (covers
+  `/kb/entries`, `/kb/entries/with-asset` right after the photo-place bake,
+  `/kb/record-that/save`); `/kb/entry/asset` (after the bake);
+  `/kb/photos/backfill-place` apply; `nodes/travel/api.py` `create_experience`
+  + `planned/move`; MCP `graph_link.link_new_entry` (note writes, inside the
+  undo dir-snapshot) and `kb_attach_file` via `graph_link.stage_place_links`
+  (edges staged on the write session, so `undo_write` removes them).
+- **Backfill**: `POST /kb/graph/backfill-places?dry_run=true` — photos first
+  (so countries are known), then plans, then experiences.
+- **Retrieval**: every touched virtual place node (and its ancestors) is
+  indexed, type `place`, title = name, summary like "City in Austria, Europe —
+  3 photos, 1 experience" (private notes never counted). `_neighbors` for a
+  `place:` / `note:places/…` hit also attaches up to 15 `located_in` members
+  from anywhere below it (`place_graph.members_of`, recursive SQL over
+  `part_of`), under the same `exclude` hook, so "photos from Europe" reaches
+  the photo through `place:europe` and a private photo stays out of cloud
+  context.
+- **/graph** emits each referenced `place:` id as `{type: "place", label,
+  level}` (label read back from the retrieval index); the 2D/3D views size
+  continent > country > city and only offer "open note" when a node has a
+  folder/slug.

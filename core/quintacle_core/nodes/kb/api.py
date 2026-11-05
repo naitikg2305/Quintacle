@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from ... import llm_dispatch
 from ...graph import get_graph_store, link_new_entry, sync_frontmatter_links
 from ...graph_capture import safe_entry_graph_links
+from ...place_graph import backfill_places, link_note_places
 from ...retrieval import safe_index_note
 from ...perception import perceive_photo
 from ..journal.api import get_store as get_journal_store
@@ -268,6 +269,11 @@ def _sync_note_graph_links(note_id: str, title: str, content: str, link_titles: 
     text = f"{title}\n{content}\n{' '.join(link_titles)}"
     safe_entry_graph_links(note_id, "note", text)
 
+    # 2026-11-05 (place_graph.py): photo `place` → city, a Planned trip's
+    # `fields.destinations` → each city, city → country → continent. Runs
+    # AFTER the photo-place bake on every save path that reaches here.
+    link_note_places(get_store(), *note_id.removeprefix("note:").rsplit("/", 1))
+
 
 class EntryCreate(BaseModel):
     folder: str
@@ -381,6 +387,7 @@ async def add_entry_asset(folder: str = Form(...), slug: str = Form(...), file: 
             full = get_store().read_full(folder, slug) or {}
             folder_slug = str(get_store().entry_path(folder, slug).parent.relative_to(get_store().root)).replace("\\", "/")
             safe_index_note(folder_slug, get_store().entry_path(folder, slug).stem, full.get("title") or slug, baked.extra["body"])
+        link_note_places(get_store(), folder, slug)  # 2026-11-05: photo → city → country → continent edges
     return {"folder": folder, "slug": slug, "asset": asset_path}
 
 
@@ -452,7 +459,21 @@ def backfill_photo_place(dry_run: bool = True) -> dict:
     geocode results still land in the cache, so the apply run is free.
     Private notes never hit the cloud geocoder."""
     changes = backfill_photo_places(get_store(), dry_run=dry_run, index=safe_index_note)
+    if not dry_run:
+        for c in changes:  # 2026-11-05: the baked place becomes graph edges too
+            link_note_places(get_store(), c["folder"], c["slug"])
     return {"dry_run": dry_run, "count": len(changes), "changes": changes}
+
+
+@router.post("/graph/backfill-places")
+def backfill_place_graph(dry_run: bool = True) -> dict:
+    """2026-11-05 (place_graph.py): link every existing photo (frontmatter
+    `place`), trip plan (Fun/Travel/Planned `fields.destinations`) and
+    experience (city) into the place hierarchy — located_in → city, part_of
+    city → country → continent — and index the place nodes for retrieval.
+    Deterministic, no model call. dry_run (default) writes nothing and
+    reports what would be created; re-running adds no duplicate edges."""
+    return backfill_places(get_store(), get_travel_store().all(), dry_run=dry_run)
 
 
 @router.post("/drop")

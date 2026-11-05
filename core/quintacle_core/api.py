@@ -23,6 +23,7 @@ from .day_bundle import build_day_bundle
 from .nodes.kb.chat import OllamaError
 from .graph import get_graph_store, init_graph_store, sync_frontmatter_links
 from .graph_capture import link_event, log_row_label, run_graph_capture_backfill
+from .place_graph import graph_place_nodes
 from .nodes.drop_router import (
     IMAGE_MIME_TYPES,
     classify_image_type,
@@ -902,6 +903,11 @@ def create_app() -> FastAPI:
                     "kind": e.get("kind"),
                 }
             )
+
+        # 2026-11-05 (place_graph.py): the virtual place hierarchy —
+        # continent / country / city nodes referenced by located_in/part_of
+        # edges (real Places notes are already emitted above as notes).
+        nodes.extend(graph_place_nodes(get_graph_store().all()))
 
         repo = get_logs_repo()
         ingredients_by_id = {i["id"]: i for i in repo.list_ingredients()}

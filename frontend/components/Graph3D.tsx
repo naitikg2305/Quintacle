@@ -84,7 +84,9 @@ export default function Graph3D({
         nodeId="id"
         nodeLabel={(n) => (n.isHub ? `<b>${escapeHtml(n.label)}</b>` : escapeHtml(n.label))}
         nodeColor={(n) => (n.id === selectedId ? "#ffffff" : colors[n.type] ?? "#888888")}
-        nodeVal={(n) => (n.isHub ? 12 : n.id === selectedId ? 4 : 1)}
+        nodeVal={(n) =>
+          n.isHub ? 12 : (n.level === "continent" ? 6 : n.level === "country" ? 3 : n.level === "city" ? 1.5 : 1) * (n.id === selectedId ? 4 : 1)
+        }
         nodeOpacity={0.9}
         nodeResolution={10}
         linkColor={(l) => (l.kind === memberKind ? "rgba(138,160,186,0.12)" : "rgba(138,160,186,0.55)")}

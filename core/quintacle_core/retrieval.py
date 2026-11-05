@@ -79,6 +79,8 @@ SUMMARY_PROVIDER_ENV = "QUINTACLE_SUMMARY_PROVIDER"  # "local" (default) | "off"
 PROSE_SUMMARY_CHARS = 120
 _RRF_K = 60  # the standard reciprocal-rank-fusion constant
 _NEIGHBOR_LIMIT = 10
+# Extra members a place node may carry (place_graph.members_of).
+_PLACE_MEMBER_LIMIT = 15
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS nodes_index (
@@ -378,6 +380,33 @@ class RetrievalIndex:
             neighbors.append({"id": other, "title": title, "edge_type": edge["kind"]})
             if len(neighbors) >= _NEIGHBOR_LIMIT:
                 break
+        # 2026-11-05 (place_graph.py): a PLACE node's useful neighborhood is
+        # everything located anywhere inside it — "photos from Europe" lands
+        # on place:europe, whose 1-hop is only its countries. Walk the
+        # part_of tree down (deterministic SQL) and attach the located_in
+        # members too, under the same exclude hook (private photos stay out
+        # of cloud context).
+        if node_id.startswith("place:") or node_id.startswith("note:places/"):
+            try:
+                from .place_graph import members_of
+
+                have = {n["id"] for n in neighbors}
+                added = 0
+                for m in members_of(hood_conn(), node_id):
+                    other = m["source_id"]
+                    if other in have or other == node_id or other.startswith("transcript:"):
+                        continue
+                    if exclude is not None and exclude(other):
+                        continue
+                    have.add(other)
+                    row = self.conn.execute("SELECT title FROM nodes_index WHERE id = ?", (other,)).fetchone()
+                    title = row["title"] if row is not None else other.partition(":")[2]
+                    neighbors.append({"id": other, "title": title, "edge_type": "located_in"})
+                    added += 1
+                    if added >= _PLACE_MEMBER_LIMIT:
+                        break
+            except Exception:
+                pass
         return neighbors
 
     def retrieve(self, query: str, k: int = 10, types: list[str] | None = None, exclude=None) -> list[dict]:
@@ -578,6 +607,12 @@ def log_row_title_and_summary(conn: sqlite3.Connection, member_id: str) -> tuple
 # Every hook: no-op when retrieval was never initialized in this process,
 # and ANY exception is logged and swallowed — an indexing error must never
 # fail the user's write (same contract as graph_capture's safe_* helpers).
+
+
+def hood_conn():
+    from .graph import get_graph_store
+
+    return get_graph_store().conn
 
 
 def _never_fails(fn):
