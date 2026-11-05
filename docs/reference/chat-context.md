@@ -281,3 +281,11 @@ reply post-pass in `run_kb_chat`).
   paragraph made only of such tiles becomes a 2-column grid (3 columns from
   `sm`). Transcripts keep the markdown as-is.
 - Tests: `core/tests/test_chat_my_photos.py`.
+
+> **Correction (2026-11-05, later): web search backend.** A live check showed DuckDuckGo's
+> HTML endpoint answers scripted requests with a bot challenge (0 results), and working
+> around that isn't acceptable. `web_search.backend()` now picks, in order: a self-hosted
+> SearXNG (`QUINTACLE_SEARXNG_URL`), the Brave Search API (`QUINTACLE_BRAVE_API_KEY`, free
+> tier), or the DDG parser only when explicitly chosen (`QUINTACLE_WEB_BACKEND=ddg`). With
+> none configured, auto mode stays silent and an explicit Web-on turn gets a short
+> "web search unavailable" notice so the model says it couldn't search.

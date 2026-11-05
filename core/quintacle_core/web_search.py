@@ -118,14 +118,56 @@ def parse_ddg_html(html: str, k: int = 5) -> list[dict]:
     return out
 
 
+BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
+
+
+def backend() -> str | None:
+    """Which search backend is configured (2026-11-05 correction). Live check
+    showed DuckDuckGo's HTML endpoint answers scripted requests with a bot
+    challenge (0 results) — scraping around that isn't acceptable, so the
+    default is now an API made for programs:
+      1. SearXNG you host yourself (QUINTACLE_SEARXNG_URL), else
+      2. Brave Search API (QUINTACLE_BRAVE_API_KEY; free tier), else
+      3. the DDG HTML parser ONLY if explicitly chosen (QUINTACLE_WEB_BACKEND=ddg),
+      else None — the chat lane then says web search isn't configured."""
+    if os.environ.get("QUINTACLE_SEARXNG_URL", "").strip():
+        return "searxng"
+    if os.environ.get("QUINTACLE_BRAVE_API_KEY", "").strip():
+        return "brave"
+    if os.environ.get("QUINTACLE_WEB_BACKEND", "").strip().lower() == "ddg":
+        return "ddg"
+    return None
+
+
+def _brave(query: str, k: int, timeout: float) -> list[dict]:
+    url = BRAVE_URL + "?" + urllib.parse.urlencode({"q": query, "count": max(1, min(k, 20))})
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "X-Subscription-Token": os.environ["QUINTACLE_BRAVE_API_KEY"].strip(),
+            "User-Agent": "Quintacle/1.0 (personal assistant)",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8", "replace"))
+    return [
+        {"title": r.get("title", ""), "url": r.get("url", ""), "snippet": html_to_text(r.get("description", "") or "")}
+        for r in (data.get("web") or {}).get("results", [])
+        if str(r.get("url", "")).startswith(("http://", "https://"))
+    ][:k]
+
+
 def search(query: str, k: int = 5, timeout: float = SEARCH_TIMEOUT) -> list[dict]:
-    """[{title, url, snippet}] — empty on any failure."""
+    """[{title, url, snippet}] — empty on any failure or when no backend is
+    configured (see backend())."""
     query = (query or "").strip()
     if not query:
         return []
+    which = backend()
     try:
-        searx = os.environ.get("QUINTACLE_SEARXNG_URL", "").strip()
-        if searx:
+        if which == "searxng":
+            searx = os.environ["QUINTACLE_SEARXNG_URL"].strip()
             url = searx.rstrip("/") + "/search?" + urllib.parse.urlencode({"q": query, "format": "json"})
             body, _ = _get(url, timeout)
             data = json.loads(body)
@@ -134,8 +176,12 @@ def search(query: str, k: int = 5, timeout: float = SEARCH_TIMEOUT) -> list[dict
                 for r in data.get("results", [])
                 if str(r.get("url", "")).startswith(("http://", "https://"))
             ][:k]
-        body, _ = _get(DDG_URL + urllib.parse.quote_plus(query), timeout)
-        return parse_ddg_html(body, k)
+        if which == "brave":
+            return _brave(query, k, timeout)
+        if which == "ddg":
+            body, _ = _get(DDG_URL + urllib.parse.quote_plus(query), timeout)
+            return parse_ddg_html(body, k)
+        return []
     except Exception as e:
         logger.info("web search failed: %s", e)
         return []
@@ -301,6 +347,16 @@ def chat_web_block(provider: str, web: bool | None, user_text: str, mode: str = 
     if os.environ.get("QUINTACLE_WEB_SEARCH", "").strip().lower() in ("off", "0", "false", "no"):
         return None  # global kill switch (the test suite sets it)
     if web is None and (mode == "serious" or not needs_web(user_text)):
+        return None
+    if backend() is None and not re.search(r"https?://", user_text or ""):
+        # No search API set up: say so when the owner explicitly asked for the
+        # web; stay silent on auto so ordinary chats aren't cluttered.
+        if web is True:
+            return (
+                "## Web search unavailable\nWeb search isn't configured on this device (no search API). "
+                "Tell the user briefly that you couldn't search the web, then answer from what you know, "
+                "clearly marked as possibly out of date."
+            )
         return None
     try:
         return web_block(user_text)

@@ -53,6 +53,9 @@ def net(monkeypatch):
     """Stubbed urlopen: DDG → fixture, other URLs → PAGE. Records every URL."""
     monkeypatch.delenv("QUINTACLE_WEB_SEARCH", raising=False)
     monkeypatch.delenv("QUINTACLE_SEARXNG_URL", raising=False)
+    monkeypatch.delenv("QUINTACLE_BRAVE_API_KEY", raising=False)
+    # These stubs serve DDG-shaped HTML; DDG is opt-in since 2026-11-05.
+    monkeypatch.setenv("QUINTACLE_WEB_BACKEND", "ddg")
     seen: list[str] = []
 
     def fake(req, timeout=None):
@@ -166,6 +169,7 @@ def test_chat_web_block_provider_and_toggle(net):
 
 def test_failures_degrade_to_no_block(monkeypatch):
     monkeypatch.delenv("QUINTACLE_WEB_SEARCH", raising=False)
+    monkeypatch.setenv("QUINTACLE_WEB_BACKEND", "ddg")
 
     def boom(req, timeout=None):
         raise TimeoutError("slow")
@@ -233,3 +237,46 @@ def test_web_false_and_own_data_skip_network(client, net, monkeypatch):
     client.post("/kb/chat", json={"messages": [{"role": "user", "content": "Japan visa requirements"}], "model": "local:qwen3:8b", "web": False})
     client.post("/kb/chat", json={"messages": [{"role": "user", "content": "what's in my Japan trip notes"}], "model": "local:qwen3:8b"})
     assert net == [] and all("Web results" not in c["kb_text"] for c in calls)
+
+
+# --- 2026-11-05 correction: API backends, DDG opt-in --------------------------
+
+
+def test_no_backend_configured(monkeypatch):
+    for k in ("QUINTACLE_WEB_SEARCH", "QUINTACLE_SEARXNG_URL", "QUINTACLE_BRAVE_API_KEY", "QUINTACLE_WEB_BACKEND"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(web_search.urllib.request, "urlopen", lambda *a, **k: pytest.fail("no network without a backend"))
+    assert web_search.backend() is None
+    assert web_search.chat_web_block("local", None, "latest news on the Austria visa") is None  # auto: silent
+    notice = web_search.chat_web_block("local", True, "Austria visa requirements")
+    assert notice and "unavailable" in notice
+
+
+def test_brave_backend(monkeypatch):
+    monkeypatch.delenv("QUINTACLE_SEARXNG_URL", raising=False)
+    monkeypatch.setenv("QUINTACLE_BRAVE_API_KEY", "test-key")
+    seen = {}
+
+    class Resp:
+        def __init__(self, body):
+            self.body = body
+
+        def read(self):
+            return self.body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake(req, timeout=None):
+        seen["url"] = req.full_url
+        seen["token"] = req.get_header("X-subscription-token")
+        return Resp(b'{"web":{"results":[{"title":"Belvedere","url":"https://www.belvedere.at/","description":"Open <b>daily</b> 9-18"}]}}')
+
+    monkeypatch.setattr(web_search.urllib.request, "urlopen", fake)
+    assert web_search.backend() == "brave"
+    out = web_search.search("Belvedere opening hours")
+    assert out == [{"title": "Belvedere", "url": "https://www.belvedere.at/", "snippet": "Open daily 9-18"}]
+    assert seen["token"] == "test-key" and "api.search.brave.com" in seen["url"]
