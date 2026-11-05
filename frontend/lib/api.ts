@@ -1646,3 +1646,163 @@ export type SyncReport = {
 
 export const syncPull = (body: { peer_url: string; push_back?: boolean; self_url?: string }) =>
   request<SyncReport>("/sync/pull", { method: "POST", body: JSON.stringify(body) });
+
+// --- career updaters (record from work logs, website content branch) ---
+
+export type CareerProvider = "auto" | "local" | "cloud";
+
+export type CareerMapping = { entry_id: string | null; how: string | null; candidates: string[]; note?: string };
+
+export type CareerHub = {
+  id: string;
+  folder: string;
+  slug: string;
+  title: string;
+  kind: "career" | "projects";
+  private: boolean;
+  record_entry: string | null;
+  public: boolean;
+  public_name: string;
+  public_repo: string;
+  public_slug: string;
+  mapping?: CareerMapping;
+};
+
+export type CareerRecordStatus = {
+  exists: boolean;
+  folder: string;
+  slug: string;
+  private?: boolean;
+  edited?: string | null;
+  covered_through?: string | null;
+  next_start?: string | null;
+  sections?: { num: number; title: string }[];
+  entries?: { id: string; title: string; section: number }[];
+  record_folder: string;
+  record_title: string;
+  website_repo: string;
+  website_content_dir: string;
+};
+
+export type CareerSource = { n: number; date: string; text: string };
+export type CareerDraftBullet = {
+  text: string;
+  section: "phrasing" | "detail";
+  date: string;
+  sources: CareerSource[];
+  reasons?: string[];
+};
+
+export type CareerGroup = {
+  hub: CareerHub;
+  mapping: CareerMapping;
+  entry: { id: string; title: string } | null;
+  sessions: { date: string; label: string; lines: string[] }[];
+  bullets: CareerDraftBullet[];
+  rejected: CareerDraftBullet[];
+  error: string | null;
+};
+
+export type CareerRun = {
+  after: string | null;
+  start: string | null;
+  until: string;
+  through: string | null;
+  dates: string[];
+  skipped: { private: string[]; placeholder: string[]; unlinked_sessions: number };
+  groups: CareerGroup[];
+  base_hash: string;
+  provider_used: string | null;
+};
+
+type CareerSection = "phrasing" | "detail";
+export type CareerSaveBody = {
+  through: string;
+  base_hash?: string;
+  bullets: { entry_id: string; section: CareerSection; text: string; date: string }[];
+  new_entries: {
+    section: number;
+    title: string;
+    hub_folder?: string;
+    hub_slug?: string;
+    bullets: { section: CareerSection; text: string; date: string }[];
+  }[];
+  mappings: { hub_folder: string; hub_slug: string; entry_id: string }[];
+};
+
+export type WebsiteCandidate = {
+  id: string;
+  kind: "knowledge" | "project" | "employment";
+  title: string;
+  folder?: string;
+  slug?: string;
+  stamp: string;
+  edited?: string;
+  snippet: string;
+  target_path: string;
+  blocked: string[];
+  renames: { from: string; to: string }[];
+  suggest: boolean | null;
+  reason: string;
+  category?: string;
+  summary?: string;
+};
+
+export type WebsiteFile = { path: string; status: string; added: number; removed: number };
+export type WebsiteResult = {
+  branch: string | null;
+  commit: string | null;
+  files: WebsiteFile[];
+  skipped: { id: string; reason: string }[];
+  message?: string;
+};
+
+export type WebsiteStatus = {
+  watermark: string | null;
+  last_run: string | null;
+  last_result: WebsiteResult | null;
+  rejected_count: number;
+  repo: string;
+  content_dir: string;
+};
+
+export type WebsiteRun = {
+  watermark: string | null;
+  through: string | null;
+  candidates: WebsiteCandidate[];
+  more: number;
+  provider_used: string | null;
+};
+
+export const getCareerRecord = () => request<CareerRecordStatus>("/career/record");
+export const importCareerRecord = (content: string) =>
+  request<{ folder: string; slug: string }>("/career/record/import", { method: "POST", body: JSON.stringify({ content }) });
+export const updateCareerSettings = (body: { record_folder?: string; record_title?: string }) =>
+  request<CareerRecordStatus>("/career/settings", { method: "PUT", body: JSON.stringify(body) });
+export const runCareerRecord = (body: { start?: string; include_today?: boolean; provider?: CareerProvider }) =>
+  request<CareerRun>("/career/record/run", { method: "POST", body: JSON.stringify(body) });
+export const saveCareerRecord = (body: CareerSaveBody) =>
+  request<{ covered_through: string; appended: number; new_entries: string[] }>("/career/record/save", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+export const listCareerHubs = () => request<CareerHub[]>("/career/hubs");
+export const updateCareerHub = (body: {
+  folder: string;
+  slug: string;
+  record_entry?: string;
+  public?: boolean;
+  public_name?: string;
+  public_repo?: string;
+  public_slug?: string;
+}) => request<CareerHub>("/career/hubs", { method: "PUT", body: JSON.stringify(body) });
+export const getWebsiteStatus = () => request<WebsiteStatus>("/career/website");
+export const runWebsite = (provider?: CareerProvider) =>
+  request<WebsiteRun>("/career/website/run", { method: "POST", body: JSON.stringify({ provider }) });
+export const rejectWebsiteCandidate = (id: string, stamp: string) =>
+  request<{ rejected: string }>("/career/website/reject", { method: "POST", body: JSON.stringify({ id, stamp }) });
+export const generateWebsite = (body: { through: string | null; items: { id: string; category?: string; summary?: string }[] }) =>
+  request<WebsiteResult & { watermark: string | null; last_run: string }>("/career/website/generate", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });

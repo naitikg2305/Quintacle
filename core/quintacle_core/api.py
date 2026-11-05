@@ -108,6 +108,7 @@ from .nodes.stocks.llm import structure_stock_transaction
 from .nodes.stocks.store import holding_node_id
 from .nodes.logs.habit_llm import structure_habit
 from .nodes.vault.api import init_store as init_vault_store, router as vault_router
+from .nodes.career.api import init_career, router as career_router
 from .perception import perceive_photo
 from .sync import init_sync, router as sync_router
 
@@ -228,6 +229,11 @@ def create_app() -> FastAPI:
     # transactions/), the SQLite index shares quintacle.db.
     init_stocks_store(conn, kb_root)
     app.include_router(stocks_router)
+
+    # On-demand career updaters (record from work logs, website content on a
+    # new local git branch) — state JSON lives in DATA_DIR/career/, outside kb/.
+    init_career(DATA_DIR)
+    app.include_router(career_router)
 
     # Deliberately OUTSIDE kb_root — every model-facing surface (KB chat,
     # MCP tools, search, graph, drop) only walks kb/, so vault/ being a

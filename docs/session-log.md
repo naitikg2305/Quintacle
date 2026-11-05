@@ -21,6 +21,26 @@ disabled for private pending notes, Browse badge + toggle
 `docs/reference/{chat-context,retrieval,mcp-server,frontend,endpoints}.md`
 2026-11-05 sections.
 
+## 2026-11-05 — Career updates: record from work logs + website branch (worktree agent)
+
+Off `redone-UI` `ec70fb6` (not pushed). New `nodes/career/` + `/career`
+router (12 routes) + `/career` page ("Career updates", Productivity).
+**A**: work logs after the record's `_Covered through: YYYY-MM-DD_` line →
+grouped by the Career/Projects hubs they mention → deterministic hub→entry
+mapping (`record_entry` field / unique title match / owner pick) → local-first
+draft per entry → code fact check (numbers, months, employers, titles,
+degrees must be in the sources or the entry) → review → append-only Save
+with `[WL date]` tags + watermark move. **B**: notes edited since the
+website watermark + changed public record entries → advisory AI flag →
+owner approves/rejects (rejects remembered per `edited`) → alias gating
+(`public`/`public_name`/`public_repo`/`public_slug` hub fields; non-public
+hubs never output) → files committed via git plumbing onto a new
+`quintacle/content-YYYY-MM-DD` branch in `QUINTACLE_WEBSITE_REPO` (dirty
+tree aborts; checkout untouched; never pushed). Private notes excluded
+everywhere. Suite 750 passed (22 new in `tests/test_career_updates.py`);
+tsc 0. The real record wasn't imported (read-only in-memory dry run only;
+TailorCV still parses the output). Details: `docs/reference/career-updates.md`.
+
 ## 2026-11-03 — Overview (Home) page + nav rename (main session)
 
 Owner liked a GPT-generated "life OS" mockup; we kept its glance layout and
