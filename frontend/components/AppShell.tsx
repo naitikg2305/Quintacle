@@ -21,6 +21,7 @@ import {
   Plane,
   RefreshCw,
   Shirt,
+  Target,
   TrendingUp,
   User,
   Users,
@@ -37,9 +38,9 @@ type NavItem = { href: string; label: string; icon: LucideIcon; match?: (path: s
 // Drop retired into Chat (next-wave §9): the chat page's scratchpad is the
 // drop lane now; /kb/drop redirects there.
 const CORE: NavItem[] = [
+  { href: "/", label: "Home", icon: LayoutDashboard, match: (p) => p === "/" },
   { href: "/kb", label: "Chat", icon: MessageSquare, match: (p) => p === "/kb" || p.startsWith("/kb/drop") },
   { href: "/kb/browse", label: "Browse", icon: FolderTree, match: (p) => p.startsWith("/kb/browse") || p.startsWith("/kb/folder") },
-  { href: "/habits", label: "Dashboard", icon: LayoutDashboard },
   { href: "/day", label: "Calendar", icon: CalendarDays },
 ];
 
@@ -47,9 +48,10 @@ const CORE: NavItem[] = [
 const LIFE: NavItem[] = [
   { href: "/journal", label: "Journal", icon: BookOpen },
   { href: "/todos", label: "Todos", icon: ListChecks },
+  { href: "/habits", label: "Habits", icon: Target },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/wardrobe", label: "Wardrobe", icon: Shirt },
-  { href: "/home", label: "Home", icon: House },
+  { href: "/home", label: "Household", icon: House },
   { href: "/finance", label: "Finance", icon: Wallet },
   { href: "/people", label: "People", icon: Users },
   { href: "/profile", label: "Profile", icon: User },

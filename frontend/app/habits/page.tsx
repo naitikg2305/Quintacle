@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import ReadOnlyChat from "@/components/ReadOnlyChat";
 import Link from "next/link";
-import { Ban, ChevronDown, ChevronUp, CircleCheck, LayoutDashboard, MessageSquare, Pencil, Plus, TriangleAlert } from "lucide-react";
+import { Ban, ChevronDown, ChevronUp, CircleCheck, MessageSquare, Pencil, Plus, Target, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Field";
 import { Badge, PageHeader, Panel, Stat } from "@/components/ui/Panel";
@@ -236,7 +236,7 @@ export default function HabitsPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
-      <PageHeader title="Dashboard" icon={LayoutDashboard} subtitle="Goals vs. actuals, with trend." />
+      <PageHeader title="Habits" icon={Target} subtitle="Weekly goals vs. actuals, with trend. A change takes effect from the next period." />
 
       <div className="grid grid-cols-3 gap-3">
         <Stat label="Goals" value={rows.length} />

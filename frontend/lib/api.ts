@@ -1383,6 +1383,19 @@ export type GraphNode = {
 };
 export type GraphEdge = { source: string; target: string; kind: string };
 
+// Overview page: newest-saved nodes from the retrieval index, and the mini
+// graph (nodes saved since a date + their 1-hop neighbors, e.g. the hubs a
+// week's work logs link to).
+export type RecentNode = { id: string; type: string; title: string; summary: string; updated_at: string };
+export const getRecent = (limit = 8, since?: string) =>
+  request<RecentNode[]>(`/kb/recent?limit=${limit}${since ? `&since=${encodeURIComponent(since)}` : ""}`);
+export type RecentGraph = {
+  nodes: { id: string; type: string; title: string; recent: boolean }[];
+  edges: { source: string; target: string; kind: string }[];
+};
+export const getRecentGraph = (since: string, limit = 30) =>
+  request<RecentGraph>(`/kb/recent-graph?since=${encodeURIComponent(since)}&limit=${limit}`);
+
 export const getGraph = () => request<{ nodes: GraphNode[]; edges: GraphEdge[] }>("/graph");
 
 // Same-event provenance: after a batch Save commits its entries, this links

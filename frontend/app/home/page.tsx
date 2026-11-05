@@ -82,7 +82,7 @@ export default function HomePage() {
 
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-semibold">Home</h1>
+      <h1 className="text-2xl font-semibold">Household</h1>
       <p className="text-sm opacity-60 -mt-4">
         Apartments/living spaces over time, and what's in them — ask "where's my Halloween decor" and get "closet, box 3," not
         a chat search.

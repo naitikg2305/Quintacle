@@ -6,7 +6,9 @@ from pathlib import Path
 
 import frontmatter
 
+from ... import clock
 from ...markdown_paths import list_folder_tree, resolve_nested, slugify
+from .privacy import PRIVATE_KEY, is_private_meta
 
 _ASSET_RE = re.compile(r"\[asset\]\(([^)]+)\)\s*$")
 # Same convention, but finds every trailing [asset](...) line (a two-photo
@@ -16,7 +18,7 @@ _ASSET_LINES_RE = re.compile(r"^\[asset\]\(([^)]+)\)$", re.MULTILINE)
 
 
 # Frontmatter keys Browse treats as plumbing rather than user-visible fields.
-_INTERNAL_META = {"links", "location", "fields", "assets", "asset", "asset2"}
+_INTERNAL_META = {"links", "location", "fields", "assets", "asset", "asset2", "edited"}
 _VIEW_FILE = "_view.json"
 
 
@@ -165,6 +167,26 @@ class KBStore:
         post = self._load(folder, slug)
         return (post.metadata.get("fields") or {}) if post is not None else {}
 
+    def is_private(self, folder: str, slug: str) -> bool:
+        """See privacy.py — the AI-visibility flag."""
+        post = self._load(folder, slug)
+        return post is not None and is_private_meta(post.metadata)
+
+    def set_private(self, folder: str, slug: str, private: bool) -> bool:
+        """Set/clear the private flag without touching the body or any other
+        frontmatter (and without restamping `edited` — flipping visibility is
+        not a content edit). Returns False when the note doesn't exist."""
+        path = resolve_nested(self.root, folder) / f"{slugify(slug)}.md"
+        if not path.exists():
+            return False
+        post = frontmatter.loads(path.read_text(encoding="utf-8"))
+        if private:
+            post[PRIVATE_KEY] = True
+        else:
+            post.metadata.pop(PRIVATE_KEY, None)
+        path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        return True
+
     def _load(self, folder: str, slug: str) -> frontmatter.Post | None:
         path = resolve_nested(self.root, folder) / f"{slugify(slug)}.md"
         return frontmatter.loads(path.read_text(encoding="utf-8")) if path.exists() else None
@@ -202,6 +224,10 @@ class KBStore:
             post["location"] = location
         if fields is not None:
             post["fields"] = fields
+        # Real last-edit time (ET), stamped on every write — "what changed
+        # since the last run" (career record / website updates) keys off this,
+        # never off the retrieval index's updated_at, which a reindex resets.
+        post["edited"] = clock.now().isoformat(timespec="seconds")
         path.write_text(frontmatter.dumps(post), encoding="utf-8")
         # Return the actual slugified path (each segment lowercased/hyphenated)
         # so callers know exactly where it landed, not the raw input string.

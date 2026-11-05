@@ -3,6 +3,25 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-03 — Overview (Home) page + nav rename (main session)
+
+Owner liked a GPT-generated "life OS" mockup; we kept its glance layout and
+dropped its PARA/steps placeholders. `/` is now the overview: Today row,
+deterministic Brief, Recent, This week + last-7-days mini graph, and a docked
+Assist (compact `/kb/chat`) + Capture (→ `/kb?draft=`, reviewed in the
+scratchpad). New read-only endpoints `/kb/recent`, `/kb/recent-graph`
+(`RetrievalIndex.recent`), tests `tests/test_overview_recent.py`; suite 728
+passed. Nav: Core = Home · Chat · Browse · Calendar; Dashboard → **Habits**
+(Life group, same page — goal editor + trends; owner wants it separate from
+the Calendar, whose Habits toggle stays as the week grid); `/home` labelled
+**Household**. Owner confirmed goals behave as wanted: weekly targets that
+repeat until changed, changes effective next week, history preserved.
+Verified live with Playwright screenshots (desktop + 390px phone; fixed a
+phone overflow via `min-w-0`). Not verified: a real Assist message (would
+have written a transcript into the real store). Also: GPT-era handoff
+reviewed — the gap vs. the 2024–25 vision is the proactive layer (voice,
+reminders, daily plan, cross-domain insights); the overview is its first step.
+
 ## 2026-10-27 — Opus verification of the day's §12 / preset work (main session)
 
 Re-verified every 2026-10-27 lane live (sandboxed, qwen3:8b). Two fixes on

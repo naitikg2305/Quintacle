@@ -300,6 +300,25 @@ class RetrievalIndex:
         rows = self.conn.execute("SELECT type, COUNT(*) AS n FROM nodes_index GROUP BY type ORDER BY type")
         return {r["type"]: r["n"] for r in rows}
 
+    def recent(self, limit: int = 8, since: str | None = None, types: list[str] | None = None) -> list[dict]:
+        """Newest-indexed nodes first — the overview's "Recent" strip. Every
+        write path re-indexes on save, so updated_at is "last saved" (a
+        backfill stamps its run time instead). Pure SQL; excluded ids never
+        enter the index, so nothing to filter here."""
+        sql = "SELECT id, type, title, summary, updated_at FROM nodes_index"
+        clauses, params = [], []
+        if since:
+            clauses.append("updated_at >= ?")
+            params.append(since)
+        if types:
+            clauses.append(f"type IN ({','.join('?' * len(types))})")
+            params.extend(types)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(max(1, int(limit)))
+        return [dict(r) for r in self.conn.execute(sql, params)]
+
     # --- the three lanes + fusion ---
 
     def _fts_ids(self, query: str, limit: int) -> list[str]:

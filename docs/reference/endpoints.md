@@ -120,6 +120,8 @@ Browse / read:
 | GET | `/kb/search` | `?q` | Case-insensitive substring search over every filename+body | KBStore |
 | GET | `/kb/photos` | — | Every entry under `media/photos/**` with its assets — the Gallery source | KBStore |
 | GET | `/kb/graph` | — | KB-note half of the graph: notes with `links` resolved to edge-table target ids | KBStore + GraphEdgeStore |
+| GET | `/kb/recent` | `?limit&since` | *(added 2026-11-03)* Newest-indexed nodes first (`RetrievalIndex.recent`; `updated_at` = last save) — the overview's Recent strip | RetrievalIndex |
+| GET | `/kb/recent-graph` | `?since&limit` | *(added 2026-11-03)* Nodes saved since `since` + their 1-hop neighbors and the edges between them; transcripts excluded — the overview's mini graph | RetrievalIndex + GraphEdgeStore |
 | GET | `/kb/asset` | `?folder&path` | Raw asset bytes (path clamped to the KB root) | KBStore |
 
 Propose / write:

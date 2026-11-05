@@ -561,6 +561,50 @@ def kb_graph() -> dict:
     return {"notes": notes}
 
 
+@router.get("/recent")
+def kb_recent(limit: int = 8, since: str | None = None) -> list[dict]:
+    """The overview's "Recent" strip: newest-saved nodes from the retrieval
+    index (notes, journal days, log rows, todos …), newest first. `since` is
+    an ISO date/datetime lower bound."""
+    from ...retrieval import get_retrieval_index
+
+    return get_retrieval_index().recent(limit=min(max(limit, 1), 50), since=since)
+
+
+@router.get("/recent-graph")
+def kb_recent_graph(since: str, limit: int = 30) -> dict:
+    """The overview's mini graph: nodes saved since `since` plus their 1-hop
+    neighbors (so a week's work logs pull in the Minfy / Quintacle hubs they
+    link to), and the edges among that set. Deterministic — the index picks
+    the nodes, the edges table supplies the links. Transcripts never appear
+    (§12), same rule as retrieval's neighbor labels."""
+    from ...retrieval import get_retrieval_index
+
+    index = get_retrieval_index()
+    graph_store = get_graph_store()
+    recent = index.recent(limit=min(max(limit, 1), 80), since=since)
+    nodes: dict[str, dict] = {r["id"]: {"id": r["id"], "type": r["type"], "title": r["title"], "recent": True} for r in recent}
+    edges: dict[tuple[str, str, str], dict] = {}
+    for r in recent:
+        for e in graph_store.neighborhood(r["id"], 1)["edges"]:
+            a, b = e["source_id"], e["target_id"]
+            if a.startswith("transcript:") or b.startswith("transcript:"):
+                continue
+            if r["id"] not in (a, b):
+                continue  # an edge among neighbors — not this node's own link
+            for nid in (a, b):
+                if nid not in nodes:
+                    row = index.get_node(nid)
+                    nodes[nid] = {
+                        "id": nid,
+                        "type": row["type"] if row else nid.partition(":")[0],
+                        "title": row["title"] if row else nid.partition(":")[2].rsplit("/", 1)[-1],
+                        "recent": False,
+                    }
+            edges[(a, b, e["kind"])] = {"source": a, "target": b, "kind": e["kind"]}
+    return {"nodes": list(nodes.values()), "edges": list(edges.values())}
+
+
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     # A plain string for a normal turn, or Anthropic-style content blocks

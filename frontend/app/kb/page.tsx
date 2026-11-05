@@ -105,7 +105,9 @@ export default function KBPage() {
 function KBPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [scratchpad, setScratchpad] = useState("");
+  // ?draft= from the overview's Capture box: loaded into the scratchpad for
+  // review, never sorted or saved on its own.
+  const [scratchpad, setScratchpad] = useState(() => searchParams.get("draft") ?? "");
   const [suggestion, setSuggestion] = useState<KBSuggestion | null>(null);
   const [mealSuggestion, setMealSuggestion] = useState<ParsedMealComposition | null>(null);
   const [outfitSuggestion, setOutfitSuggestion] = useState<ParsedOutfitComposition | null>(null);
@@ -133,7 +135,7 @@ function KBPageInner() {
   const [customLocalId, setCustomLocalId] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   // Phone only: one pane at a time (chat | scratchpad). lg+ shows both.
-  const [pane, setPane] = useState<"chat" | "scratch">("chat");
+  const [pane, setPane] = useState<"chat" | "scratch">(() => (searchParams.get("draft") ? "scratch" : "chat"));
   // The chat's subject — first message (or the note being continued), used
   // only as the archive's topic slug. There is deliberately NO thread list:
   // the page stays fresh ("talk yap add and delete"); continuity comes from
@@ -331,6 +333,9 @@ function KBPageInner() {
       readKBEntry(folder, slug).then((entry) => continueInChatWith(entry.folder, entry.slug, entry.content));
       router.replace("/kb");
     }
+    // The overview's Capture box hands text over as ?draft= — it seeded the
+    // scratchpad's initial state above; just clean the URL.
+    if (searchParams.get("draft")) router.replace("/kb");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 

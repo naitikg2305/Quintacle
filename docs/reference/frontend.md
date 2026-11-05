@@ -12,6 +12,21 @@ Derived from code at commit `884d057` on 2026-10-15.
 > Core nav is four surfaces (Chat, Browse, Dashboard, Calendar); the page
 > map and AppShell sections below describe the pre-§9 layout.
 
+> **Correction (2026-11-03, overview + nav rename):** `/` is now the
+> **overview** (Home), replacing the link-grid landing: Today row (todos due,
+> habits on pace, food vs. `/profile/targets`, spend), a deterministic
+> **Brief** (due/overdue todos, habits behind/over pace, empty journal — code,
+> no model), **Recent** (`/kb/recent`), **This week** (hours from activities,
+> spend, budget left from at-most spend habits, goals met) with a mini radial
+> graph of the last 7 days (`/kb/recent-graph`, `components/overview/WeekGraph.tsx`),
+> and a right column `components/overview/AssistPanel.tsx` — compact chat on
+> `/kb/chat` (same sticky §12 mode, same saved model; archives its transcript
+> on leave like Chat's New) plus a Capture box that hands text to the Chat
+> scratchpad via `/kb?draft=` (review before save). Nav: Core = Home, Chat,
+> Browse, Calendar (also the phone tabs); `/habits` is labelled **Habits**
+> (was Dashboard) and sits in Life; `/home` is labelled **Household** (was
+> Home). The Calendar's Habits toggle (week grid) is unchanged.
+
 Next.js 16 (App Router, all pages `"use client"`), React 19, Tailwind 4.
 Everything lives under [frontend/](../../frontend/): `app/` (pages),
 `lib/` (API client + shared logic), `components/` (shared views + UI kit).

@@ -1,8 +1,32 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import dynamic from "next/dynamic";
 import { forceCenter, forceLink, forceManyBody, forceSimulation, SimulationNodeDatum } from "d3-force";
 import { getGraph, GraphEdge, GraphNode } from "@/lib/api";
+
+// WebGL — client-only, and only loaded when the 3D view is picked.
+const Graph3D = dynamic(() => import("@/components/Graph3D"), { ssr: false });
+
+const VIEW_KEY = "quintacle.graphView";
+const viewListeners = new Set<() => void>();
+function subscribeView(cb: () => void) {
+  viewListeners.add(cb);
+  return () => viewListeners.delete(cb);
+}
+function readView(): "2d" | "3d" {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "3d" ? "3d" : "2d";
+  } catch {
+    return "2d";
+  }
+}
+function writeView(v: "2d" | "3d") {
+  try {
+    localStorage.setItem(VIEW_KEY, v);
+  } catch {}
+  viewListeners.forEach((cb) => cb());
+}
 
 type SimNode = GraphNode & SimulationNodeDatum & { isHub?: boolean };
 type ViewBox = { x: number; y: number; w: number; h: number };
@@ -72,6 +96,7 @@ export default function GraphPage() {
   // for good the moment the user pans or zooms.
   const userDroveCamera = useRef(false);
   const tickCount = useRef(0);
+  const view = useSyncExternalStore(subscribeView, readView, () => "2d" as const);
 
   function fitToContent() {
     const pts = nodesRef.current.filter((n) => n.x != null && n.y != null);
@@ -191,6 +216,15 @@ export default function GraphPage() {
   }
 
   const shownNodes = nodes.filter((n) => visibleTypes.has(n.type));
+  // Stable input for the 3D view: only re-derived when the data or filter
+  // changes, not on every 2D simulation tick (that would restart the 3D layout).
+  const nodes3d = useMemo(
+    () =>
+      nodes
+        .filter((n) => visibleTypes.has(n.type))
+        .map(({ id, type, label, isHub, folder, slug, location }) => ({ id, type, label, isHub, folder, slug, location })),
+    [nodes, visibleTypes]
+  );
   const shownIds = new Set(shownNodes.map((n) => n.id));
   const nodesById = new Map(nodes.map((n) => [n.id, n]));
   // Labels and dots keep a constant on-screen size regardless of zoom level,
@@ -202,8 +236,21 @@ export default function GraphPage() {
       <h1 className="text-2xl font-semibold">Graph</h1>
       <p className="text-sm opacity-60 -mt-2">
         Everything connected: notes to each other, notes to their photos, photos to the day you journaled about them, meals to
-        ingredients, routines to exercises, outfits to items. Drag to pan, scroll to zoom.
+        ingredients, routines to exercises, outfits to items.{" "}
+        {view === "3d" ? "Drag to rotate, right-drag to pan, scroll to zoom." : "Drag to pan, scroll to zoom."}
       </p>
+
+      <div className="inline-flex rounded border text-xs">
+        {(["2d", "3d"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => writeView(v)}
+            className={`px-3 py-1 uppercase ${view === v ? "bg-accent/20 font-semibold" : "opacity-60 hover:opacity-100"}`}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
 
       <div className="flex flex-wrap gap-3 text-xs">
         {Array.from(new Set(nodes.filter((n) => !n.isHub).map((n) => n.type))).map((type) => [type, COLORS[type] ?? "#888"] as const).map(([type, color]) => (
@@ -219,6 +266,15 @@ export default function GraphPage() {
         <div className="relative min-w-0 flex-1 overflow-hidden rounded border" style={{ height: "70vh" }}>
           {nodes.length === 0 ? (
             <p className="text-sm opacity-60 p-4">Nothing to graph yet — drop something first.</p>
+          ) : view === "3d" ? (
+            <Graph3D
+              nodes={nodes3d}
+              edges={edges}
+              colors={COLORS}
+              memberKind={MEMBER_KIND}
+              selectedId={selected?.id ?? null}
+              onSelect={(n) => setSelected(nodes.find((x) => x.id === n.id) ?? null)}
+            />
           ) : (
             <>
               <svg
@@ -319,7 +375,11 @@ export default function GraphPage() {
               )}
             </div>
           ) : (
-            <p className="text-sm opacity-60">Click a node for details. Drag the canvas to pan, scroll to zoom, FIT to see everything.</p>
+            <p className="text-sm opacity-60">
+              {view === "3d"
+                ? "Hover a node for its name, click it for details and to fly to it."
+                : "Click a node for details. Drag the canvas to pan, scroll to zoom, FIT to see everything."}
+            </p>
           )}
         </div>
       </div>

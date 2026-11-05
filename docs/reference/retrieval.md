@@ -143,3 +143,12 @@ against the real `~/.quintacle` while experimenting — sandbox with
 - MCP `search_index(query, k, types)` — read-only, deterministic, no ledger
   entry (tool count now 18;
   [core/quintacle_core/mcp_server/server.py](../../core/quintacle_core/mcp_server/server.py)).
+
+## Addition (2026-11-03): `RetrievalIndex.recent`
+
+`recent(limit, since=None, types=None)` — plain SQL over `nodes_index`
+ordered by `updated_at DESC`. Every write path re-indexes on save, so
+`updated_at` reads as "last saved" (a backfill stamps its own run time).
+Serves `/kb/recent` and `/kb/recent-graph` (the overview page). Excluded ids
+never enter the index, so nothing extra to filter.
+
