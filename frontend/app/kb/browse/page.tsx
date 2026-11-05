@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
@@ -711,7 +711,17 @@ export default function KBBrowsePage() {
                     </div>
                   )}
                   <div className="prose prose-sm dark:prose-invert max-w-none prose-a:text-accent prose-img:rounded-lg">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeHighlight]}
+                      // 2026-11-05 fix: note-relative paths (`assets/x.jpg` — how saved
+                      // notes embed their own pictures) were resolved against the page
+                      // URL and broke; serve them from the note's KB folder instead.
+                      // Absolute/remote/anchor/data URLs keep the default (sanitized) path.
+                      urlTransform={(url) =>
+                        /^(?:[a-z][a-z0-9+.-]*:|\/|#)/i.test(url) ? defaultUrlTransform(url) : kbAssetUrl(viewing!.folder, url)
+                      }
+                    >
                       {renderedBody}
                     </ReactMarkdown>
                   </div>
