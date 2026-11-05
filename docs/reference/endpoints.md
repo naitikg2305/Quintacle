@@ -286,3 +286,30 @@ nothing; only `record/save`, `record/import`, `hubs` (PUT), `settings`
 | POST | `/career/website/run` | `{provider?}` | Candidates (notes edited since the watermark + changed public record entries) with an advisory AI suggest/reason. No write | KBStore + llm_dispatch |
 | POST | `/career/website/reject` | `{id, stamp}` | Remember a rejection until the note/entry changes | CareerState |
 | POST | `/career/website/generate` | `{through, items[{id, category?, summary?}]}` | Render approved items, commit onto a new `quintacle/content-YYYY-MM-DD` branch (409 on a dirty tree, nothing written), move the watermark | website git repo + CareerState |
+
+## 2026-11-05 additions — Travel states: Planned + Bucket list (`/travel`, `nodes/travel/api.py`) — 6
+
+*Added 2026-11-05 (worktree agent).* Travel now has three states:
+Experiences (unchanged, `experience:` entities), **Planned** (trip notes
+under `Fun/Travel/Planned/**`) and **Bucket list** (one note per place under
+`Fun/Travel/Bucket List`). Logic lives in `nodes/travel/states.py`. It is all
+deterministic, with no model calls. `about-*` charter notes are skipped
+everywhere. `ExperienceStore.all()` now ignores the `planned/`,
+`bucket-list/` and `assets/` dirs, so these notes never read as experiences.
+
+| Method | Path | Input | Purpose | Store |
+|---|---|---|---|---|
+| GET | `/travel/planned` | — | `[{folder, slug, title, group, start, end, destinations, status, edited}]` for every note under `fun/travel/planned` (recursive). `group` = first subfolder or `""`. The four trip fields come from frontmatter `fields` (string or null). Sorted by start (nulls last), then title | KBStore |
+| GET | `/travel/unsorted` | — | Same shape (`group: ""`) for notes sitting directly in `fun/travel`, so the UI can offer to move them | KBStore |
+| POST | `/travel/planned/move` | `{folder, slug, group?}` | Move a note into `Fun/Travel/Planned[/<group>]` with the `assets/<file>` files it references. An asset a sibling note also uses is copied; a name clash gets a `-2` name and the reference is rewritten. 409 if the target note exists, 404 if the source is missing. Graph edges are re-pointed to the new node id and the retrieval index is re-keyed. Returns `{folder, slug}` | KBStore + GraphEdgeStore + RetrievalIndex |
+| GET | `/travel/bucket` | — | `[{folder, slug, place, notes, added, visited, visited_on, experience_ids}]`. `visited` is computed in code: an experience's city matches the place as a whole word in either direction (`"Kyoto, Japan"` ~ `Kyoto`; `Rome` never ~ `Romeoville`), or the experience name appears whole inside the place. `visited_on` = the earliest matching `visited_date` | KBStore + ExperienceStore |
+| POST | `/travel/bucket` | `{place, notes?}` | Create the place note (stamps `fields.added`), then run the same graph/retrieval hooks as `POST /kb/entries`. 409 if it already exists. Returns the row | KBStore + GraphEdgeStore + RetrievalIndex |
+| DELETE | `/travel/bucket/{slug}` | — | Delete the place note and drop its graph edges and retrieval row. 404 if missing | KBStore + GraphEdgeStore + RetrievalIndex |
+
+Sorter: `SEED_FOLDERS` now includes `Fun/Travel/Planned` and
+`Fun/Travel/Bucket List`. The placement, entry and batch prompts share one
+folder bullet (`_FOLDER_RULE` in `nodes/kb/llm.py`). It allows a new
+subfolder under the best existing folder for a distinct group, and says to
+reuse a matching `Planned/<X>` first. It also carries the travel rule:
+future-trip docs go to `Fun/Travel/Planned/<Region or Trip>`, and someday
+places go to `Fun/Travel/Bucket List`.

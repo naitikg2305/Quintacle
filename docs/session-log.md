@@ -3,6 +3,18 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-05 — Travel states: Planned + Bucket list backend (worktree agent)
+
+Travel now has three states: Experiences (unchanged), Planned (trip notes under
+`Fun/Travel/Planned/**`, grouped by their first subfolder) and Bucket list (one note
+per place under `Fun/Travel/Bucket List`). New `nodes/travel/states.py` plus six
+`/travel` routes: `planned`, `unsorted`, `planned/move` (moves the asset files too,
+re-keys graph edges and the retrieval index, refuses to overwrite), and bucket
+GET/POST/DELETE. `visited` is computed in code with whole-word city matching.
+`ExperienceStore.all()` skips the new dirs. Seed folders and the placement, entry and
+batch prompts got the new-subfolder and travel rules. 810 passed. Details:
+`docs/reference/endpoints.md` (2026-11-05 travel section).
+
 ## 2026-11-05 — Claude Max wired in as the cloud tier (main session)
 
 Owner asked to use the Max subscription "everywhere" on the computer, with the phone
