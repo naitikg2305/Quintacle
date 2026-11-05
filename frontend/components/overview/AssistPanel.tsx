@@ -9,7 +9,7 @@ import ModeChip from "@/components/ModeChip";
 import { Panel } from "@/components/ui/Panel";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
-import { archiveTranscript, ChatMessage, ChatMode, chatWithKB, DEFAULT_LOCAL_MODEL, listChatModels, privateHandoffNotice } from "@/lib/api";
+import { archiveTranscript, newChatSessionId, ChatMessage, ChatMode, chatWithKB, DEFAULT_LOCAL_MODEL, listChatModels, privateHandoffNotice } from "@/lib/api";
 
 // The overview's right column: a compact chat (same /kb/chat, same sticky
 // §12 mode, same model the Chat page last picked) over a capture box that
@@ -28,8 +28,13 @@ export default function AssistPanel() {
   const [privacyNotice, setPrivacyNotice] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
+  // 2026-11-05: always saved — per-reply autosave into ONE transcript (same
+  // session id), final save (with soft-fact extraction) on leave.
+  const [sessionId] = useState(newChatSessionId);
+  const sessionIdRef = useRef(sessionId);
 
   useEffect(() => {
+    const leavingId = sessionIdRef.current;
     listChatModels()
       .then((list) => {
         let saved: string | null = null;
@@ -40,13 +45,17 @@ export default function AssistPanel() {
       })
       .catch(() => {});
     return () => {
-      if (messagesRef.current.length > 0) archiveTranscript(messagesRef.current, null, true).catch(() => {});
+      if (messagesRef.current.length > 0)
+        archiveTranscript(messagesRef.current, null, true, false, { sessionId: leavingId, keepalive: true }).catch(() => {});
     };
   }, []);
 
   useEffect(() => {
     messagesRef.current = messages;
-  }, [messages]);
+    const last = messages[messages.length - 1];
+    if (last && last.role === "assistant")
+      archiveTranscript(messages, null, true, false, { sessionId, final: false }).catch(() => {});
+  }, [messages, sessionId]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });

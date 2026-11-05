@@ -231,3 +231,49 @@ def test_archive_is_invisible_to_mcp_tools(tmp_path):
 
     assert all("conversation" not in f for f in mcp.kb_list_folders())
     assert mcp.kb_search_entries("xyzzy-mcp-should-never-see-this") == []
+
+
+# --- 2026-11-05: always-save (per-reply autosave into ONE transcript) --------
+
+
+def test_same_session_id_rewrites_one_transcript(tmp_path):
+    store = TranscriptStore(tmp_path)
+    first = store.archive([{"role": "user", "content": "plan vienna"}, {"role": "assistant", "content": "sure"}], None, "s1")
+    second = store.archive(
+        [
+            {"role": "user", "content": "plan vienna"},
+            {"role": "assistant", "content": "sure"},
+            {"role": "user", "content": "add salzburg"},
+            {"role": "assistant", "content": "added salzburg"},
+        ],
+        None,
+        "s1",
+    )
+    assert first["created"] is True and second["created"] is False
+    assert second["path"] == first["path"]
+    files = list((tmp_path / "conversations").rglob("*.md"))
+    assert len(files) == 1 and "added salzburg" in files[0].read_text()
+    hits = store.search("salzburg")
+    assert len(hits) == 1 and hits[0]["path"] == first["path"]
+    assert len(store.search("vienna")) == 1  # old FTS row replaced, not duplicated
+
+
+def test_different_session_ids_make_separate_transcripts(tmp_path):
+    store = TranscriptStore(tmp_path)
+    a = store.archive([{"role": "user", "content": "one"}], None, "a")
+    b = store.archive([{"role": "user", "content": "two"}], None, "b")
+    assert a["path"] != b["path"]
+
+
+def test_autosave_skips_soft_facts_final_save_queues_them(monkeypatch, tmp_path):
+    from quintacle_core.nodes.kb import transcripts as tmod
+
+    monkeypatch.setattr(tmod, "get_transcript_store", lambda: TranscriptStore(tmp_path))
+    queued = []
+    monkeypatch.setattr("quintacle_core.nodes.kb.soft_record.extract_and_store", lambda *a: queued.append(a))
+    client = TestClient(api_module.app)
+    msgs = [{"role": "user", "content": "I moved to Vienna"}, {"role": "assistant", "content": "noted"}]
+    r1 = client.post("/transcripts/archive", json={"messages": msgs, "session_id": "z", "final": False}).json()
+    assert r1["archived"] is True and r1["soft_facts_pending"] is False and queued == []
+    r2 = client.post("/transcripts/archive", json={"messages": msgs, "session_id": "z"}).json()
+    assert r2["soft_facts_pending"] is True and r2["path"] == r1["path"] and len(queued) == 1

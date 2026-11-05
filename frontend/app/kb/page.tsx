@@ -1,9 +1,10 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   archiveTranscript,
+  newChatSessionId,
   ChatMode,
   base64ToFile,
   buildChatMessage,
@@ -245,18 +246,51 @@ function KBPageInner() {
     } catch {}
   }
 
+  // 2026-11-05 fix: the chat used to be archived ONLY on "New chat", so
+  // navigating away, refreshing, closing the tab or a backend restart
+  // silently dropped it — and with nothing archived, later chats had nothing
+  // to remember. Now every chat ALWAYS saves (unless Incognito): after each
+  // reply (rewriting the same transcript via its session id), and a final
+  // save on leave (unmount for in-app navigation, pagehide for refresh/close)
+  // which also queues soft-fact extraction.
+  const [chatSessionId, setChatSessionId] = useState(newChatSessionId);
+  const leaveRef = useRef({ log: chatLog, subject: chatSubject, keep: keepTranscript, id: chatSessionId, finalized: 0 });
+  useEffect(() => {
+    leaveRef.current = { ...leaveRef.current, log: chatLog, subject: chatSubject, keep: keepTranscript, id: chatSessionId };
+  }, [chatLog, chatSubject, keepTranscript, chatSessionId]);
+  useEffect(() => {
+    const last = chatLog[chatLog.length - 1];
+    if (!keepTranscript || !last || last.role !== "assistant") return;
+    archiveTranscript(chatLog, chatSubject || null, true, false, { sessionId: chatSessionId, final: false }).catch(() => {});
+  }, [chatLog, chatSubject, keepTranscript, chatSessionId]);
+  useEffect(() => {
+    function archiveOnLeave() {
+      const { log, subject, keep, id, finalized } = leaveRef.current;
+      if (log.length === 0 || log.length === finalized) return;
+      leaveRef.current.finalized = log.length;
+      archiveTranscript(log, subject || null, keep, !keep, { keepalive: true, sessionId: id }).catch(() => {});
+    }
+    window.addEventListener("pagehide", archiveOnLeave);
+    return () => {
+      window.removeEventListener("pagehide", archiveOnLeave);
+      archiveOnLeave();
+    };
+  }, []);
+
   // Closing a chat (the New button, or continuing on a note) archives the
   // transcript verbatim — one file write, zero model calls — unless the
   // "don't keep" toggle is set, then clears the page. Always fresh.
   async function closeChat() {
     if (chatLog.length > 0) {
       try {
-        await archiveTranscript(chatLog, chatSubject || null, keepTranscript, !keepTranscript);
+        await archiveTranscript(chatLog, chatSubject || null, keepTranscript, !keepTranscript, { sessionId: chatSessionId });
       } catch {
         // an unreachable backend must not trap the user in a stale chat
       }
     }
     setChatSubject("");
+    setChatSessionId(newChatSessionId());
+    leaveRef.current.finalized = 0;
     setKeepTranscript(true);
     setModeNotice(null);
     setPrivacyNotice(null);

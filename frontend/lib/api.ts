@@ -1654,11 +1654,38 @@ export type ArchiveResult = { archived: boolean; path?: string; topic?: string; 
 // `incognito` (§12) marks a chat that was incognito from message one — the
 // same intent as keep=false, stated explicitly so the backend never learns
 // soft facts from it.
-export const archiveTranscript = (messages: ChatMessage[], subject: string | null, keep: boolean, incognito?: boolean) =>
-  request<ArchiveResult>("/transcripts/archive", {
-    method: "POST",
-    body: JSON.stringify({ messages, subject, keep, ...(incognito ? { incognito: true } : {}) }),
+// `keepalive` lets the request outlive the page (tab close / refresh); the
+// browser caps keepalive bodies at ~64 KB, so a very long chat falls back to
+// a normal request that may not finish if the page is already going away.
+// `sessionId` (2026-11-05 autosave): saves with the same id rewrite ONE
+// transcript; `final: false` = a per-reply autosave (no soft-fact extraction).
+export const archiveTranscript = (
+  messages: ChatMessage[],
+  subject: string | null,
+  keep: boolean,
+  incognito?: boolean,
+  opts?: { keepalive?: boolean; sessionId?: string; final?: boolean }
+) => {
+  const body = JSON.stringify({
+    messages,
+    subject,
+    keep,
+    ...(incognito ? { incognito: true } : {}),
+    ...(opts?.sessionId ? { session_id: opts.sessionId } : {}),
+    ...(opts?.final === false ? { final: false } : {}),
   });
+  return request<ArchiveResult>("/transcripts/archive", {
+    method: "POST",
+    body,
+    ...(opts?.keepalive && body.length < 60_000 ? { keepalive: true } : {}),
+  });
+};
+
+/** A fresh id for one open chat (autosave identity). */
+export const newChatSessionId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 // --- soft record (§12) -----------------------------------------------------
 // Short facts extracted from kept chats; each carries its date and the

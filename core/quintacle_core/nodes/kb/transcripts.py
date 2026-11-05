@@ -49,6 +49,10 @@ _FTS_SCHEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts USING fts5(
     path, topic, date, body
 );
+CREATE TABLE IF NOT EXISTS transcript_sessions (
+    session_id TEXT PRIMARY KEY,
+    path TEXT NOT NULL
+);
 """
 
 
@@ -97,13 +101,26 @@ class TranscriptStore:
             return slugify(subject)
         return clock.now().strftime("%Y-%m-%d-%H%M")
 
-    def archive(self, messages: list[dict], subject: str | None = None) -> dict | None:
+    def archive(self, messages: list[dict], subject: str | None = None, session_id: str | None = None) -> dict | None:
         """Writes the verbatim transcript file + its FTS row. Returns the
-        archive record ({path, topic, date, stamp, message_count}) or None for
-        an empty transcript (nothing worth a file)."""
+        archive record ({path, topic, date, stamp, message_count, created})
+        or None for an empty transcript (nothing worth a file).
+
+        2026-11-05 — `session_id` (a client-generated id per open chat): the
+        chat page now saves after EVERY reply, so a refresh/crash/backend
+        restart never loses a conversation. The first save of a session
+        creates the file as before; later saves with the same id REWRITE that
+        same file and replace its FTS row (`created` False), so one chat is
+        always one transcript, never a pile of partial copies."""
         if not messages:
             return None
         now = clock.now()
+        if session_id:
+            row = self.conn.execute(
+                "SELECT path FROM transcript_sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            if row is not None and (self.root / row["path"]).exists():
+                return self._rewrite(row["path"], messages, now)
         topic = self.topic_slug(subject)
         topic_dir = self.root / topic
         topic_dir.mkdir(parents=True, exist_ok=True)
@@ -144,6 +161,10 @@ class TranscriptStore:
             "INSERT INTO transcript_fts (path, topic, date, body) VALUES (?, ?, ?, ?)",
             (rel_path, topic, now.isoformat(), indexed_body),
         )
+        if session_id:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO transcript_sessions (session_id, path) VALUES (?, ?)", (session_id, rel_path)
+            )
         self.conn.commit()
         return {
             "path": rel_path,
@@ -151,6 +172,43 @@ class TranscriptStore:
             "date": now.isoformat(),
             "stamp": stamp,
             "message_count": len(messages),
+            "created": True,
+        }
+
+    def _rewrite(self, rel_path: str, messages: list[dict], now) -> dict:
+        """Same file, same FTS identity: refresh the body, the message count
+        and the private-turn handling; keep the original `date`/topic (the
+        chat started then). Used by the per-reply autosave."""
+        path = self.root / rel_path
+        post = frontmatter.loads(path.read_text(encoding="utf-8"))
+        topic = post.get("topic") or rel_path.split("/", 1)[0]
+        started = post.get("date") or now.isoformat()
+        body = _render_turns(messages)
+        post.content = body
+        post["message_count"] = len(messages)
+        post["updated"] = now.isoformat()
+        private_turns = [i for i, m in enumerate(messages) if m.get("role") == "assistant" and m.get("private_notes")]
+        if private_turns:
+            post["private_turns"] = len(private_turns)
+        else:
+            post.metadata.pop("private_turns", None)
+        path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        indexed_body = (
+            _render_turns([m for i, m in enumerate(messages) if i not in set(private_turns)]) if private_turns else body
+        )
+        self.conn.execute("DELETE FROM transcript_fts WHERE path = ?", (rel_path,))
+        self.conn.execute(
+            "INSERT INTO transcript_fts (path, topic, date, body) VALUES (?, ?, ?, ?)",
+            (rel_path, topic, str(started), indexed_body),
+        )
+        self.conn.commit()
+        return {
+            "path": rel_path,
+            "topic": topic,
+            "date": str(started),
+            "stamp": path.stem,
+            "message_count": len(messages),
+            "created": False,
         }
 
     def search(
@@ -245,6 +303,12 @@ class ArchiveRequest(BaseModel):
     # §12: the incognito start — an alias of keep=false; EITHER one skips
     # everything (no file, no FTS row, no edge, no soft-fact extraction).
     incognito: bool = False
+    # 2026-11-05 autosave: the open chat's client-side id. Same id = rewrite
+    # the same transcript (see TranscriptStore.archive). `final` marks the
+    # close/leave save — only that one queues soft-fact extraction, so
+    # per-reply autosaves don't re-extract the same facts over and over.
+    session_id: str | None = None
+    final: bool = True
 
 
 def _edge_candidates() -> list[dict]:
@@ -285,13 +349,13 @@ def archive_transcript(body: ArchiveRequest, background: BackgroundTasks) -> dic
     if not body.keep or body.incognito:
         return {"archived": False, "reason": "keep is off for this chat", "soft_facts_added": 0}
     messages = [m.model_dump() for m in body.messages]
-    result = get_transcript_store().archive(messages, body.subject)
+    result = get_transcript_store().archive(messages, body.subject, body.session_id)
     if result is None:
         return {"archived": False, "reason": "empty transcript", "soft_facts_added": 0}
     pending = False
     try:
         user_text = "\n\n".join(_as_text(m["content"]) for m in messages if m["role"] == "user").strip()
-        if user_text:
+        if user_text and body.final:
             from .soft_record import extract_and_store
 
             background.add_task(extract_and_store, user_text, result["date"][:10], result["path"])
@@ -301,6 +365,8 @@ def archive_transcript(body: ArchiveRequest, background: BackgroundTasks) -> dic
     # The graph edge is additive — a hiccup here (graph store not up in some
     # partial test app) must never fail an archive that already landed.
     try:
+        if not result.get("created", True):
+            raise LookupError("autosave rewrite — topic edge already made on first save")
         edge = link_transcript_topic(f"transcript:{result['topic']}/{result['stamp']}", body.subject, _edge_candidates())
     except Exception:
         edge = None
