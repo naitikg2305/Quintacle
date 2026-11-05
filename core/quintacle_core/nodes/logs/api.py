@@ -473,6 +473,14 @@ def log_body_stat(body: BodyStatCreate) -> dict:
     return {"id": entry_id, **body.model_dump(mode="json")}
 
 
+@router.get("/body-stats")
+def body_stats_between(start: date, end: date, metric: str = "weight") -> list[dict]:
+    """Deterministic read of one body metric over [start, end] (inclusive),
+    oldest first. Metric names are matched case-insensitively against the
+    lowercase names the journal parser writes ("weight")."""
+    return [dict(row) for row in get_repo().body_stats_between(metric.strip().lower(), start, end)]
+
+
 @router.post("/habits")
 def create_habit(body: HabitCreate) -> dict:
     """Upsert-by-name (versioned habits, next-wave-plan §8): a new name takes

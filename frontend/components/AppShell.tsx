@@ -2,88 +2,22 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
-import {
-  BookOpen,
-  Briefcase,
-  CalendarDays,
-  Ellipsis,
-  FileText,
-  FolderTree,
-  House,
-  Brain,
-  Image as ImageIcon,
-  KeyRound,
-  Layers,
-  LayoutDashboard,
-  ListChecks,
-  MessageSquare,
-  Network,
-  Plane,
-  RefreshCw,
-  Shirt,
-  Target,
-  TrendingUp,
-  User,
-  Users,
-  Wallet,
-  type LucideIcon,
-} from "lucide-react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { LayoutGrid } from "lucide-react";
 import { listChatModels } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { BottomSheet } from "@/components/ui/BottomSheet";
+import { appForPath, CORE_APPS, DRAWER_APPS, isAppActive, pushRecentApp, type AppEntry } from "@/lib/apps";
+import AppDrawer from "@/components/AppDrawer";
 
-type NavItem = { href: string; label: string; icon: LucideIcon; match?: (path: string) => boolean };
+// 2026-11-05 nav redo: the dashboard IS "/" (no Home tab — the logo goes
+// there). Four core surfaces — Chat, Browse, Calendar, Graph — plus the
+// ⊞ Apps drawer for everything else. Desktop: slim icon rail. Phone: a
+// 5-slot bottom bar with Apps as the raised centre button. Every page comes
+// from lib/apps.ts.
 
-// The four surfaces the app is built around — also the phone's bottom tabs.
-// Drop retired into Chat (next-wave §9): the chat page's scratchpad is the
-// drop lane now; /kb/drop redirects there.
-const CORE: NavItem[] = [
-  { href: "/", label: "Home", icon: LayoutDashboard, match: (p) => p === "/" },
-  { href: "/kb", label: "Chat", icon: MessageSquare, match: (p) => p === "/kb" || p.startsWith("/kb/drop") },
-  { href: "/kb/browse", label: "Browse", icon: FolderTree, match: (p) => p.startsWith("/kb/browse") || p.startsWith("/kb/folder") },
-  { href: "/day", label: "Calendar", icon: CalendarDays },
-];
-
-// §10 home-page regroup, mirrored here: Life · Productivity · Fun.
-const LIFE: NavItem[] = [
-  { href: "/journal", label: "Journal", icon: BookOpen },
-  { href: "/todos", label: "Todos", icon: ListChecks },
-  { href: "/habits", label: "Habits", icon: Target },
-  { href: "/documents", label: "Documents", icon: FileText },
-  { href: "/wardrobe", label: "Wardrobe", icon: Shirt },
-  { href: "/home", label: "Household", icon: House },
-  { href: "/finance", label: "Finance", icon: Wallet },
-  { href: "/people", label: "People", icon: Users },
-  { href: "/profile", label: "Profile", icon: User },
-  { href: "/soft-record", label: "Chat memory", icon: Brain },
-];
-
-const PRODUCTIVITY: NavItem[] = [
-  { href: "/stocks", label: "Stocks", icon: TrendingUp },
-  { href: "/career", label: "Career updates", icon: Briefcase },
-];
-
-const FUN: NavItem[] = [
-  { href: "/travel", label: "Travel", icon: Plane },
-  { href: "/gallery", label: "Gallery", icon: ImageIcon },
-];
-
-const TOOLS: NavItem[] = [
-  { href: "/kb/batch", label: "Batch import", icon: Layers },
-  { href: "/kb/graph", label: "Graph", icon: Network },
-  { href: "/vault", label: "Vault", icon: KeyRound },
-  { href: "/sync", label: "Sync", icon: RefreshCw },
-];
-
-function isActive(item: NavItem, path: string): boolean {
-  if (item.match) return item.match(path);
-  return path === item.href || path.startsWith(item.href + "/");
-}
-
-function Logo({ onClick }: { onClick?: () => void }) {
+function Logo() {
   return (
-    <Link href="/" onClick={onClick} className="flex items-center gap-2">
+    <Link href="/" className="flex items-center gap-2" aria-label="Quintacle — dashboard">
       <span className="h-2 w-2 rounded-full bg-accent shadow-[0_0_10px_2px_rgb(34_211_238/0.7)]" />
       <span className="font-mono text-sm font-semibold tracking-[0.32em] text-accent">QUINTACLE</span>
     </Link>
@@ -91,7 +25,7 @@ function Logo({ onClick }: { onClick?: () => void }) {
 }
 
 // Backend heartbeat + clock — the little "systems online" readout.
-function StatusReadout({ className }: { className?: string }) {
+function StatusReadout({ className, compact }: { className?: string; compact?: boolean }) {
   const [online, setOnline] = useState<boolean | null>(null);
   const [now, setNow] = useState<Date | null>(null);
 
@@ -112,15 +46,35 @@ function StatusReadout({ className }: { className?: string }) {
     };
   }, []);
 
+  const dot = (
+    <span
+      className={cn(
+        "h-1.5 w-1.5 rounded-full",
+        online === null ? "bg-muted" : online ? "bg-ok shadow-[0_0_8px_rgb(52_211_153/0.8)]" : "bg-danger"
+      )}
+    />
+  );
+
+  if (compact) {
+    return (
+      <div
+        className={cn("flex flex-col items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-muted", className)}
+        title={online === null ? "Checking backend…" : online ? "Backend online" : "Backend offline"}
+      >
+        {dot}
+        {now && (
+          <span suppressHydrationWarning>
+            {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }).replace(/\s?[AP]M$/i, "")}
+          </span>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={cn("flex items-center gap-3 font-mono text-[10px] uppercase tracking-wider text-muted", className)}>
       <span className="flex items-center gap-1.5">
-        <span
-          className={cn(
-            "h-1.5 w-1.5 rounded-full",
-            online === null ? "bg-muted" : online ? "bg-ok shadow-[0_0_8px_rgb(52_211_153/0.8)]" : "bg-danger"
-          )}
-        />
+        {dot}
         {online === null ? "…" : online ? "online" : "offline"}
       </span>
       {now && (
@@ -133,57 +87,80 @@ function StatusReadout({ className }: { className?: string }) {
   );
 }
 
-function SidebarGroup({ label, items, path }: { label: string; items: NavItem[]; path: string }) {
+function RailItem({ app, active }: { app: AppEntry; active: boolean }) {
   return (
-    <div className="space-y-0.5">
-      <p className="px-3 pb-1 pt-3 font-mono text-[10px] uppercase tracking-[0.18em] text-muted/70">{label}</p>
-      {items.map((item) => {
-        const active = isActive(item, path);
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={cn(
-              "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors",
-              active
-                ? "bg-accent/10 text-accent shadow-[inset_2px_0_0_var(--color-accent)]"
-                : "text-muted hover:bg-white/5 hover:text-foreground"
-            )}
-          >
-            <item.icon size={16} />
-            {item.label}
-          </Link>
-        );
-      })}
-    </div>
+    <Link
+      href={app.href}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "group relative flex w-full flex-col items-center gap-1 rounded-xl py-2 text-[10px] transition-colors",
+        active ? "text-accent" : "text-muted hover:text-foreground"
+      )}
+    >
+      {active && <span className="absolute left-0 top-1/2 h-7 w-0.5 -translate-y-1/2 rounded-r bg-accent shadow-[0_0_8px_rgb(34_211_238/0.9)]" />}
+      <span
+        className={cn(
+          "grid h-9 w-9 place-items-center rounded-xl transition-colors",
+          active ? "bg-accent/12 shadow-glow" : "group-hover:bg-white/5"
+        )}
+      >
+        <app.icon size={18} />
+      </span>
+      {app.label}
+    </Link>
   );
 }
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const path = usePathname();
-  const [moreOpen, setMoreOpen] = useState(false);
+  const [appsOpen, setAppsOpen] = useState(false);
+  const closeApps = useCallback(() => setAppsOpen(false), []);
 
   useEffect(() => {
-    setMoreOpen(false);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- close on navigation
+    setAppsOpen(false);
+    const app = appForPath(path);
+    if (app && app.group !== "core") pushRecentApp(app.id);
   }, [path]);
 
-  const moreActive = [...LIFE, ...PRODUCTIVITY, ...FUN, ...TOOLS].some((i) => isActive(i, path));
+  const appsActive = DRAWER_APPS.some((a) => isAppActive(a, path));
+  const [chat, browse, calendar, graph] = CORE_APPS;
 
   return (
     <div className="min-h-dvh">
-      {/* Desktop: fixed sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-line bg-surface/70 px-3 py-4 backdrop-blur-md md:flex">
-        <div className="px-3 pb-2">
-          <Logo />
-        </div>
-        <nav className="flex-1 overflow-y-auto">
-          <SidebarGroup label="Core" items={CORE} path={path} />
-          <SidebarGroup label="Life" items={LIFE} path={path} />
-          <SidebarGroup label="Productivity" items={PRODUCTIVITY} path={path} />
-          <SidebarGroup label="Fun" items={FUN} path={path} />
-          <SidebarGroup label="Tools" items={TOOLS} path={path} />
+      {/* Desktop: slim icon rail */}
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-20 flex-col items-center border-r border-line bg-surface/70 px-2 py-4 backdrop-blur-md md:flex">
+        <Link
+          href="/"
+          aria-label="Quintacle — dashboard"
+          aria-current={path === "/" ? "page" : undefined}
+          className={cn(
+            "mb-4 grid h-11 w-11 place-items-center rounded-2xl border font-mono text-lg font-bold transition-colors",
+            path === "/" ? "border-accent/60 bg-accent/15 text-accent shadow-glow" : "border-line text-accent hover:border-accent/50"
+          )}
+        >
+          Q
+        </Link>
+        <nav className="flex w-full flex-1 flex-col items-center gap-1" aria-label="Main">
+          {CORE_APPS.map((app) => (
+            <RailItem key={app.id} app={app} active={isAppActive(app, path)} />
+          ))}
         </nav>
-        <StatusReadout className="border-t border-line px-3 pt-3" />
+        <StatusReadout compact className="mb-3" />
+        <button
+          onClick={() => setAppsOpen(true)}
+          aria-haspopup="dialog"
+          aria-expanded={appsOpen}
+          className={cn(
+            "flex w-full flex-col items-center gap-1 rounded-xl py-2 text-[10px] transition-colors",
+            appsActive ? "text-accent" : "text-muted hover:text-foreground"
+          )}
+        >
+          <span className="qa-glow grid h-10 w-10 place-items-center rounded-full bg-accent/15 text-accent">
+            <LayoutGrid size={18} />
+          </span>
+          Apps
+        </button>
       </aside>
 
       {/* Phone: slim top strip */}
@@ -192,49 +169,46 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <StatusReadout />
       </header>
 
-      <main className="px-4 py-4 pb-28 md:ml-60 md:px-6 md:py-6 md:pb-8">{children}</main>
+      <main className="px-4 py-4 pb-28 md:ml-20 md:px-6 md:py-6 md:pb-8">{children}</main>
 
-      {/* Phone: bottom tab bar */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-line-strong bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden">
-        {CORE.map((item) => {
-          const active = isActive(item, path);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn("flex flex-col items-center gap-0.5 py-2 text-[10px]", active ? "text-accent" : "text-muted")}
-            >
-              <item.icon size={20} className={active ? "drop-shadow-[0_0_6px_rgb(34_211_238/0.8)]" : ""} />
-              {item.label}
-            </Link>
-          );
-        })}
+      {/* Phone: 5-slot bottom bar — Apps raised in the centre */}
+      <nav
+        aria-label="Main"
+        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 items-end border-t border-line-strong bg-surface/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden"
+      >
+        {[chat, browse].map((app) => (
+          <BarItem key={app.id} app={app} active={isAppActive(app, path)} />
+        ))}
         <button
-          onClick={() => setMoreOpen(true)}
-          className={cn("flex flex-col items-center gap-0.5 py-2 text-[10px]", moreActive ? "text-accent" : "text-muted")}
+          onClick={() => setAppsOpen(true)}
+          aria-haspopup="dialog"
+          aria-expanded={appsOpen}
+          className={cn("relative flex flex-col items-center pb-2 text-[10px]", appsActive ? "text-accent" : "text-muted")}
         >
-          <Ellipsis size={20} />
-          More
+          <span className="qa-glow -mt-5 mb-0.5 grid h-14 w-14 place-items-center rounded-full border border-accent/50 bg-[radial-gradient(circle_at_35%_30%,rgb(34_211_238/0.45),#0a111d_75%)] text-accent">
+            <LayoutGrid size={24} />
+          </span>
+          Apps
         </button>
+        {[calendar, graph].map((app) => (
+          <BarItem key={app.id} app={app} active={isAppActive(app, path)} />
+        ))}
       </nav>
 
-      <BottomSheet open={moreOpen} onClose={() => setMoreOpen(false)} title="All sections">
-        <div className="grid grid-cols-3 gap-2">
-          {[...LIFE, ...PRODUCTIVITY, ...FUN, ...TOOLS].map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "flex flex-col items-center gap-1.5 rounded-lg border p-3 text-xs",
-                isActive(item, path) ? "border-accent/50 bg-accent/10 text-accent" : "border-line text-muted"
-              )}
-            >
-              <item.icon size={20} />
-              {item.label}
-            </Link>
-          ))}
-        </div>
-      </BottomSheet>
+      <AppDrawer open={appsOpen} onClose={closeApps} path={path} />
     </div>
+  );
+}
+
+function BarItem({ app, active }: { app: AppEntry; active: boolean }) {
+  return (
+    <Link
+      href={app.href}
+      aria-current={active ? "page" : undefined}
+      className={cn("flex flex-col items-center gap-0.5 py-2 text-[10px]", active ? "text-accent" : "text-muted")}
+    >
+      <app.icon size={20} className={active ? "drop-shadow-[0_0_6px_rgb(34_211_238/0.8)]" : ""} />
+      {app.label}
+    </Link>
   );
 }

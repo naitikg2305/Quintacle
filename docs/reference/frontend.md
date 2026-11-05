@@ -159,3 +159,59 @@ UTC and rolled "today" to tomorrow after ~8 pm ET); `yearsAgoIso`,
 - **Browse** (`app/kb/browse/page.tsx`): a Private badge on the note view
   and a Make private / Make public button (`POST /kb/entry/private`); the
   raw `private` key is hidden from the meta field list.
+
+## 2026-11-05 — correction: nav is a rail + ⊞ Apps drawer; "/" is the dashboard
+
+Supersedes the "AppShell navigation" section above (kept as history).
+
+- **One app registry** — `frontend/lib/apps.ts` `APPS`: every page with
+  `id/href/label/icon/group/tint/match/keywords`. Groups: `core` (Chat
+  `/kb`, Browse `/kb/browse`, Calendar `/day`, Graph `/kb/graph`), then
+  `life`, `productivity`, `fun`, `tools` (Batch import, Vault, Sync).
+  Adding a page = one entry. `appForPath` picks the most specific match.
+- **No Home tab.** `/` is the dashboard; the logo (phone) / "Q" tile (desktop
+  rail) links there.
+- **Desktop**: an 80px icon rail (Q → `/`, the four core items, a compact
+  heartbeat + clock, and a glowing ⊞ Apps button at the bottom). `main` is
+  `md:ml-20`.
+- **Phone**: a 5-slot bottom bar — Chat · Browse · ⊞ Apps (raised glowing
+  circle) · Calendar · Graph. The top strip is unchanged.
+- **App drawer** (`components/AppDrawer.tsx`, the same component on phone
+  and desktop): a bottom sheet on phone, a centered panel on md+. It has a
+  search box (label + keywords + group, Enter opens the first hit), a
+  **Recent** row (the last 4 non-core apps visited, tracked by AppShell on
+  route change in localStorage `quintacle.recentApps` with try/catch), then
+  round tinted bubbles grouped Life / Productivity / Fun / Tools. Esc or a
+  backdrop click closes it, Tab is trapped, the search box gets focus on
+  open, focus returns to the opener on close, and body scroll is locked.
+  Motion (`qa-pop` / `qa-bubble` stagger / `qa-glow` in `globals.css`) turns
+  off under `prefers-reduced-motion`.
+- **Dashboard** (`app/page.tsx`). Same load pattern as before: one
+  `Promise.all` of `soft()` calls, so a failing endpoint blanks only its own
+  widget. After load, a null field shows "Couldn't load" instead of
+  "Loading…" forever. Habit progress is fetched one habit at a time (see
+  the session log about the shared-connection race). Widgets, in phone
+  order:
+  **Today**: up to 4 due/overdue todos (overdue first, then by start time),
+  plus today's activities, exercise and photos from `GET /day/{today}`, plus
+  a journal nudge. Every row is a link.
+  **Goals this period**: a ring per active habit (current/target) with a
+  tick at `prorated_target`, colored on-pace / behind / over.
+  **Productivity**: this week's hours as Mon–Sun stacked columns by activity
+  category (dark categorical palette, up to 7 categories then "Other"),
+  with a total and a change against the same elapsed days of last week.
+  **Weight · 60 days**: a sparkline with a hover readout, the latest value,
+  the change since the first reading in the window, and the change against
+  a week ago. Mixed kg/lb readings are converted to the latest reading's
+  unit.
+  **Food today** (kcal / protein meters against Profile targets) and
+  **Spend · week** (total, today, per-day mini bars, budget left from
+  at_most spend habits).
+  **Connections · last 7 days** (WeekGraph), **Recent**, then the
+  Assist + Capture column (right column on lg, last on phone).
+  Charts are plain SVG/HTML in `components/overview/charts.tsx` (`Ring`,
+  `Meter`, `Sparkline`, `StackedColumns`, plus the `SERIES` palette).
+- **New backend read** for the weight widget: `GET /logs/body-stats?start&end&metric=weight`
+  (`LogsRepository.body_stats_between`), oldest first and read-only, with
+  the metric lowercased. Client: `listBodyStats` in `lib/api.ts`.
+  Tests: `core/tests/test_body_stats_read.py`.

@@ -439,6 +439,15 @@ class LogsRepository:
             "SELECT * FROM body_stats WHERE metric = ? ORDER BY date DESC, id DESC LIMIT 1", (metric,)
         ).fetchone()
 
+    def body_stats_between(self, metric: str, start: date, end: date) -> list[sqlite3.Row]:
+        """One metric's readings over a date window, oldest first — the
+        dashboard's weight sparkline. Read-only; several readings on one day
+        all come back (the caller decides how to plot them)."""
+        return self.conn.execute(
+            "SELECT * FROM body_stats WHERE metric = ? AND date >= ? AND date <= ? ORDER BY date, id",
+            (metric, start.isoformat(), end.isoformat()),
+        ).fetchall()
+
     def body_stats_for_date(self, entry_date: date) -> list[sqlite3.Row]:
         return self.conn.execute(
             "SELECT * FROM body_stats WHERE date = ? ORDER BY id", (entry_date.isoformat(),)
