@@ -11,6 +11,7 @@ from ..llm_config import DEFAULT_MODEL
 from ..llm_dispatch import parse_structured
 from .journal.llm import FinanceEntry
 from .vision import image_content_blocks
+from ..max_backend import cloud_client
 
 IMAGE_MIME_TYPES = {
     "jpg": "image/jpeg",
@@ -297,7 +298,7 @@ class _ImageClassification(BaseModel):
 def classify_image_type(data: bytes, mime_type: str) -> ImageKind:
     """Cheap vision call distinguishing what KIND of photo this is, so the
     caller can route it without asking the user to say so manually every time."""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     response = client.messages.parse(
         model=DEFAULT_MODEL,
         max_tokens=256,
@@ -377,7 +378,7 @@ def extract_finance_from_receipt(photos: list[tuple[bytes, str]], user_descripti
     receipt shot in two overlapping halves) — the one finance path that
     can't be handled by the deterministic "expense: $12 at chipotle" text
     prefix, since there's no text to parse."""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     content: list[dict] = image_content_blocks(photos)
     if user_description.strip():
         content.append({"type": "text", "text": user_description.strip()})

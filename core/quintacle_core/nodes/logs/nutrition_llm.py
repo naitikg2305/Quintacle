@@ -7,6 +7,7 @@ from ...llm_config import DEFAULT_MODEL
 from ...llm_dispatch import parse_structured
 from ..vision import image_content_blocks
 from .nutrition_targets import NUTRIENT_UNITS
+from ...max_backend import cloud_client
 
 _SYSTEM_PROMPT = (
     "Estimate full nutrition for a described food. Give macros (protein, carbs, fat, fiber, "
@@ -64,7 +65,7 @@ def estimate_nutrition_from_image(photos: list[tuple[bytes, str]], user_descript
     photographed nutrition labels/prepared meals (e.g. front of package +
     its label), not typed text. Feeds the same preset-creation flow
     (POST /logs/meals) once reviewed."""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     content: list[dict] = image_content_blocks(photos)
     if user_description.strip():
         content.append({"type": "text", "text": user_description.strip()})

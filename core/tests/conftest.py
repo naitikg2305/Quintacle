@@ -18,3 +18,9 @@ def _deterministic_prose_summaries(monkeypatch):
     # call kicked off after every kept transcript archive; off suite-wide so a
     # dev machine's Ollama is never hit. Tests monkeypatch the extractor.
     monkeypatch.setenv("QUINTACLE_SOFT_RECORD_PROVIDER", "off")
+    # Claude Max (max_backend.py) shells out to the real `claude` CLI and
+    # spends subscription usage — never from a test. With it disabled every
+    # cloud_client() call goes straight to the (faked) Anthropic client, so
+    # existing anthropic fakes keep working. Max's own tests re-enable it
+    # with a fake CLI binary.
+    monkeypatch.setenv("QUINTACLE_DISABLE_MAX", "1")

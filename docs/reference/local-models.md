@@ -192,3 +192,32 @@ them.
 (local provider), `core/tests/test_local_vlm.py` (both backends). Suite at
 this commit: 335 passed / 5 skipped with perception deps (verified in a
 fresh venv).
+
+## Addition (2026-11-05): Claude Max as the cloud tier
+
+"Cloud" no longer means only the metered Anthropic API. `core/quintacle_core/max_backend.py`
+routes cloud calls through headless Claude Code (`claude -p`) on the owner's Max
+subscription, falling back to the API on any Max failure.
+
+- **Ingest / vision / sorting:** every former `anthropic.Anthropic()` call site
+  (llm_dispatch `_parse_cloud`, drop_router, kb/drop, auto_journal, wardrobe, grooming,
+  documents, finance, nutrition, photo_organizer) now uses `cloud_client()`, a drop-in
+  with the same `messages.parse` / `messages.create` shape. Structured output uses the
+  CLI's `--json-schema` (Pydantic's non-standard `discriminator` keyword stripped, the
+  answer still validated by the Pydantic model). Images pass through as stream-json
+  content blocks (verified live). Local-first routing is unchanged: `auto` still tries
+  Ollama first; Max only replaces what "cloud" means.
+- **Chat:** new picker group "Claude Max (subscription)" — `max:haiku|sonnet|opus`
+  (provider `max`), with web search via Claude Code's WebSearch/WebFetch tools. On Max
+  failure the reply comes from the same tier on the API with a visible note. Max is
+  cloud: private notes never reach it (privacy.py gates on provider == "local").
+- **Not routed:** chat's direct-API models (`claude-*` ids, which use server-side web
+  search + Opus fallback betas) stay on the API by explicit pick; Bedrock and OpenAI unchanged.
+- **Phone:** the CLI is normally absent in Termux → `available()` is False → straight to
+  the API, no error. (Claude Code under proot-distro on the phone is untested.)
+- **Switches:** `QUINTACLE_CLOUD=api` restores API-only; `QUINTACLE_DISABLE_MAX=1` (set
+  suite-wide in `tests/conftest.py` so tests never spend subscription usage);
+  `QUINTACLE_CLAUDE_BIN`, `QUINTACLE_MAX_TIMEOUT`.
+- **Child env:** `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` stripped (else the CLI bills
+  the API), `--setting-sources ""` (no hooks), `--strict-mcp-config`, no session saved.
+- Live check 2026-11-05: chat `max:haiku` 1.5 s; `/drop provider=cloud` 7 s, zero fallbacks.

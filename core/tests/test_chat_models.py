@@ -42,7 +42,7 @@ def test_registry_ids_are_unique():
 
 
 def test_registry_providers_are_known():
-    assert {m["provider"] for m in CHAT_MODELS} <= {"anthropic", "openai", "bedrock", "local"}
+    assert {m["provider"] for m in CHAT_MODELS} <= {"anthropic", "openai", "bedrock", "local", "max"}
 
 
 def test_every_anthropic_model_has_a_search_tool_variant():

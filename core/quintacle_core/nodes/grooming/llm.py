@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from ...llm_config import DEFAULT_MODEL
 from ..journal.normalize import canonicalize_name
 from ..vision import image_content_blocks
+from ...max_backend import cloud_client
 
 _ITEM_CATEGORIES = "skincare, haircare, shaving, oral, fragrance, tool, or another short lowercase category"
 
@@ -21,7 +22,7 @@ def describe_grooming_item(photos: list[tuple[bytes, str]], user_description: st
     the bottle plus its ingredients label) turned into a reusable grooming
     item preset. AI used once per product; every routine built from it after
     that is presence-only, no re-describing."""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     content: list[dict] = image_content_blocks(photos)
     if user_description.strip():
         content.append({"type": "text", "text": user_description.strip()})
@@ -43,7 +44,7 @@ def describe_grooming_item(photos: list[tuple[bytes, str]], user_description: st
 def describe_grooming_item_from_text(description: str) -> GroomingItemEstimate:
     """Text-only counterpart to describe_grooming_item() — for "product:
     CeraVe foaming cleanser" typed with no photo."""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     response = client.messages.parse(
         model=DEFAULT_MODEL,
         max_tokens=512,
@@ -77,7 +78,7 @@ class GroomingRoutineSuggestion(BaseModel):
 
 
 def suggest_grooming_routine(description: str, known_items: list[dict]) -> GroomingRoutineSuggestion:
-    client = anthropic.Anthropic()
+    client = cloud_client()
     if known_items:
         library = "Known grooming products:\n" + "\n".join(
             f"name={i['name']!r} category={i['category']!r}" for i in known_items

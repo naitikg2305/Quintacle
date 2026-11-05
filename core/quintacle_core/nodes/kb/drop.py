@@ -14,6 +14,7 @@ from PIL import Image
 
 from ...llm_config import DEFAULT_MODEL
 from ..vision import image_content_blocks, vision_prompt
+from ...max_backend import cloud_client
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def describe_images(photos: list[tuple[bytes, str]], question: str | None = None
 def _describe_images_cloud(photos: list[tuple[bytes, str]], question: str | None = None) -> str:
     """The original metered Anthropic vision call — one real API call on
     DEFAULT_MODEL every time."""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     prompt = vision_prompt(len(photos), question)
     response = client.messages.create(
         model=DEFAULT_MODEL,
@@ -105,7 +106,7 @@ def _describe_image(photos: list[tuple[bytes, str]]) -> str:
 
 
 def _describe_pdf(data: bytes) -> str:
-    client = anthropic.Anthropic()
+    client = cloud_client()
     response = client.messages.create(
         model=DEFAULT_MODEL,
         max_tokens=1024,
@@ -197,7 +198,7 @@ def _describe_video(data: bytes) -> str:
     frames = _extract_video_frames(data)
     if not frames:
         return ""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     response = client.messages.create(
         model=DEFAULT_MODEL,
         max_tokens=1024,

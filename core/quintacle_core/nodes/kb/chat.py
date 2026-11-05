@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import logging
 import re
 import urllib.error
 import urllib.parse
@@ -16,6 +17,8 @@ from ... import clock
 from ...llm_config import DEFAULT_MODEL, RESEARCH_MODEL
 from .privacy import PrivacyGate, note_node_id
 from .store import KBStore
+
+logger = logging.getLogger(__name__)
 
 _PHOTO_TAG_RE = re.compile(r"\{\{photo:([^}]+)\}\}")
 
@@ -303,6 +306,14 @@ CHAT_MODELS: list[dict] = [
     {"id": "claude-sonnet-5-5", "label": "Claude Sonnet 5.5", "provider": "anthropic", "price": "$2 / $10"},
     {"id": "claude-opus-5", "label": "Claude Opus 5", "provider": "anthropic", "price": "$5 / $25"},
     {"id": "claude-opus-5-5", "label": "Claude Opus 5.5", "provider": "anthropic", "price": "$4 / $20"},
+    # Claude Max subscription via headless Claude Code (max_backend.py,
+    # 2026-11-05) — no per-token bill, counts against the Max usage limits.
+    # Falls back to the same tier on the metered API when Max isn't usable
+    # (CLI missing on the phone, limit hit, not logged in). Cloud: private
+    # notes never reach these (provider != "local").
+    {"id": "max:haiku", "label": "Claude Haiku (Max)", "provider": "max", "price": "Max subscription"},
+    {"id": "max:sonnet", "label": "Claude Sonnet (Max)", "provider": "max", "price": "Max subscription"},
+    {"id": "max:opus", "label": "Claude Opus (Max)", "provider": "max", "price": "Max subscription"},
     {"id": "gpt-4o-mini", "label": "GPT-4o mini", "provider": "openai", "price": "$0.15 / $0.60"},
     {"id": "gpt-5-nano", "label": "GPT-5 nano", "provider": "openai", "price": "$0.05 / $0.40"},
     {"id": "gpt-5-mini", "label": "GPT-5 mini", "provider": "openai", "price": "$0.25 / $2"},
@@ -836,6 +847,28 @@ def _me_touches(me: str | None, query: str | None) -> bool:
     return any(re.search(rf"(?<!\w){re.escape(t)}(?!\w)", haystack) for t in _query_terms(query).split())
 
 
+# Metered-API model a Max tier falls back to when Max can't answer.
+_MAX_FALLBACK = {"max:haiku": "claude-haiku-5-5", "max:sonnet": "claude-sonnet-5-5", "max:opus": "claude-opus-5-5"}
+
+
+def _run_max(picker_id: str, messages: list[dict], kb_text: str | None) -> str:
+    """Claude on the Max subscription (headless `claude -p`, max_backend.py).
+    Same system text as _run_anthropic (KB context + photo instruction) and
+    the same always-on web search, as Claude Code's WebSearch/WebFetch tools.
+    Any Max failure — the phone has no CLI, usage limit, timeout — falls back
+    to the same tier on the metered API, and the reply says so."""
+    from ...max_backend import MaxError, run as max_run
+
+    system = "\n\n".join(t for t in (kb_text, _PHOTO_INSTRUCTION) if t)
+    try:
+        return max_run(system, messages, model=picker_id.split(":", 1)[1], tools=("WebSearch", "WebFetch"))["text"]
+    except MaxError as e:
+        fallback = _MAX_FALLBACK.get(picker_id, "claude-sonnet-5-5")
+        logger.warning("chat: Max unavailable (%s), falling back to %s on the API", e, fallback)
+        reply = _run_anthropic(fallback, messages, kb_text)
+        return f"{reply}\n\n_(Claude Max wasn't available — {e} — so this was answered on the metered API.)_"
+
+
 def _run_anthropic(model: str, messages: list[dict], kb_text: str | None) -> str:
     client = anthropic.Anthropic()
     # The KB gets re-sent as context on every turn of every chat — without
@@ -1241,6 +1274,8 @@ def run_kb_chat(
         reply = _run_bedrock(entry["id"], messages, kb_text)
     elif entry["provider"] == "local":
         reply = _run_local(entry["id"], messages, kb_text)
+    elif entry["provider"] == "max":
+        reply = _run_max(entry["id"], messages, kb_text)
     else:
         reply = _run_anthropic(entry["id"], messages, kb_text)
     # Post-validation runs last, after photo tags resolved (those are external

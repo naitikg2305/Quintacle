@@ -4,6 +4,7 @@ import anthropic
 from pydantic import BaseModel
 
 from ...llm_config import DEFAULT_MODEL
+from ...max_backend import cloud_client
 
 _DOC_TYPES = "lease, id, passport, immigration, insurance, medical, financial, warranty, or another short lowercase category"
 
@@ -23,7 +24,7 @@ def structure_document(description: str) -> DocumentEstimate:
     "structure it" pass, reused so image/PDF/DOCX extraction isn't
     duplicated here) — and turns it into a Document Vault entry: name,
     doc_type, issued/expiry dates if stated, brief notes."""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     response = client.messages.parse(
         model=DEFAULT_MODEL,
         max_tokens=512,

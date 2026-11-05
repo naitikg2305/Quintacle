@@ -2,7 +2,7 @@
 model picker and drop.py's QUINTACLE_VISION switch.
 
 Every easy text-parse seam (journal dumps, KB sorting, drop classification,
-the structure_* extractors) routes its `anthropic.Anthropic().messages.parse`
+the structure_* extractors) routes its `anthropic.Anthropic().messages.parse` (now `max_backend.cloud_client()`, 2026-11-05)
 call through parse_structured() here, which picks the backend per the decided
 local-first routing (docs/local-inference-migration.md, "Decided 2026-10-15"):
 
@@ -46,6 +46,7 @@ from .llm_config import DEFAULT_MODEL
 # same readable error type (imported, not duplicated; chat.py's behavior is
 # untouched).
 from .nodes.kb.chat import OllamaError, ollama_host
+from .max_backend import cloud_client
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ def _record(result: ParseResult) -> ParseResult:
 def _parse_cloud(system: str, user_content, output_format: type[BaseModel], max_tokens: int) -> BaseModel:
     """The pre-existing metered Anthropic structured-parse call, exactly as
     every nodes/*/llm.py site made it before this module existed."""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     response = client.messages.parse(
         model=DEFAULT_MODEL,
         max_tokens=max_tokens,

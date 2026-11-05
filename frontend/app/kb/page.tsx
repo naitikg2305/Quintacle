@@ -849,9 +849,18 @@ function KBPageInner() {
               <label className="flex items-center gap-2" title="Which model answers — price is $ per 1M tokens in / out (Bedrock bills through AWS). Web search is always on for direct-API models.">
                 <span className={label}>Model</span>
                 <Select className="w-auto py-1 text-xs" value={model ?? ""} onChange={(e) => pickModel(e.target.value)}>
+                  <optgroup label="Claude Max (subscription)">
+                    {models
+                      .filter((m) => m.provider === "max")
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                  </optgroup>
                   <optgroup label="Direct API">
                     {models
-                      .filter((m) => m.provider !== "bedrock" && m.provider !== "local")
+                      .filter((m) => m.provider !== "bedrock" && m.provider !== "local" && m.provider !== "max")
                       .map((m) => (
                         <option key={m.id} value={m.id}>
                           {m.label} ({m.price})

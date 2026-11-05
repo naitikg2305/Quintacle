@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from ...llm_config import DEFAULT_MODEL
 from ..journal.normalize import canonicalize_name
 from ..vision import image_content_blocks
+from ...max_backend import cloud_client
 
 _ITEM_CATEGORIES = "jacket, pants, shirt, shoes, sunglasses, accessory, or another short lowercase category"
 
@@ -21,7 +22,7 @@ def describe_wardrobe_item(photos: list[tuple[bytes, str]], user_description: st
     closer shot of a label/detail) of a jacket, sunglasses, whatever, turned
     into a reusable item preset. AI used once per item; every outfit built
     from it after that is presence-only, no re-describing needed."""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     content: list[dict] = image_content_blocks(photos)
     if user_description.strip():
         content.append({"type": "text", "text": user_description.strip()})
@@ -44,7 +45,7 @@ def describe_wardrobe_item(photos: list[tuple[bytes, str]], user_description: st
 def describe_wardrobe_item_from_text(description: str) -> WardrobeItemEstimate:
     """Text-only counterpart to describe_wardrobe_item() — for "item: black
     leather bomber jacket" typed with no photo."""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     response = client.messages.parse(
         model=DEFAULT_MODEL,
         max_tokens=512,
@@ -68,7 +69,7 @@ def describe_outfit_photo(photos: list[tuple[bytes, str]], user_description: str
     describe_wardrobe_item(), which is for a single item. Deliberately does
     NOT try to decompose the look into matched library items; the photo
     itself is the record, saved as an outfit AS IS."""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     content: list[dict] = image_content_blocks(photos)
     if user_description.strip():
         content.append({"type": "text", "text": user_description.strip()})
@@ -106,7 +107,7 @@ class OutfitSuggestion(BaseModel):
 
 
 def suggest_outfit(description: str, known_items: list[dict]) -> OutfitSuggestion:
-    client = anthropic.Anthropic()
+    client = cloud_client()
     if known_items:
         library = "Known wardrobe items:\n" + "\n".join(
             f"name={i['name']!r} category={i['category']!r}" for i in known_items

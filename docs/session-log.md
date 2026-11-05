@@ -3,6 +3,15 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-05 — Claude Max wired in as the cloud tier (main session)
+
+Owner asked to use the Max subscription "everywhere" on the computer, with the phone
+falling back gracefully. New `core/quintacle_core/max_backend.py`: every cloud call
+site now uses `cloud_client()` (Max via headless `claude -p`, API fallback on any
+failure); chat gains `max:haiku|sonnet|opus`. Tests use a fake CLI and Max is disabled
+suite-wide. 803 passed. Live: chat and cloud drop both served by Max. Details:
+`docs/reference/local-models.md` (2026-11-05 addition).
+
 ## 2026-11-05 — Private note flag (worktree agent)
 
 Owner rule: `private: true` notes never reach a cloud model or the MCP

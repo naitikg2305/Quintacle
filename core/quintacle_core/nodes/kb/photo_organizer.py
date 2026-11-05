@@ -6,6 +6,7 @@ import anthropic
 from pydantic import BaseModel
 
 from ...llm_config import DEFAULT_MODEL
+from ...max_backend import cloud_client
 
 
 class GeocodedLocation(BaseModel):
@@ -18,7 +19,7 @@ def geocode(lat: float, lon: float) -> GeocodedLocation:
     """Reverse-geocode via Claude's own geographic knowledge — no external
     geocoding API or key. Good enough for sorting personal photos into
     country/state/city folders; not a precision mapping product."""
-    client = anthropic.Anthropic()
+    client = cloud_client()
     response = client.messages.parse(
         model=DEFAULT_MODEL,
         max_tokens=256,

@@ -39,6 +39,7 @@ from ..people.api import get_store as get_people_store
 from ..travel.api import get_store as get_travel_store
 from .drop import _IMAGE_MIME, extract_photo_date, extract_photo_datetime, is_image
 from .store import _ASSET_LINES_RE
+from ...max_backend import cloud_client
 
 # Below this similarity score a "match" is treated as unknown — it goes to
 # the tag flow instead of being guessed into the journal/graph.
@@ -259,7 +260,7 @@ def maybe_polish(line: str) -> str:
 
         from ...llm_config import DEFAULT_MODEL
 
-        client = anthropic.Anthropic()
+        client = cloud_client()
         response = client.messages.create(
             model=DEFAULT_MODEL,
             max_tokens=200,

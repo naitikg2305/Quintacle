@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from ...llm_config import DEFAULT_MODEL
 from ...llm_dispatch import parse_structured
+from ...max_backend import cloud_client
 
 
 class CreditCardEstimate(BaseModel):
@@ -110,7 +111,7 @@ def extract_statement_transactions(data: bytes, media_type: str, user_descriptio
     content: list[dict] = [source_block]
     if user_description.strip():
         content.append({"type": "text", "text": user_description.strip()})
-    client = anthropic.Anthropic()
+    client = cloud_client()
     response = client.messages.parse(
         model=DEFAULT_MODEL,
         max_tokens=8192,
