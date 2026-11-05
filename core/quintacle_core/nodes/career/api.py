@@ -35,6 +35,9 @@ from .website import (
     slugify_path,
     write_branch,
 )
+from .timeline import build_timeline
+from .timeline import clean_updates as clean_timeline_updates
+from .timeline import find_hub_note as find_timeline_hub
 from .worklogs import collect
 
 router = APIRouter(prefix="/career", tags=["career"])
@@ -511,3 +514,98 @@ def generate_website(body: WebsiteGenerate) -> dict:
     w["last_result"] = {k: result.get(k) for k in ("branch", "commit", "files", "skipped")}
     st.save_website(w)
     return {**result, "watermark": w["watermark"], "last_run": w["last_run"]}
+
+
+# --- the Career page: timeline of org / role / contract hubs -------------------
+# Read model + hub create/edit (timeline.py). Creating a hub is the form's
+# Save (the owner typed every field); editing fields goes through
+# set_fields, which never touches the body or restamps `edited`.
+
+
+@router.get("/timeline")
+def get_timeline() -> dict:
+    kb = _kb()
+    return build_timeline(kb, _record_or_none(kb), _record_location(), clock.today())
+
+
+class HubFields(BaseModel):
+    type: str | None = None
+    title: str | None = None
+    role: str | None = None
+    start: str | None = None
+    end: str | None = None
+    location: str | None = None
+    summary: str | None = None
+    bullets: list[str] | None = None
+    public: bool | None = None
+    public_name: str | None = None
+    record_entry: str | None = None
+    order: int | None = None
+
+
+class HubCreate(HubFields):
+    type: Literal["employer", "role", "contract", "education", "other"]
+    name: str
+    org: str | None = None  # the parent hub's folder — required for a role
+
+
+def _hub_view(kb, folder: str) -> dict:
+    data = build_timeline(kb, _record_or_none(kb), _record_location(), clock.today())
+    stack = list(data["items"])
+    while stack:
+        n = stack.pop()
+        if n["folder"] == folder:
+            return n
+        stack.extend(n["children"])
+    raise HTTPException(500, "hub vanished from the timeline")
+
+
+@router.post("/hubs")
+def create_hub(body: HubCreate) -> dict:
+    """New org / role / contract hub: Career/<Name>, Career/<Org>/<Name>,
+    Career/Contracts/<Name> — the hub note's slug equals its folder's."""
+    name = body.name.strip()
+    if not name or slugify(name) == "entry":
+        raise HTTPException(400, "name is required")
+    kb = _kb()
+    if body.type == "role":
+        if not body.org:
+            raise HTTPException(400, "a role needs its org (the parent hub's folder)")
+        parent = find_timeline_hub(kb, body.org)
+        if parent is None:
+            raise HTTPException(404, f"no Career hub at {body.org!r}")
+        folder = f"{parent[0]}/{name}"
+    elif body.type == "contract":
+        folder = f"Career/Contracts/{name}"
+    else:
+        folder = f"Career/{name}"
+    target = "/".join(slugify(p) for p in folder.split("/"))
+    if kb.read_meta(target, slugify(name)) is not None or _record_location() == (target, slugify(name)):
+        raise HTTPException(409, f"a hub already exists at {target}")
+    try:
+        fields = clean_timeline_updates(body.model_dump(exclude={"name", "org"}, exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    fields = {k: v for k, v in fields.items() if v is not None}
+    content = fields.get("summary", "")
+    from ..kb.api import _sync_note_graph_links
+
+    folder_slug, slug = kb.write(folder, name, content, [], fields=fields)
+    _sync_note_graph_links(f"note:{folder_slug}/{slug}", name, content, [])
+    safe_index_note(folder_slug, slug, name, content)
+    return _hub_view(kb, folder_slug)
+
+
+@router.put("/hubs/{folder:path}/fields")
+def put_hub_fields(folder: str, body: HubFields) -> dict:
+    """Only the fields present in the request change; "" / [] / null clears."""
+    kb = _kb()
+    hit = find_timeline_hub(kb, folder)
+    if hit is None:
+        raise HTTPException(404, "not a Career timeline hub")
+    try:
+        updates = clean_timeline_updates(body.model_dump(exclude_unset=True))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    kb.set_fields(hit[0], hit[1], updates)
+    return _hub_view(kb, hit[0])

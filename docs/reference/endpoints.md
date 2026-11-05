@@ -286,6 +286,9 @@ nothing; only `record/save`, `record/import`, `hubs` (PUT), `settings`
 | POST | `/career/website/run` | `{provider?}` | Candidates (notes edited since the watermark + changed public record entries) with an advisory AI suggest/reason. No write | KBStore + llm_dispatch |
 | POST | `/career/website/reject` | `{id, stamp}` | Remember a rejection until the note/entry changes | CareerState |
 | POST | `/career/website/generate` | `{through, items[{id, category?, summary?}]}` | Render approved items, commit onto a new `quintacle/content-YYYY-MM-DD` branch (409 on a dirty tree, nothing written), move the watermark | website git repo + CareerState |
+| GET | `/career/timeline` | — | *(2026-11-05, Career page)* Every `Career/**` folder hub as a tree (org → roles; contracts; education): parsed date range + `present`, fields, work-log day count / last 5 dates / 12-month sparkline, mapped record entry bullets, files in the folder. Zero model calls | KBStore + GraphEdgeStore |
+| POST | `/career/hubs` | `{type, name, org?, role?, start?, end?, location?, summary?, bullets?, record_entry?, public?, public_name?, order?}` | *(2026-11-05)* Create `Career/<Name>`, `Career/<Org>/<Name>` (role; `org` = parent hub folder) or `Career/Contracts/<Name>`; 409 if it exists, 400 on an unreadable date | KBStore + GraphEdgeStore + RetrievalIndex |
+| PUT | `/career/hubs/{folder}/fields` | any subset of the create fields minus `name`/`org` | *(2026-11-05)* Edit a timeline hub's fields (`""`/`[]` clears; no body change, no `edited` restamp) | KBStore |
 
 ## 2026-11-05 additions — Travel states: Planned + Bucket list (`/travel`, `nodes/travel/api.py`) — 6
 
