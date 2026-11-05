@@ -7,6 +7,10 @@ import frontmatter
 from ...markdown_paths import resolve_nested, safe_metadata, slugify
 
 _HOME = "Fun/Travel"  # 2026-10-20 taxonomy: Planning root retired, travel experiences live under Fun
+# 2026-11-05: travel's other two states (Planned trips, Bucket list) live
+# beside the <City>/<Kind>/ tree as plain KB notes (nodes/travel/states.py) —
+# never read back as experiences. `assets` is a note-attachment folder.
+NON_EXPERIENCE_DIRS = {"planned", "bucket-list", "assets"}
 
 
 def _kind_folder_name(kind: str) -> str:
@@ -68,7 +72,7 @@ class ExperienceStore:
             return []
         results = []
         for city_dir in sorted(home_dir.iterdir()):
-            if not city_dir.is_dir():
+            if not city_dir.is_dir() or city_dir.name in NON_EXPERIENCE_DIRS:
                 continue
             for kind_dir in sorted(city_dir.iterdir()):
                 if not kind_dir.is_dir():

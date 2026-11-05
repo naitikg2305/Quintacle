@@ -27,10 +27,27 @@ SEED_FOLDERS = [
     "Knowledge/Tech Notes",
     "Knowledge/Research",
     "Fun/Travel",
+    "Fun/Travel/Planned",
+    "Fun/Travel/Bucket List",
     "Fun/Dates",
     "Fun/Day Trips",
     "Fun/Things To Do",
 ]
+
+# 2026-11-05: placement may open ONE new subfolder under the best existing
+# folder for a clearly distinct group (a trip, a project), plus the travel
+# states rule (Planned vs Bucket List; experiences have their own store).
+_FOLDER_RULE = (
+    "- folder: the best fit from the list. Prefer an existing folder. When the item clearly "
+    "belongs to a distinct group inside the best folder (a specific trip, a project), you may "
+    "use a NEW SUBFOLDER under it (e.g. \"Fun/Travel/Planned/Japan\") — but reuse an existing "
+    "subfolder whenever one matches (tickets to Vienna -> existing \"Fun/Travel/Planned/Europe\"). "
+    "Only if nothing offered fits at all, use a short new folder name (2-3 words, Title Case).\n"
+    "  Travel rule: future-trip documents (itineraries, bookings, flight/train tickets, hotel "
+    "confirmations) -> \"Fun/Travel/Planned/<Region or Trip>\"; places the person wants to go "
+    "someday -> \"Fun/Travel/Bucket List\".\n"
+)
+
 
 def _format_notes_index(existing_notes: list[dict]) -> str:
     if not existing_notes:
@@ -50,8 +67,7 @@ personal knowledge base. Given a list of folders (some may already have entries,
 just suggestions that don't exist yet) and a piece of freeform text — a scratchpad note, a \
 thought worked out over a chat — suggest:
 
-- folder: the best fit from the list, OR a short new folder name (2-3 words, Title Case) if \
-  nothing offered actually fits. Prefer an existing folder over inventing one.
+""" + _FOLDER_RULE + """\
 - title: a short descriptive title for this entry — becomes the filename.
 - content: the text cleaned up into a well-formatted markdown note. Trim filler and false \
   starts, keep the actual substance and the person's own voice — don't pad it with generic \
@@ -108,8 +124,7 @@ _PLACEMENT_SYSTEM_PROMPT = """You help file an already-finished document into th
 of a personal knowledge base. You do NOT edit or rewrite its content — the user doesn't want \
 an already-written document touched. Given a list of folders and the document's text, suggest:
 
-- folder: the best fit from the list, OR a short new folder name (2-3 words, Title Case) if \
-  nothing offered actually fits. Prefer an existing folder over inventing one.
+""" + _FOLDER_RULE + """\
 - title: a short descriptive title for this entry — becomes the filename.
 """ + _LINKS_INSTRUCTION
 
@@ -139,8 +154,7 @@ folders (some already have entries, some are just suggestions), propose for EVER
 
 - file_id: copy this EXACTLY as given (e.g. "file_0") — it's an opaque reference id, not a name,
   never rename or reformat it.
-- folder: the best fit from the list, OR a short new folder name (2-3 words, Title Case) if \
-  nothing offered actually fits. Prefer an existing folder over inventing one.
+""" + _FOLDER_RULE + """\
 - title: a short descriptive title for this note.
 - content: the text cleaned up into a well-formatted markdown note.
 - trip_name: ONLY for a photo that's clearly part of a specific trip/event you can identify from
