@@ -34,6 +34,7 @@ type ViewBox = { x: number; y: number; w: number; h: number };
 const COLORS: Record<string, string> = {
   note: "#4f8ef7",
   asset: "#f7b84f",
+  file: "#c9a26b",
   journal_day: "#9b59f6",
   ingredient: "#2ecc71",
   meal: "#16a085",
@@ -54,6 +55,7 @@ const COLORS: Record<string, string> = {
 const HUB_LABELS: Record<string, string> = {
   note: "Notes",
   asset: "Photos",
+  file: "Files",
   journal_day: "Journal",
   ingredient: "Ingredients",
   meal: "Food",
@@ -111,7 +113,12 @@ export default function GraphPage() {
   }
 
   useEffect(() => {
-    getGraph().then(({ nodes: rawNodes, edges: rawEdges }) => {
+    getGraph().then(({ nodes: fetchedNodes, edges: rawEdges }) => {
+      // Attachments arrive as type "asset"; only images are photos — a PDF
+      // itinerary or a document gets its own "Files" hub (2026-11-05).
+      const rawNodes = fetchedNodes.map((n) =>
+        n.type === "asset" && !/\.(jpe?g|png|gif|webp|heic|heif|avif|bmp)$/i.test(n.path ?? n.label) ? { ...n, type: "file" } : n
+      );
       const presentTypes = Array.from(new Set(rawNodes.map((n) => n.type)));
       const hubs: SimNode[] = presentTypes.map((type) => ({
         id: `hub:${type}`,
