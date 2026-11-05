@@ -220,6 +220,43 @@ the form) are synced into graph edges. The Drop page attaches
 outfit_photo`); ingredient_preset/finance extract data and discard the
 image.
 
+### 2026-11-05 — photo place baked into the body
+
+Owner ask: "whenever a photo is uploaded the metadata location gets updated
+and baked into the markdown so it can be retrieved". The retrieval index only
+sees title + body, so a photo whose AI description never named the place was
+unfindable by "Vienna / Austria / Europe". `nodes/kb/photo_place.py` now
+writes ONE body line just before the trailing `[asset](…)` lines:
+
+    📍 Vienna, Austria · Europe · 48.2082, 16.3738 · taken 2027-05-14 15:32 <!-- place -->
+
+plus `place: {city, state, country, continent}` frontmatter next to
+`location` (hidden from Browse fields like `location`).
+
+- Coords and capture time come from EXIF (`extract_photo_location`,
+  `extract_photo_datetime`/`extract_photo_date`). No model is involved.
+- City, state and country come from `photo_organizer.geocode`, the one
+  cloud call. Results are cached by coords rounded to 3 decimals in
+  `<data>/geocode-cache.json`, so a batch from one spot costs one call.
+- The continent comes from a country table in code, which includes name
+  variants like USA/UK/Czechia.
+- **Private** saves never call the geocoder. They get coords + date only
+  (a cache hit still fills names, because it sends nothing).
+- A geocode error is logged and the line keeps coords + date. The save
+  never fails. With no GPS the line has the date only, and with no EXIF
+  there is no line.
+- The `<!-- place -->` marker makes re-runs replace the line, never add a
+  second one. react-markdown drops the comment, and
+  `deterministic_prose_summary` skips the line. The FTS body keeps it.
+- Hooked into `/kb/entries/with-asset`, which covers single drop and batch
+  import, because both commit through it. Also hooked into
+  `POST /kb/entry/asset` and MCP `kb_attach_file`. The last two now
+  re-index the note when an image is attached. The MCP bake happens inside
+  the staged write session, so `undo_write` restores the prior bytes.
+  Images only. PDFs and other files are untouched.
+- `POST /kb/photos/backfill-place` (dry run by default) fixes notes saved
+  before this change.
+
 ## The Drop page's "Still going" session
 
 Pure orchestration of existing endpoints, no backend feature

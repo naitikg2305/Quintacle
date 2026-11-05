@@ -313,3 +313,14 @@ subfolder under the best existing folder for a distinct group, and says to
 reuse a matching `Planned/<X>` first. It also carries the travel rule:
 future-trip docs go to `Fun/Travel/Planned/<Region or Trip>`, and someday
 places go to `Fun/Travel/Bucket List`.
+
+## 2026-11-05 additions — photo place baked into the body
+
+| Method | Path | Input | Purpose | Store |
+|---|---|---|---|---|
+| POST | `/kb/photos/backfill-place` | query `dry_run` (default `true`) | Walk every KB note with image assets (or frontmatter `location`), add/refresh its `📍 … <!-- place -->` body line + `place` frontmatter, re-index each. Dry run only reports `{dry_run, count, changes: [{folder, slug, line, place, location}]}` (geocode results are still cached, so the apply run is free). Private notes never hit the cloud geocoder | KBStore + RetrievalIndex |
+
+Changed: `POST /kb/entries/with-asset`, `POST /kb/entry/asset` (now also
+re-indexes when an image is attached) and the MCP `kb_attach_file` tool all
+bake the place line for image files. See `drop-pipeline.md` (2026-11-05
+photo place section).

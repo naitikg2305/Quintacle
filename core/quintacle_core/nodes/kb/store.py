@@ -18,7 +18,7 @@ _ASSET_LINES_RE = re.compile(r"^\[asset\]\(([^)]+)\)$", re.MULTILINE)
 
 
 # Frontmatter keys Browse treats as plumbing rather than user-visible fields.
-_INTERNAL_META = {"links", "location", "fields", "assets", "asset", "asset2", "edited"}
+_INTERNAL_META = {"links", "location", "place", "fields", "assets", "asset", "asset2", "edited"}
 _VIEW_FILE = "_view.json"
 
 

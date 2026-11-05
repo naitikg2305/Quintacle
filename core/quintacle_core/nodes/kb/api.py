@@ -37,6 +37,7 @@ from .llm import (
     suggest_record_fold_new,
 )
 from .photo_organizer import compute_photo_folder
+from .photo_place import backfill_photo_places, bake_photo_place, insert_place_line, is_image_name
 from .privacy import PRIVATE_MARKER, public_notes_index, strip_private_turns
 from .spreadsheet import read_spreadsheet, write_spreadsheet
 from .store import KBStore, _ASSET_LINES_RE
@@ -373,6 +374,13 @@ async def add_entry_asset(folder: str = Form(...), slug: str = Form(...), file: 
         asset_path = get_store().add_asset_to_entry(folder, slug, file.filename or "asset", data)
     except FileNotFoundError:
         raise HTTPException(404, "entry not found")
+    # 2026-11-05: an attached photo bakes its place line in and re-indexes.
+    if is_image_name(file.filename or ""):
+        baked = bake_photo_place(get_store(), folder, slug)
+        if baked is not None:
+            full = get_store().read_full(folder, slug) or {}
+            folder_slug = str(get_store().entry_path(folder, slug).parent.relative_to(get_store().root)).replace("\\", "/")
+            safe_index_note(folder_slug, get_store().entry_path(folder, slug).stem, full.get("title") or slug, baked.extra["body"])
     return {"folder": folder, "slug": slug, "asset": asset_path}
 
 
@@ -434,6 +442,17 @@ def list_photos() -> list[dict]:
             title = content.split("\n", 1)[0].lstrip("# ").strip() or slug
             results.append({"folder": folder, "slug": slug, "title": title, "assets": assets})
     return results
+
+
+@router.post("/photos/backfill-place")
+def backfill_photo_place(dry_run: bool = True) -> dict:
+    """2026-11-05: add/refresh the 📍 place line + `place` frontmatter on
+    every existing photo note (image assets or frontmatter `location`) and
+    re-index each. dry_run (default) only reports what would change —
+    geocode results still land in the cache, so the apply run is free.
+    Private notes never hit the cloud geocoder."""
+    changes = backfill_photo_places(get_store(), dry_run=dry_run, index=safe_index_note)
+    return {"dry_run": dry_run, "count": len(changes), "changes": changes}
 
 
 @router.post("/drop")
@@ -553,6 +572,15 @@ async def create_entry_with_asset(
     get_store().write(folder, title, linked_content, link_list, location)
     if private:
         get_store().set_private(folder_slug, entry_slug, True)
+    # 2026-11-05: bake the photo's place (📍 city/state/country · continent ·
+    # coords · taken) into the BODY before indexing, so retrieval finds it by
+    # place name. Private → no cloud geocode. Never fails the save.
+    images = [(n, d) for n, d in file_data if is_image_name(n)]
+    if images:
+        baked = bake_photo_place(get_store(), folder_slug, entry_slug, images, private=private)
+        if baked is not None:
+            linked_content = insert_place_line(linked_content, baked.line)
+            location = baked.location or location
     _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", title, linked_content, link_list)
     # Retrieval index (retrieval.py) — failure-isolated, never fails the save.
     safe_index_note(folder_slug, entry_slug, title, linked_content)
