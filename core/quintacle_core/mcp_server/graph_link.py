@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..graph import init_graph_store, link_new_entry as _engine_link, sync_frontmatter_links
 from ..graph_capture import entry_graph_links, mention_candidates
+from ..place_graph import link_note_places
 from ..nodes.journal.normalize import canonicalize_name
 from ..nodes.journal.store import JournalStore
 from ..nodes.kb.store import KBStore
@@ -108,11 +109,37 @@ def link_new_entry(
             resolved = [canonicalize_name(t, list(title_lookup)) for t in links]
             created += sync_frontmatter_links(entry_id, resolved, title_lookup)
 
+        # 2026-11-05 (place_graph.py): a note carrying a `place` or a Planned
+        # trip's destinations links into the place hierarchy — inside the
+        # dir snapshot below, so these edges undo with the push too.
+        if entry_id.startswith("note:") and _kb_store is not None:
+            link_note_places(_kb_store, *entry_id.removeprefix("note:").rsplit("/", 1))
+
         new_names = sorted(({p.name for p in edges_dir.glob("*.md")} if edges_dir.exists() else set()) - before)
         if session is not None and _db_path is not None:
             for name in new_names:
                 session.stage_new_file(edges_dir / name)
                 session.stage_sqlite_insert(_db_path, "edges", "id", name.removesuffix(".md"))
         return [e["id"] for e in created]
+    except Exception:
+        return []
+
+
+def stage_place_links(session: "WriteSession | None", folder_slug: str, slug: str) -> list[str]:
+    """place_graph.link_note_places for an MCP write that doesn't go through
+    link_new_entry (kb_attach_file), with every NEW edge file staged onto
+    `session` — same dir-snapshot rule as above. Never raises."""
+    if _data_dir is None or _kb_store is None:
+        return []
+    try:
+        edges_dir = _edges_dir()
+        before = {p.name for p in edges_dir.glob("*.md")} if edges_dir.exists() else set()
+        link_note_places(_kb_store, folder_slug, slug)
+        new_names = sorted(({p.name for p in edges_dir.glob("*.md")} if edges_dir.exists() else set()) - before)
+        if session is not None and _db_path is not None:
+            for name in new_names:
+                session.stage_new_file(edges_dir / name)
+                session.stage_sqlite_insert(_db_path, "edges", "id", name.removesuffix(".md"))
+        return [n.removesuffix(".md") for n in new_names]
     except Exception:
         return []

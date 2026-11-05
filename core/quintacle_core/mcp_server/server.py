@@ -28,7 +28,7 @@ from ..nodes.stocks.store import ACTIONS as STOCK_ACTIONS, StocksRepository, Sto
 from ..nodes.schedule.models import Priority, Todo, apply_todo_updates
 from ..nodes.schedule.ranking import rank_todos
 from ..nodes.schedule.store import TodoStore
-from .graph_link import configure as configure_graph_link, link_new_entry
+from .graph_link import configure as configure_graph_link, link_new_entry, stage_place_links
 from .ledger import Ledger
 from .undo import WriteSession, undo as undo_ledger_entry
 
@@ -318,6 +318,7 @@ def kb_attach_file(folder: str, slug: str, local_path: str, filename: str | None
         if baked is not None:
             full = kb_store.read_full(folder, slug) or {}
             retrieval.safe_index_note(folder_slug, entry_slug, full.get("title") or entry_slug, baked.extra["body"])
+        stage_place_links(session, folder_slug, entry_slug)  # 2026-11-05: place edges, staged for undo
     ledger_id = session.commit(result={"folder": folder_slug, "slug": entry_slug, "asset_path": written})
     return {"folder": folder_slug, "slug": entry_slug, "asset_path": written, "bytes": len(data), "ledger_id": ledger_id}
 

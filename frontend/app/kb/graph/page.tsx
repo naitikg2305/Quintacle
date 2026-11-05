@@ -70,6 +70,15 @@ const HUB_LABELS: Record<string, string> = {
 };
 const MEMBER_KIND = "__member";
 
+// 2026-11-05: the place hierarchy (continent → country → city) reads as a
+// hierarchy — bigger dots higher up. Everything else stays at the base size.
+const LEVEL_RADIUS: Record<string, number> = { continent: 10, country: 7.5, city: 5.5 };
+function nodeRadius(n: { isHub?: boolean; level?: string }, selected: boolean): number {
+  if (n.isHub) return 13;
+  const base = (n.level && LEVEL_RADIUS[n.level]) || 5;
+  return selected ? base + 3 : base;
+}
+
 const WIDTH = 900;
 const HEIGHT = 600;
 const FIT_PAD = 60;
@@ -229,7 +238,7 @@ export default function GraphPage() {
     () =>
       nodes
         .filter((n) => visibleTypes.has(n.type))
-        .map(({ id, type, label, isHub, folder, slug, location }) => ({ id, type, label, isHub, folder, slug, location })),
+        .map(({ id, type, label, isHub, folder, slug, location, level }) => ({ id, type, label, isHub, folder, slug, location, level })),
     [nodes, visibleTypes]
   );
   const shownIds = new Set(shownNodes.map((n) => n.id));
@@ -322,14 +331,14 @@ export default function GraphPage() {
                     <circle
                       cx={n.x ?? 0}
                       cy={n.y ?? 0}
-                      r={(n.isHub ? 13 : selected?.id === n.id ? 8 : 5) * scale}
+                      r={nodeRadius(n, selected?.id === n.id) * scale}
                       fill={COLORS[n.type] ?? "#888"}
                       fillOpacity={n.isHub ? 0.25 : 1}
                       stroke={n.isHub ? COLORS[n.type] ?? "#888" : undefined}
                       strokeWidth={n.isHub ? 1.5 * scale : undefined}
                     />
                     <text
-                      x={(n.x ?? 0) + (n.isHub ? 16 : 8) * scale}
+                      x={(n.x ?? 0) + (nodeRadius(n, false) + 3) * scale}
                       y={(n.y ?? 0) + (n.isHub ? 4 : 3) * scale}
                       fontSize={(n.isHub ? 14 : 10) * scale}
                       fontWeight={n.isHub ? 700 : 400}
@@ -366,13 +375,15 @@ export default function GraphPage() {
                 {selected.type.replace("_", " ")}
               </span>
               <p className="font-medium">{selected.label}</p>
+              {selected.level && <p className="text-xs opacity-60">{selected.level}</p>}
               {selected.folder && <p className="text-xs opacity-60">{selected.folder}</p>}
               {selected.location && (
                 <p className="text-xs opacity-60">
                   {selected.location.lat.toFixed(4)}, {selected.location.lon.toFixed(4)}
                 </p>
               )}
-              {selected.type === "note" && selected.folder && selected.slug && (
+              {/* Virtual place nodes have no folder/slug — no file to open. */}
+              {(selected.type === "note" || selected.type === "place") && selected.folder && selected.slug && (
                 <a
                   href={`/kb/browse?path=${encodeURIComponent(selected.folder)}&open=${encodeURIComponent(selected.slug)}`}
                   className="text-xs underline opacity-70 hover:opacity-100 inline-block mt-1"

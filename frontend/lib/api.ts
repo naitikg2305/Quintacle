@@ -1456,6 +1456,9 @@ export type GraphNode = {
   slug?: string;
   path?: string;
   location?: { lat: number; lon: number };
+  // 2026-11-05: virtual place nodes (place:<continent>[/<country>[/<city>]])
+  // carry their level; they have no folder/slug (graph-only, no file).
+  level?: "continent" | "country" | "city";
 };
 export type GraphEdge = { source: string; target: string; kind: string };
 

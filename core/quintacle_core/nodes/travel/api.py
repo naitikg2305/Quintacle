@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from ...graph import get_graph_store, link_new_entry, sync_frontmatter_links
 from ...graph_capture import emerge_places_for_text, mention_candidates
 from ...markdown_paths import resolve_nested, slugify
+from ...place_graph import link_experience_places, link_note_places
 from ...retrieval import safe_index_experience, safe_index_note, safe_remove_node
 from . import states as travel_states
 from ..journal.api import get_store as get_journal_store
@@ -82,6 +83,8 @@ def create_experience(body: ExperienceCreate) -> dict:
 
     # Retrieval index (retrieval.py) — failure-isolated, never fails the save.
     safe_index_experience(name, folder, slug, body.city, body.kind, body.rating, body.notes)
+    # 2026-11-05 (place_graph.py): experience → its city (→ country → continent).
+    link_experience_places(kb_store, {"name": name, "folder": folder, "slug": slug, "city": body.city})
 
     return {"name": name, "slug": slug, "folder": folder}
 
@@ -159,6 +162,8 @@ def move_planned(body: PlannedMove) -> dict:
         safe_remove_node(old_id)
         full = kb.read_full(folder, slug) or {}
         safe_index_note(folder, slug, full.get("title") or slug, full.get("content") or "")
+    # 2026-11-05 (place_graph.py): a trip now in Planned links to its destinations.
+    link_note_places(kb, folder, slug)
     return {"folder": folder, "slug": slug}
 
 

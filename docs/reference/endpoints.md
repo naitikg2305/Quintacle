@@ -319,6 +319,7 @@ places go to `Fun/Travel/Bucket List`.
 | Method | Path | Input | Purpose | Store |
 |---|---|---|---|---|
 | POST | `/kb/photos/backfill-place` | query `dry_run` (default `true`) | Walk every KB note with image assets (or frontmatter `location`), add/refresh its `📍 … <!-- place -->` body line + `place` frontmatter, re-index each. Dry run only reports `{dry_run, count, changes: [{folder, slug, line, place, location}]}` (geocode results are still cached, so the apply run is free). Private notes never hit the cloud geocoder | KBStore + RetrievalIndex |
+| POST | `/kb/graph/backfill-places` | query `dry_run` (default `true`) | 2026-11-05 (`place_graph.py`): link every photo (frontmatter `place`), Fun/Travel/Planned trip (`fields.destinations`) and experience (city) into the place hierarchy — `located_in` → city, `part_of` city → country → continent — and index the place nodes. Deterministic, idempotent. Returns `{dry_run, counts: {photos, plans, experiences}, edges, located_in, part_of, places, sample: [{source, target, kind}]}` | KBStore + ExperienceStore + GraphEdgeStore + RetrievalIndex |
 
 Changed: `POST /kb/entries/with-asset`, `POST /kb/entry/asset` (now also
 re-indexes when an image is attached) and the MCP `kb_attach_file` tool all
