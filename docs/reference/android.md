@@ -105,3 +105,66 @@ reboot to confirm the chain.
    round trip populates (Documents/People lists).
 9. Day-to-day thereafter: the LAN sync page keeps phone and desktop
    converged ([sync.md](sync.md)).
+
+## 2026-11-05 status note (addition)
+
+**Static export re-verified with today's pages.**
+`CAPACITOR_BUILD=true next build` succeeds as-is: 29 routes, every one
+`○ (Static)`, including the new overview Home (`/` → `out/index.html`),
+`/career`, `/travel` (`?tab=` read client-side), and `/kb/graph` with the 3D
+toggle (react-force-graph-3d sits behind `next/dynamic` with `ssr:false`, so
+it never runs at prerender). The export needed no fixes. `npx cap sync
+android` copies `out/` into `android/app/src/main/assets/public` (gitignored).
+New code calls the backend only through `lib/api.ts`'s `API_BASE` (still
+`http://localhost:8000`); `app/sync/page.tsx` builds peer URLs from
+`window.location.hostname`, as before.
+
+**What changed for the phone:**
+- `lib/api.ts` has one `DEFAULT_LOCAL_MODEL`, shared by the Chat page and the
+  overview's AssistPanel, read from `NEXT_PUBLIC_DEFAULT_LOCAL_MODEL`. The
+  Capacitor build bakes it as `local:qwen3:4b` (`next.config.ts`, Capacitor
+  branch only); desktop stays `local:qwen3:8b`.
+- `perception/backend_tflite.py` falls back to `tflite_runtime` when
+  `ai_edge_litert` is missing. Termux main ships `python-tflite-runtime`
+  2.21.0 (bionic), so the Tier 2 lane runs in stock Termux with no proot.
+- `nodes/career/website.py`: a missing `git` binary is now a 409 with a
+  readable message (it used to be an uncaught `FileNotFoundError`, a 500). A
+  missing PersonalWebsite checkout was already a clear 409
+  ("website repo not found … set QUINTACLE_WEBSITE_REPO").
+- Termux scripts: `update.sh`, `setup-perception.sh`,
+  `setup-claude-max.sh`, plus Ollama auto-start in `start-backend.sh`. See
+  `docs/termux-backend-setup.md` (2026-11-05 section) for the ordered
+  playbook.
+
+**Phone vs. desktop, feature by feature:**
+
+| Feature | Desktop | Phone |
+|---|---|---|
+| Claude Max | `claude` CLI | Off unless the untested proot wrapper is installed (`setup-claude-max.sh`); `max_backend.available()` is False with no `claude` on PATH, so every cloud call goes straight to the API key. All imports are stdlib. |
+| Local LLM | Ollama, qwen3:8b | Termux Ollama, qwen3:4b (+ qwen2.5:1.5b); auto falls back to cloud when the daemon is down |
+| Perception (tags/faces) | onnxruntime | LiteRT via `pkg python-tflite-runtime`, DRQ models from the data migration |
+| Local photo description | Ollama/llama.cpp VLM | Optional: `ollama pull qwen2.5vl:3b` (RAM-tight); otherwise cloud caption |
+| MCP server | yes | no (desktop-only; nothing on the phone registers it) |
+| Career "Update website" | git branch in PersonalWebsite | clear 409: no repo (and maybe no git) on the phone |
+| Video-frame captioning | cv2 | off (no `opencv-python` in Termux main); everything else works |
+
+**APK still not built here.** This machine has no JDK and no Android SDK.
+The Gradle project needs **JDK 21** (`JavaVersion.VERSION_21` in
+`capacitor.build.gradle`) and **SDK platform 36**
+(`compileSdkVersion`/`targetSdkVersion = 36`, minSdk 24); the wrapper
+downloads Gradle 8.14.3. On Arch:
+
+```
+sudo pacman -S jdk21-openjdk
+# Android SDK: install Android Studio (AUR android-studio) and let it fetch
+# platform 36 + build-tools, OR command-line tools only:
+#   sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+echo "sdk.dir=$HOME/Android/Sdk" > frontend/android/local.properties
+cd frontend && npm run android:build && cd android && ./gradlew assembleDebug
+# -> frontend/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+**Known WebView limit (all pages, not new):** Capacitor's local server
+serves `index.html` for any extensionless path (html5mode), so in-app
+navigation works (client-side, RSC payloads have extensions), but a hard
+reload while on e.g. `/career` loads the root shell, not `career.html`.

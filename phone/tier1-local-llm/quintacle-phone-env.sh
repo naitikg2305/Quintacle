@@ -20,15 +20,29 @@ export QUINTACLE_OLLAMA_HOST="${QUINTACLE_OLLAMA_HOST:-http://127.0.0.1:11434}"
 # they switch to local automatically the day Tier 3's model is pulled.
 export QUINTACLE_VISION="${QUINTACLE_VISION:-auto}"
 
-# Local model for ingest/parse calls. The ingest dispatch that reads this is
-# landing from a parallel workstream and is NOT in this tree yet — setting
-# it here is forward wiring, effective once that merges; until then it's an
-# inert env var. qwen2.5:1.5b is the Tier 1 default model
-# (install-ollama-termux.sh pulls it), good for narration/single-entry
-# parses per docs/local-llm-phone-plan.md.
-export QUINTACLE_LOCAL_PARSE_MODEL="${QUINTACLE_LOCAL_PARSE_MODEL:-qwen2.5:1.5b}"
+# Local model for ingest/parse calls (llm_dispatch.py reads it; the desktop
+# default is qwen3:8b). 2026-11-05: the phone default is qwen3:4b — the
+# 1.5B tier mangles multi-entry schemas (llm_dispatch.py's own note), and 4B
+# fits the 12 GB S25U. install-ollama-termux.sh pulls both qwen3:4b and
+# qwen2.5:1.5b (the fast chat fallback).
+export QUINTACLE_LOCAL_PARSE_MODEL="${QUINTACLE_LOCAL_PARSE_MODEL:-qwen3:4b}"
 
-# Ingest provider selection — same parallel workstream, same "effective once
-# merged" caveat as above. "auto" is expected to mean local-when-available,
-# cloud otherwise, mirroring QUINTACLE_VISION's contract.
+# Ingest provider: auto = local when the daemon answers, cloud otherwise
+# (escalation re-runs from the original input, per the local-first rule).
 export QUINTACLE_INGEST_PROVIDER="${QUINTACLE_INGEST_PROVIDER:-auto}"
+
+# Perception (Tier 2, 2026-11-05): YOLOX-nano tags + SCRFD face detect +
+# ArcFace embed on LiteRT instead of onnxruntime. Runtime comes from
+# `pkg install python-tflite-runtime` (scripts/termux/setup-perception.sh);
+# models are the converted .tflite files under
+# $QUINTACLE_DATA_DIR/perception/models/tflite/ (they ride along in the
+# migrate-export tarball). dynamic_range_quant = int8 weights, the phone
+# target (parity-proven vs ONNX in phone/tier2-perception-tflite/README.md).
+# If the runtime or models are missing, perceive_photo() just returns None
+# with one warning — drops keep working.
+export QUINTACLE_PERCEPTION_BACKEND="${QUINTACLE_PERCEPTION_BACKEND:-tflite}"
+export QUINTACLE_TFLITE_VARIANT="${QUINTACLE_TFLITE_VARIANT:-dynamic_range_quant}"
+
+# Claude Max on the phone is best-effort: max_backend.py looks for `claude`
+# on PATH (scripts/termux/setup-claude-max.sh installs a proot wrapper there).
+# No wrapper -> every cloud call goes straight to the API key in core/.env.

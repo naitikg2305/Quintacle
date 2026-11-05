@@ -204,3 +204,15 @@ tests skip without `ai-edge-litert` + converted models. Verified green both
 ways: full venv 305 passed / 0 skipped; minimal venv (requirements.txt only)
 296 passed / 9 skipped (4 pre-existing perception model-tier + 5 from this
 tier).
+
+## 2026-11-05 correction: stock Termux does have a LiteRT
+
+The "On-device install" section above says there's no Termux build of
+LiteRT. That's out of date: the Termux main repo ships
+**`python-tflite-runtime` 2.21.0** (aarch64, bionic, depends on
+`python-numpy`). `backend_tflite.py` now tries `ai_edge_litert` and then
+`tflite_runtime`, which have the same `Interpreter`/`load_delegate` API.
+`scripts/termux/setup-perception.sh` installs it and checks that the DRQ
+models are present. Route A (proot) is now only a fallback. Termux main
+also ships `python-onnxruntime` 1.31.1, so the default ONNX lane is a second
+native option. NNAPI/QNN delegates remain device-unproven either way.

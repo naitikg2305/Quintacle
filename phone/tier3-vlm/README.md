@@ -88,3 +88,14 @@ QUINTACLE_LLAMACPP_URL=http://127.0.0.1:8080   # llama-server default
 ```
 
 No GGUFs or binaries live in git — scripts fetch them.
+
+## 2026-11-05 note: Ollama is in Termux now
+
+This README's premise ("Ollama does not exist on Android") no longer holds:
+Termux main ships `ollama` (0.40.14 at check time), which Tier 1 already
+installs. The zero-new-code route to on-phone photo descriptions is
+therefore `bash phone/tier1-local-llm/install-ollama-termux.sh --model
+qwen2.5vl:3b`. `local_vlm/ollama.py` already defaults to that model, and
+`QUINTACLE_VISION=auto` is set by the phone env. The llama.cpp lane here
+stays the GPU (OpenCL) option. Not pulled by default: see the RAM budget
+above. Neither path has run on a device.

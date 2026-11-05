@@ -1,0 +1,15 @@
+# Phone (Termux) perception deps — Tier 2 TFLite lane (2026-11-05).
+#
+# Deliberately NOT in requirements.txt (the core must start without them;
+# perceive_photo() returns None when they're missing). On Termux the heavy
+# pieces are bionic-native *pkg* packages, not pip wheels — PyPI has no
+# Termux wheels for either:
+#
+#   pkg install python-numpy python-tflite-runtime
+#
+# (scripts/termux/setup-perception.sh does that, then pip-installs this file
+# into the --system-site-packages venv, which sees the pkg modules and so
+# treats the lines below as already satisfied.) ai-edge-litert, the desktop
+# runtime, has only manylinux (glibc) wheels and will NOT install in Termux;
+# backend_tflite.py falls back to tflite_runtime, which has the same API.
+numpy>=1.26

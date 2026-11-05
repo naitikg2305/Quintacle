@@ -149,3 +149,14 @@ local model proves out.
 | `install-ollama-termux.sh` | Install + model pull + the `--serve` wake-locked restart loop |
 | `quintacle-phone-env.sh` | Env profile; auto-sourced by `scripts/termux/start-backend.sh` if present |
 | `boot-ollama` | Termux:Boot snippet (copy to `~/.termux/boot/`, placeholder filled) |
+
+## 2026-11-05 update
+
+Default pull is now **`qwen3:4b` + `qwen2.5:1.5b`** (6 GiB free-space
+guard). `quintacle-phone-env.sh` sets
+`QUINTACLE_LOCAL_PARSE_MODEL=qwen3:4b`, because 1.5B mangles multi-entry
+parse schemas, and the APK's chat picker defaults to `local:qwen3:4b`.
+`scripts/termux/start-backend.sh` starts the `--serve` loop itself when
+`ollama` is installed, and the serve loop idles when another instance
+already owns the port. Installing `boot-ollama` is therefore optional:
+harmless, but no longer needed. Updates: `bash scripts/termux/update.sh`.

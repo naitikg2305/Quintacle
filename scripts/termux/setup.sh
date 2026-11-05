@@ -79,8 +79,9 @@ echo "== 3/5: installing opencv-python (cv2) — may not be available =="
 if ! pkg install -y opencv-python; then
   echo
   echo "!! 'pkg install opencv-python' failed or that package isn't in your"
-  echo "!! Termux repos right now. The backend will NOT start without cv2"
-  echo "!! importable. Try, in order:"
+  echo "!! Termux repos right now (2026-11-05: not in Termux main). The backend"
+  echo "!! still starts — cv2 is imported lazily and only video-frame captioning"
+  echo "!! needs it (docs/reference/android.md). To get it anyway, try:"
   echo "!!   1. pkg install x11-repo && pkg install opencv-python"
   echo "!!   2. pkg search opencv   (check the exact package name on your"
   echo "!!      Termux version — it has moved/been renamed before)"
@@ -131,8 +132,8 @@ for m in mods:
 if failed:
     print()
     print(f"!! These failed to import: {', '.join(failed)}")
-    print("!! If 'cv2' is the only failure, the API will not start at all")
-    print("!! (see the warning above) until it's resolved.")
+    print("!! A 'cv2' failure only disables video-frame captioning; the API")
+    print("!! still starts (cv2 is imported lazily since 2026-10).")
 PYEOF
 
 echo
@@ -144,4 +145,8 @@ echo "  3. bash scripts/termux/start-backend.sh --once   (test it runs)"
 echo "  4. Set up Termux:Boot persistence — see docs/termux-backend-setup.md"
 echo "  5. Optional, Tier 1 local LLM (free on-device chat via the 'local:' models):"
 echo "     bash phone/tier1-local-llm/install-ollama-termux.sh"
-echo "     — installs Ollama + pulls qwen2.5:1.5b; see phone/tier1-local-llm/README.md"
+echo "     — installs Ollama + pulls qwen3:4b and qwen2.5:1.5b; see phone/tier1-local-llm/README.md"
+echo "  6. Optional, on-device perception (object tags + faces):"
+echo "     bash scripts/termux/setup-perception.sh"
+echo "  7. Optional, untested, Claude Max via proot: bash scripts/termux/setup-claude-max.sh"
+echo "  Later updates: bash scripts/termux/update.sh"
