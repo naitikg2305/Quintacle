@@ -101,6 +101,38 @@ need creating (Add role on Minfy's detail) and dates/bullets filling in.
 Reference: `docs/reference/career-updates.md` + `frontend.md` (2026-11-05
 sections).
 
+## 2026-11-05 — Projects page (worktree agent)
+
+The owner asked for a projects page modeled on the PersonalWebsite's: what
+he has done, is doing and has planned, plus GitHub repos, STLs and
+markdown. New `/projects` page with sections Doing, Planned and Done of
+website-style cards. Each card has a cover image or a hover-rotating STL,
+a summary, stack chips and a GitHub mark. The detail view is
+`/projects?p=<slug>`, a query param so it works in the static export. It
+shows a banner or orbit STL viewer, the hub description, galleries for
+models, images, PDFs/docs and videos, rendered notes, work-log days and
+graph neighbors. A New project form and an Edit fields form are included.
+
+The backend is the new `nodes/projects/api.py`. `GET /projects` and
+`GET /projects/{slug}` are deterministic reads over `Projects/<Name>/`
+folders (hub slug = folder slug). `PUT /projects/{slug}/fields` writes hub
+fields without restamping `edited`, shares the Career alias table's
+`public*` keys, and creates a hub for a folder that has none. `POST
+/projects` creates the folder and its hub. `Projects` was already in
+`SEED_FOLDERS`.
+
+Checks: 958 passed, including the 8 new tests in `test_projects_page.py`.
+tsc reports 0 errors. eslint shows no errors on the touched files.
+`CAPACITOR_BUILD=true next build` succeeds and exports `/projects`
+statically. Screenshots at 1400px and 390px were taken against a sandboxed
+backend on 8111 and frontend on 3111.
+
+Not checked: whether the STL canvases actually draw. The headless shell
+rendered them black, so this needs a look in a real browser.
+
+The Apps-drawer entry is left for the main session. Reference:
+`docs/reference/frontend.md` (2026-11-05 Projects page).
+
 ## 2026-11-05 — Dashboard-first nav + ⊞ Apps drawer + widget dashboard (worktree agent)
 
 This follows the owner's design: "the dashboard should be the landing

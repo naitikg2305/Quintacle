@@ -290,6 +290,21 @@ nothing; only `record/save`, `record/import`, `hubs` (PUT), `settings`
 | POST | `/career/hubs` | `{type, name, org?, role?, start?, end?, location?, summary?, bullets?, record_entry?, public?, public_name?, order?}` | *(2026-11-05)* Create `Career/<Name>`, `Career/<Org>/<Name>` (role; `org` = parent hub folder) or `Career/Contracts/<Name>`; 409 if it exists, 400 on an unreadable date | KBStore + GraphEdgeStore + RetrievalIndex |
 | PUT | `/career/hubs/{folder}/fields` | any subset of the create fields minus `name`/`org` | *(2026-11-05)* Edit a timeline hub's fields (`""`/`[]` clears; no body change, no `edited` restamp) | KBStore |
 
+## 2026-11-05 additions — Projects page (`/projects`, `nodes/projects/api.py`) — 4
+
+*Added 2026-11-05 (worktree agent).* Deterministic view over the KB's
+`Projects/<Name>/` folders (hub note slug = folder slug). The GETs are
+read-only. The PUT writes hub `fields` without restamping `edited`, the same
+rule as `PUT /career/hubs`, and shares its `public*` fields. Details are in
+[frontend.md](frontend.md) (2026-11-05 Projects page).
+
+| Method | Path | Input | Purpose | Store |
+|---|---|---|---|---|
+| GET | `/projects` | — | Every project, sorted by status (doing, planned, done) then most recently touched: `status`, `repo`, `summary`, `stack`, `start`/`end`, `public*`, counts (notes, files by kind, work-log days), `card` (STL or image for the card) | KBStore + GraphEdgeStore |
+| GET | `/projects/{slug}` | — | One project: the above plus the hub `body`, every `notes[]` with content, `files[]` (paths relative to the project folder, readable with `/kb/asset`), `worklogs[]` and graph `related[]`. 404 if not found | KBStore + GraphEdgeStore |
+| PUT | `/projects/{slug}/fields` | `{status?, repo?, summary?, stack?, start?, end?, cover?, public?, public_name?, public_repo?}` | Owner edit: only sent keys change, and `""`/`[]` clears a key. If the folder has no hub yet, this creates it | KBStore (+ RetrievalIndex/graph when it creates a hub) |
+| POST | `/projects` | `{name, description?, ...fields}` | New project: creates `Projects/<Name>/` and its hub note, with status defaulting to doing. 409 if the slug exists, 400 if the name is empty | KBStore + GraphEdgeStore + RetrievalIndex |
+
 ## 2026-11-05 additions — Travel states: Planned + Bucket list (`/travel`, `nodes/travel/api.py`) — 6
 
 *Added 2026-11-05 (worktree agent).* Travel now has three states:

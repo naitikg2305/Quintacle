@@ -113,6 +113,7 @@ from .nodes.logs.habit_llm import structure_habit
 from .nodes.vault.api import init_store as init_vault_store, router as vault_router
 from .nodes.career.api import init_career, router as career_router
 from .nodes.business.api import router as business_router
+from .nodes.projects.api import router as projects_router
 from .perception import perceive_photo
 from .sync import init_sync, router as sync_router
 
@@ -240,6 +241,7 @@ def create_app() -> FastAPI:
     init_career(DATA_DIR)
     app.include_router(career_router)
     app.include_router(business_router)  # Business Ideas board (reads kb/)
+    app.include_router(projects_router)  # Projects page (read-only view over kb/projects)
 
     # Deliberately OUTSIDE kb_root — every model-facing surface (KB chat,
     # MCP tools, search, graph, drop) only walks kb/, so vault/ being a

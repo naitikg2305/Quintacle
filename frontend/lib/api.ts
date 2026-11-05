@@ -6,7 +6,7 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:80
 // Ollama setup pulls (2026-11-05).
 export const DEFAULT_LOCAL_MODEL = process.env.NEXT_PUBLIC_DEFAULT_LOCAL_MODEL || "local:qwen3:8b";
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: options?.body ? { "content-type": "application/json" } : undefined,
     ...options,
