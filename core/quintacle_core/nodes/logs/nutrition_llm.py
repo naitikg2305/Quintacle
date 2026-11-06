@@ -32,7 +32,8 @@ _IMAGE_SYSTEM_PROMPT = (
     "your best estimate of the pictured quantity's weight in grams — when a label photo is "
     "present, prefer its printed values over a visual estimate). Also propose a short "
     "suggested_name for this ingredient (e.g. the product name on a label, or a plain "
-    "description of the food)."
+    "description of the food). Set from_label to true only if you read the numbers from a printed "
+    "nutrition facts label."
 )
 
 
@@ -54,6 +55,10 @@ class NutritionEstimate(BaseModel):
 
 class NutritionEstimateFromImage(NutritionEstimate):
     suggested_name: str
+    # 2026-11-05: True when the numbers were READ off a printed nutrition
+    # label (they win, source=label); False for a visual estimate of a plain
+    # food — then USDA numbers replace them when the food matches.
+    from_label: bool = False
 
 
 def estimate_nutrition(description: str, provider: str | None = None) -> NutritionEstimate:

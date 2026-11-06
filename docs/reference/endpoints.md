@@ -396,3 +396,31 @@ validating | building | parked | dropped`; anything else reads as `idea`),
 The sorter now offers `Business Ideas` as a seed folder, and `_FOLDER_RULE`
 (`nodes/kb/llm.py`) routes business/startup/product ideas to
 `Business Ideas/<Idea>`. Tests: `core/tests/test_business_ideas.py`.
+
+## 2026-11-05 additions — Nutrition / USDA FoodData Central (`/nutrition`, `nodes/logs/nutrition_api.py`) — 9
+
+*Added 2026-11-05 (worktree agent).* Every number comes from stored presets
+or the offline USDA db (`nutrition_db/`). The only model involvement is the
+optional index-only candidate pick. Details: `nutrition.md`.
+
+| Method | Path | Input | Purpose | Store |
+|---|---|---|---|---|
+| GET | `/nutrition/db/status` | — | `{installed, path, summary{foods, size_bytes, built_at, flavonoids, source_urls}, approx_download_mb, job{state, step, error}}` | usda.db |
+| POST | `/nutrition/db/install` | — | Starts the background download + build (`fetch.install`); `{started}` (false if one is already running). Poll status | usda.db |
+| GET | `/nutrition/match` | query `q`, `pick?=true` | Ranked candidates `[{fdc_id, description, category, source, score}]` (top 8) plus `pick` (confident top, or a model's index-only choice) | usda.db |
+| GET | `/nutrition/food/{fdc_id}` | query `grams?=100` | Ingredient-preset-shaped fields for that amount: macros, `micros[{nutrient, amount, unit, source:"usda", approx?}]`, `fdc_id`, `usda_description`. 404 if unknown | usda.db |
+| POST | `/nutrition/breakdown` | `{components:[{name?, quantity_g, ingredient_id? \| fdc_id? \| inline macros+micros, source?}]}` | Full grouped panel for a draft (composer / preset card) | ingredients + usda.db |
+| GET | `/nutrition/ingredient/{id}` | query `grams?` | Panel for one ingredient preset (+ `source`, `fdc_id`, `usda_description`) | ingredients |
+| GET | `/nutrition/meal/{meal_id}` | query `servings?=1` | Panel for a meal; composed meals break down per ingredient | meals + meal_ingredients |
+| GET | `/nutrition/day/{date}` | — | Panel for the day's food log, flattened to ingredients (contributions name foods) | food_log + presets |
+| POST | `/logs/ingredients/backfill-usda` | query `dry_run?=true` | Re-source existing presets (estimated/legacy → USDA, label → gaps filled). Returns `{changes[{id, name, from_source, to_source, fdc_id, usda_description, score, kcal_before, kcal_after, …}], skipped, meals_recomputed}`. Apply recomputes affected composed meals | ingredients + usda.db |
+
+Changed: `POST /logs/ingredients` takes `source` (`usda | label | estimated |
+manual | ""`), `fdc_id` and `auto_match`. With `source: "usda"` the numbers
+are re-read from the db, ignoring the client's values. With `label`, the
+client's values win and gaps are filled from `fdc_id`. The response echoes
+what was stored. `MealComponentInput` (`POST /logs/meals/from-ingredients`)
+takes `fdc_id`/`source`. `POST /logs/meals/suggest-composition` components
+carry `source`, `fdc_id`, `usda_description` and `usda_candidates`.
+`/drop` ingredient proposals carry the same fields. `/logs/nutrition/{date}`
+now also lists ALA (omega-3) against its AI.

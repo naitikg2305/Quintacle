@@ -1,3 +1,4 @@
+import type { UsdaCandidate } from "./nutritionApi";
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
 // The chat model picker's default when no choice is stored yet — local-first.
@@ -182,6 +183,9 @@ export type Ingredient = {
   fiber_g: number;
   kcal: number;
   notes: string;
+  source?: string;
+  fdc_id?: number | null;
+  usda_description?: string;
 };
 
 export const listIngredients = () => request<Ingredient[]>("/logs/ingredients");
@@ -196,6 +200,10 @@ export const createIngredient = (body: {
   kcal: number;
   notes?: string;
   micros?: MicroEstimate[];
+  // 2026-11-05 USDA sourcing — with source "usda" the backend re-reads every
+  // number from the db by fdc_id; "label" keeps these numbers and fills gaps.
+  source?: string;
+  fdc_id?: number | null;
 }) => request<Ingredient>("/logs/ingredients", { method: "POST", body: JSON.stringify(body) });
 
 export type MealComponent = {
@@ -210,6 +218,12 @@ export type MealComponent = {
   fiber_g: number;
   kcal: number;
   new_ingredient_micros?: MicroEstimate[];
+  // 2026-11-05: where this component's numbers came from + the USDA match
+  // and alternatives the owner can switch to.
+  source?: string;
+  fdc_id?: number | null;
+  usda_description?: string;
+  usda_candidates?: UsdaCandidate[];
 };
 
 export type MealCompositionResult = {
@@ -240,6 +254,8 @@ export const createMealFromIngredients = (name: string, components: MealComponen
               fiber_g: c.fiber_g,
               kcal: c.kcal,
               micros: c.new_ingredient_micros ?? [],
+              fdc_id: c.fdc_id ?? null,
+              source: c.source ?? "",
             }
       ),
     }),
@@ -472,7 +488,7 @@ export type ParsedKBEntry = {
   private?: boolean;
   file_meta?: FileMetaInfo[];
 };
-export type MicroEstimate = { nutrient: string; amount: number; unit: string };
+export type MicroEstimate = { nutrient: string; amount: number; unit: string; source?: string; approx?: boolean };
 export type ParsedIngredientPreset = {
   type: "ingredient_preset";
   suggested_name: string;
@@ -483,6 +499,11 @@ export type ParsedIngredientPreset = {
   fiber_g: number;
   kcal: number;
   micros: MicroEstimate[];
+  // 2026-11-05 USDA sourcing (see lib/nutritionApi.ts).
+  source?: string;
+  fdc_id?: number | null;
+  usda_description?: string;
+  usda_candidates?: UsdaCandidate[];
 };
 export type ParsedMealComposition = {
   type: "meal_composition";

@@ -24,6 +24,8 @@ import {
   Todo,
 } from "@/lib/api";
 import { addDaysIso, calendarIso, currentMonthStart, mondayOfWeek, todayIso } from "@/lib/date";
+import { getDayNutrientPanel, NutrientPanelData } from "@/lib/nutritionApi";
+import NutrientPanel, { UsdaDbNotice } from "@/components/NutrientPanel";
 
 type Tab = "regular" | "action" | "habits";
 
@@ -70,6 +72,7 @@ export default function DayViewPage() {
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<DayDetail | null>(null);
   const [expandedNutrition, setExpandedNutrition] = useState<NutritionForDate | null>(null);
+  const [expandedPanel, setExpandedPanel] = useState<NutrientPanelData | null>(null);
   const [ledger, setLedger] = useState<HabitsLedger | null>(null);
 
   const monthStart = useMemo(
@@ -127,14 +130,17 @@ export default function DayViewPage() {
       setExpandedDate(null);
       setExpandedDetail(null);
       setExpandedNutrition(null);
+      setExpandedPanel(null);
       return;
     }
     setExpandedDate(dateStr);
     setExpandedDetail(null);
     setExpandedNutrition(null);
+    setExpandedPanel(null);
     if (tab === "habits") return; // a week row — the ledger is already loaded
     getDayDetail(dateStr).then(setExpandedDetail);
     getNutritionForDate(dateStr).then(setExpandedNutrition);
+    getDayNutrientPanel(dateStr).then(setExpandedPanel).catch(() => setExpandedPanel(null));
   }
 
   function switchTab(next: Tab) {
@@ -142,6 +148,7 @@ export default function DayViewPage() {
     setExpandedDate(null);
     setExpandedDetail(null);
     setExpandedNutrition(null);
+    setExpandedPanel(null);
   }
 
   // Monday-anchored weeks overlapping the visible month, each mapped to its
@@ -358,38 +365,14 @@ export default function DayViewPage() {
                       </div>
                     </div>
 
-                    <table className="w-full text-xs">
-                      <tbody>
-                        {expandedNutrition.micros.map((m) => (
-                          <tr key={m.nutrient} className="border-b border-line">
-                            <td className="py-1 pr-2">
-                              {m.nutrient}
-                              {m.is_limit ? " (limit)" : ""}
-                            </td>
-                            <td className="py-1 pr-2 text-right whitespace-nowrap text-muted">
-                              {m.amount.toFixed(1)} {m.unit}
-                            </td>
-                            <td className="py-1 w-24">
-                              <div className="h-1.5 bg-white/10 rounded overflow-hidden">
-                                <div
-                                  className={`h-full ${
-                                    m.is_limit
-                                      ? m.pct_of_rda > 100
-                                        ? "bg-danger"
-                                        : "bg-accent"
-                                      : "bg-accent"
-                                  }`}
-                                  style={{ width: `${Math.min(100, m.pct_of_rda)}%` }}
-                                />
-                              </div>
-                            </td>
-                            <td className="py-1 pl-2 text-right text-muted whitespace-nowrap">
-                              {m.pct_of_rda.toFixed(0)}%
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    {/* 2026-11-05: the full grouped panel (USDA-sourced where matched,
+                        per-ingredient contributions) replaces the flat 30-row table. */}
+                    <UsdaDbNotice />
+                    {expandedPanel ? (
+                      <NutrientPanel data={expandedPanel} title="All nutrients" />
+                    ) : (
+                      <p className="text-xs text-muted">Loading nutrients…</p>
+                    )}
                   </div>
                 )}
               </div>

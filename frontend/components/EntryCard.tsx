@@ -6,6 +6,8 @@ import StatementImportCard from "./StatementImportCard";
 import OutfitEditor from "./OutfitEditor";
 import GroomingRoutineEditor from "./GroomingRoutineEditor";
 import KBFolderInput from "./KBFolderInput";
+import UsdaMatchPicker, { DraftNutrientPanel } from "./UsdaMatchPicker";
+import { getUsdaFood } from "@/lib/nutritionApi";
 
 const WARDROBE_CATEGORIES = ["jacket", "pants", "shirt", "shoes", "sunglasses", "accessory"];
 const GROOMING_CATEGORIES = ["skincare", "haircare", "shaving", "oral", "fragrance", "tool"];
@@ -30,6 +32,13 @@ type Props = {
   onAddSet: (entryIndex: number) => void;
   onRemoveSet: (entryIndex: number, setIndex: number) => void;
 };
+
+// 2026-11-05: hand-editing a number on a USDA-sourced preset makes it the
+// owner's own (source "manual") — otherwise the backend would re-read the
+// USDA numbers by fdc_id on Save and silently drop the edit.
+function manualOverride(entry: ParsedEntry): Partial<ParsedEntry> {
+  return entry.type === "ingredient_preset" && entry.source === "usda" ? { source: "manual", fdc_id: null } : {};
+}
 
 // One editable row per parsed entry, shared by the Journal page's nightly
 // dump and the general Drop page — both produce the same ParsedEntry union,
@@ -417,7 +426,16 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
                 type="number"
                 className="border rounded px-1 py-1 w-16"
                 value={entry.basis_amount_g}
-                onChange={(e) => onUpdate(i, { basis_amount_g: Number(e.target.value) })}
+                onChange={(e) => {
+                  const grams = Number(e.target.value);
+                  onUpdate(i, { basis_amount_g: grams });
+                  // USDA preset: re-read the db's numbers for the new amount (never scaled by a guess).
+                  if (entry.source === "usda" && entry.fdc_id && grams > 0) {
+                    getUsdaFood(entry.fdc_id, grams).then((f) =>
+                      onUpdate(i, { basis_amount_g: grams, protein_g: f.protein_g, carbs_g: f.carbs_g, fat_g: f.fat_g, fiber_g: f.fiber_g, kcal: f.kcal, micros: f.micros })
+                    );
+                  }
+                }}
               />
               g
             </label>
@@ -429,7 +447,7 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
                 type="number"
                 className="border rounded px-1 py-0.5 w-16"
                 value={entry.protein_g}
-                onChange={(e) => onUpdate(i, { protein_g: Number(e.target.value) })}
+                onChange={(e) => onUpdate(i, { ...manualOverride(entry), protein_g: Number(e.target.value) })}
               />
             </label>
             <label className="flex items-center gap-1">
@@ -438,7 +456,7 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
                 type="number"
                 className="border rounded px-1 py-0.5 w-16"
                 value={entry.carbs_g}
-                onChange={(e) => onUpdate(i, { carbs_g: Number(e.target.value) })}
+                onChange={(e) => onUpdate(i, { ...manualOverride(entry), carbs_g: Number(e.target.value) })}
               />
             </label>
             <label className="flex items-center gap-1">
@@ -447,7 +465,7 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
                 type="number"
                 className="border rounded px-1 py-0.5 w-16"
                 value={entry.fat_g}
-                onChange={(e) => onUpdate(i, { fat_g: Number(e.target.value) })}
+                onChange={(e) => onUpdate(i, { ...manualOverride(entry), fat_g: Number(e.target.value) })}
               />
             </label>
             <label className="flex items-center gap-1">
@@ -456,7 +474,7 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
                 type="number"
                 className="border rounded px-1 py-0.5 w-16"
                 value={entry.fiber_g}
-                onChange={(e) => onUpdate(i, { fiber_g: Number(e.target.value) })}
+                onChange={(e) => onUpdate(i, { ...manualOverride(entry), fiber_g: Number(e.target.value) })}
               />
             </label>
             <label className="flex items-center gap-1">
@@ -465,13 +483,56 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
                 type="number"
                 className="border rounded px-1 py-0.5 w-16"
                 value={entry.kcal}
-                onChange={(e) => onUpdate(i, { kcal: Number(e.target.value) })}
+                onChange={(e) => onUpdate(i, { ...manualOverride(entry), kcal: Number(e.target.value) })}
               />
             </label>
           </div>
-          {entry.micros.length > 0 && (
-            <p className="text-xs opacity-50">{entry.micros.length} micronutrients estimated (not shown here)</p>
-          )}
+          {/* 2026-11-05: where these numbers came from + the owner's match
+              override, and the full grouped nutrient panel for this preset. */}
+          <UsdaMatchPicker
+            name={entry.suggested_name}
+            grams={entry.basis_amount_g}
+            source={entry.source}
+            fdcId={entry.fdc_id}
+            description={entry.usda_description}
+            candidates={entry.usda_candidates}
+            onApply={(f, candidates) =>
+              onUpdate(i, {
+                ...(entry.source === "label"
+                  ? { fdc_id: f.fdc_id, usda_description: f.usda_description }
+                  : {
+                      protein_g: f.protein_g,
+                      carbs_g: f.carbs_g,
+                      fat_g: f.fat_g,
+                      fiber_g: f.fiber_g,
+                      kcal: f.kcal,
+                      micros: f.micros,
+                      source: "usda",
+                      fdc_id: f.fdc_id,
+                      usda_description: f.usda_description,
+                    }),
+                usda_candidates: candidates,
+              })
+            }
+          />
+          <DraftNutrientPanel
+            title={`All nutrients · per ${entry.basis_amount_g} g`}
+            components={[
+              entry.source === "usda" && entry.fdc_id
+                ? { name: entry.suggested_name, quantity_g: entry.basis_amount_g, fdc_id: entry.fdc_id }
+                : {
+                    name: entry.suggested_name,
+                    quantity_g: entry.basis_amount_g,
+                    protein_g: entry.protein_g,
+                    carbs_g: entry.carbs_g,
+                    fat_g: entry.fat_g,
+                    fiber_g: entry.fiber_g,
+                    kcal: entry.kcal,
+                    micros: entry.micros,
+                    source: entry.source || "estimated",
+                  },
+            ]}
+          />
         </div>
       )}
 

@@ -242,6 +242,16 @@ _MIGRATIONS = [
     "ALTER TABLE habits ADD COLUMN ended_on TEXT",
     # Work-log auto rows (next-wave-plan §10): see the activity_log comment.
     "ALTER TABLE activity_log ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+    # USDA sourcing (2026-11-05): where an ingredient's numbers came from
+    # ('usda' | 'label' | 'estimated' | '' = legacy/unknown), the FDC food it
+    # was matched to, and per-nutrient source/approx flags (a label preset
+    # filled in from USDA carries both kinds).
+    "ALTER TABLE ingredients ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE ingredients ADD COLUMN fdc_id INTEGER",
+    "ALTER TABLE ingredients ADD COLUMN usda_description TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE ingredient_micros ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE ingredient_micros ADD COLUMN approx INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE meal_micros ADD COLUMN source TEXT NOT NULL DEFAULT ''",
     # Backfill: one initial version per pre-versioning habit, in force since
     # forever ('0001-01-01'). Pre-versioning weeks are therefore judged
     # against the targets current AT MIGRATION TIME — the only honest reading,

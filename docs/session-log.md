@@ -3,6 +3,47 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-05 — USDA FoodData Central as the nutrition source of truth (worktree agent)
+
+The owner asked for real numbers, not AI guesses ("I look deeply into it,
+like calcium too"): macros, every micronutrient, omega-3/6, flavonoids and
+carotenoids, so that planning a lamb meal shows everything. Mid-task he
+added: "say I discuss a lamb meal [in chat] — will it track everything
+inside the lamb?"
+
+New `core/quintacle_core/nutrition_db/` (stdlib only, phone-safe):
+- `fetch.py` downloads the official FDC Foundation + SR Legacy CSV releases.
+  The newest Foundation zip (2026-10-29) shipped without
+  food.csv/food_nutrient.csv, so it falls back to 2026-04-30.
+- `build.py` builds a 6.7 MB `<data_dir>/nutrition/usda.db` (8,262 foods).
+- `nutrients.py` maps FDC ids to Quintacle names and units, with ≈ stand-ins.
+- `store.py` does FTS5 + code-scored matching, plus a model that may only
+  pick an index among the top 8.
+- `panel.py` builds the grouped panel, with contributions and the
+  omega-6:omega-3 ratio.
+- `chat_lane.py` adds a USDA facts block next to the web lane in
+  `kb/chat.py`.
+
+The USDA Flavonoid DB R3.3 is published only as MS Access. It is imported
+when mdbtools is installed, and skipped otherwise; status says which.
+
+Ingredient presets now carry `source` (usda | label | estimated | manual)
+plus `fdc_id`. For USDA presets the backend re-reads the numbers at write
+time. Label values win, and their gaps are filled from USDA. Drop text with
+a USDA match skips the estimate call. The composer matches new components
+to USDA. The ALA AI (1.6/1.1 g) is the only new official target; EPA+DHA and
+flavan-3-ols are labelled references. `POST /logs/ingredients/backfill-usda`
+re-sources existing presets (dry run first).
+
+Frontend: `NutrientPanel` / `UsdaDbNotice` / `UsdaMatchPicker` in the Day
+view, the meal composer and the ingredient preset card.
+
+Verified: 1012 passed (23 new in `test_usda_nutrition.py`, fixture CSVs, no
+network), tsc 0, eslint with no new errors on touched files (3 pre-existing),
+`CAPACITOR_BUILD=true next build` OK. A real `fetch` into a temp data dir
+succeeded. Not done: no browser screenshot pass at 390 px. Reference:
+`docs/reference/nutrition.md` + `endpoints.md`.
+
 ## 2026-11-05 — Knowledge page with dynamic topic/tag filters (worktree agent)
 
 The owner asked for "a knowledge page with a filter (that gets updated as

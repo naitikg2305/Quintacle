@@ -108,7 +108,10 @@ Preset libraries, same contract (markdown primary, SQLite index):
   `notes`, `micros` list; composed meals also carry `components` by
   *ingredient name*, since names are portable and integer ids aren't).
 - Ingredient presets: `…/Nutrition/ingredients/<slug>.md` (adds
-  `basis_amount_g`).
+  `basis_amount_g`). *2026-11-05:* may also carry `source` (usda | label |
+  estimated | manual), `fdc_id` and `usda_description`, plus per-micro
+  `source`/`approx`; mirrored in SQLite columns. The offline USDA db lives
+  at `<data_dir>/nutrition/usda.db` (see `nutrition.md`).
 - Workout routines: `…/Fitness/routines/<slug>.md` (`name`, `exercises`) —
   deliberately no SQLite mirror; nothing foreign-keys a routine.
 

@@ -27,3 +27,8 @@ def _deterministic_prose_summaries(monkeypatch):
     # Web lane (web_search.py) for local/Bedrock chat: never a real network
     # call from a test. test_web_search.py re-enables it with stubbed urlopen.
     monkeypatch.setenv("QUINTACLE_WEB_SEARCH", "off")
+    # USDA nutrition db (nutrition_db/): never the owner's real installed
+    # db, and the candidate picker never calls a model. Tests that need a
+    # db build one from tests/fixtures/usda and point QUINTACLE_USDA_DB at it.
+    monkeypatch.setenv("QUINTACLE_USDA_DB", "/nonexistent/quintacle-test/usda.db")
+    monkeypatch.setenv("QUINTACLE_USDA_PICK_PROVIDER", "off")

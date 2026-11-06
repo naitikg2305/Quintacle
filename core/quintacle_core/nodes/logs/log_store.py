@@ -247,24 +247,27 @@ def rebuild_sqlite_index(
             values = (
                 ing.get("basis_amount_g", 100), ing.get("protein_g", 0), ing.get("carbs_g", 0),
                 ing.get("fat_g", 0), ing.get("fiber_g", 0), ing.get("kcal", 0), ing.get("notes", ""),
+                ing.get("source", "") or "", ing.get("fdc_id"), ing.get("usda_description", "") or "",
             )
             if name in existing_ing_ids:
                 ingredient_id = existing_ing_ids[name]
                 conn.execute(
-                    "UPDATE ingredients SET basis_amount_g=?, protein_g=?, carbs_g=?, fat_g=?, fiber_g=?, kcal=?, notes=? WHERE id=?",
+                    """UPDATE ingredients SET basis_amount_g=?, protein_g=?, carbs_g=?, fat_g=?, fiber_g=?, kcal=?, notes=?,
+                       source=?, fdc_id=?, usda_description=? WHERE id=?""",
                     values + (ingredient_id,),
                 )
                 conn.execute("DELETE FROM ingredient_micros WHERE ingredient_id=?", (ingredient_id,))
             else:
                 cur = conn.execute(
-                    "INSERT INTO ingredients (name, basis_amount_g, protein_g, carbs_g, fat_g, fiber_g, kcal, notes) VALUES (?,?,?,?,?,?,?,?)",
+                    """INSERT INTO ingredients (name, basis_amount_g, protein_g, carbs_g, fat_g, fiber_g, kcal, notes,
+                       source, fdc_id, usda_description) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (name,) + values,
                 )
                 ingredient_id = cur.lastrowid
             for m in ing.get("micros") or []:
                 conn.execute(
-                    "INSERT INTO ingredient_micros (ingredient_id, nutrient, amount, unit) VALUES (?, ?, ?, ?)",
-                    (ingredient_id, m["nutrient"], m["amount"], m["unit"]),
+                    "INSERT INTO ingredient_micros (ingredient_id, nutrient, amount, unit, source, approx) VALUES (?, ?, ?, ?, ?, ?)",
+                    (ingredient_id, m["nutrient"], m["amount"], m["unit"], m.get("source", "") or "", int(bool(m.get("approx")))),
                 )
             n += 1
         for name, ingredient_id in existing_ing_ids.items():
@@ -304,8 +307,8 @@ def rebuild_sqlite_index(
                 meal_id = cur.lastrowid
             for m in preset.get("micros") or []:
                 conn.execute(
-                    "INSERT INTO meal_micros (meal_id, nutrient, amount, unit) VALUES (?, ?, ?, ?)",
-                    (meal_id, m["nutrient"], m["amount"], m["unit"]),
+                    "INSERT INTO meal_micros (meal_id, nutrient, amount, unit, source) VALUES (?, ?, ?, ?, ?)",
+                    (meal_id, m["nutrient"], m["amount"], m["unit"], m.get("source", "") or ""),
                 )
             n += 1
         for name, meal_id in existing_ids.items():

@@ -70,6 +70,13 @@ sprints get their own section below; never rewrite a past sprint's entries.
   /career/updates), Knowledge (dynamic folder/tag filters), unified Finance (accounts with
   balance history, net worth, investments, budgets, subscriptions, income).
 - Patent: invention disclosure draft (`docs/patent/`).
+- Real nutrition numbers: an offline USDA FoodData Central db (Foundation + SR Legacy,
+  6.7 MB, one-tap install) is now the source for ingredient presets, the meal composer
+  and the Day view. A model may only pick which USDA entry a food is, never a number.
+  Adds omega-3s (ALA/EPA/DPA/DHA), omega-6, carotenoids, flavonoid classes (when mdbtools
+  can read the Access-only flavonoid db), the omega-6:omega-3 ratio and per-ingredient
+  contributions. A chat lane hands the model USDA facts for foods named in chat.
+  See `docs/reference/nutrition.md`.
 
 ### Not code (owner's repos)
 - Repo-slimming attempt reverted by owner decision: repos stay as-is (to be stored whole);

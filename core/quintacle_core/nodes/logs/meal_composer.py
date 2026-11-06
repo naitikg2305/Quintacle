@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from ...llm_dispatch import parse_structured
 from ..journal.normalize import canonicalize_name
 from .nutrition_targets import NUTRIENT_UNITS
+from .usda_sourcing import usda_proposal
 
 _SYSTEM_PROMPT = (
     "You help assemble a meal preset out of ingredients. Given a description of a dish being "
@@ -56,7 +57,8 @@ def suggest_meal_composition(
 
 
 def resolve_composition(
-    suggestion: MealCompositionSuggestion, known_ingredients: list[dict]
+    suggestion: MealCompositionSuggestion, known_ingredients: list[dict], provider: str | None = None,
+    use_usda: bool = True,
 ) -> dict:
     """Deterministic pass, not AI: matches each proposed component's name
     against the real ingredient library via the same fuzzy-match used for
@@ -86,9 +88,32 @@ def resolve_composition(
                     "fat_g": ingredient["fat_g"] * ratio,
                     "fiber_g": ingredient["fiber_g"] * ratio,
                     "kcal": ingredient["kcal"] * ratio,
+                    "source": ingredient.get("source") or "estimated",
                 }
             )
         else:
+            # 2026-11-05: a genuinely new component is matched against the
+            # offline USDA db first — a match replaces the model's fallback
+            # numbers entirely (scaled to the proposed quantity); only an
+            # unmatched component keeps the estimate.
+            usda = usda_proposal(comp.name, comp.quantity_g, provider) if use_usda else None
+            if usda and usda.get("matched"):
+                resolved.append(
+                    {
+                        "name": comp.name,
+                        "ingredient_id": None,
+                        "quantity_g": comp.quantity_g,
+                        "basis_amount_g": comp.quantity_g,
+                        "is_new": True,
+                        **{k: usda[k] for k in ("protein_g", "carbs_g", "fat_g", "fiber_g", "kcal")},
+                        "new_ingredient_micros": usda["micros"],
+                        "source": "usda",
+                        "fdc_id": usda["fdc_id"],
+                        "usda_description": usda["usda_description"],
+                        "usda_candidates": usda["usda_candidates"],
+                    }
+                )
+                continue
             resolved.append(
                 {
                     "name": comp.name,
@@ -101,7 +126,9 @@ def resolve_composition(
                     "fat_g": comp.fat_g,
                     "fiber_g": comp.fiber_g,
                     "kcal": comp.kcal,
-                    "new_ingredient_micros": [m.model_dump() for m in comp.micros],
+                    "new_ingredient_micros": [{**m.model_dump(), "source": "estimated"} for m in comp.micros],
+                    "source": "estimated",
+                    "usda_candidates": (usda or {}).get("usda_candidates", []),
                 }
             )
     totals = {

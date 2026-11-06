@@ -17,6 +17,7 @@ from .nutrition_targets import IS_LIMIT, rda_for, to_canonical_unit
 from .quotas import habit_history, habit_progress, weekly_ledger
 from .repository import LogsRepository
 from .routine_llm import resolve_workout_routine, suggest_workout_routine
+from .usda_sourcing import backfill as usda_backfill, resolve_ingredient_numbers
 from .worklog import import_work_log
 
 # Graph write-rule coverage decision (docs/graph-model.md, graph_capture.py):
@@ -72,6 +73,8 @@ class MicroInput(BaseModel):
     nutrient: str
     amount: float
     unit: str
+    source: str = ""
+    approx: bool = False
 
 
 class MealCreate(BaseModel):
@@ -95,6 +98,13 @@ class IngredientCreate(BaseModel):
     kcal: float
     notes: str = ""
     micros: list[MicroInput] = []
+    # 2026-11-05 USDA sourcing: "usda" (numbers re-read from the db by
+    # fdc_id — client numbers ignored), "label" (client numbers win, gaps
+    # filled from fdc_id), "estimated", or "" (manual/legacy). auto_match
+    # runs the deterministic matcher on `name` when no fdc_id is given.
+    source: str = ""
+    fdc_id: int | None = None
+    auto_match: bool = False
 
 
 class MealComponentInput(BaseModel):
@@ -110,6 +120,9 @@ class MealComponentInput(BaseModel):
     fiber_g: float = 0
     kcal: float = 0
     micros: list[MicroInput] = []
+    # 2026-11-05: a USDA-matched new component — numbers re-read from the db.
+    fdc_id: int | None = None
+    source: str = ""
 
 
 class MealFromIngredientsCreate(BaseModel):
@@ -258,19 +271,60 @@ def _canonicalize_micros(micros: list[MicroInput]) -> list[dict]:
     result = []
     for micro in micros:
         amount, unit = to_canonical_unit(micro.amount, micro.unit, micro.nutrient)
-        result.append({"nutrient": micro.nutrient, "amount": amount, "unit": unit})
+        row = {"nutrient": micro.nutrient, "amount": amount, "unit": unit}
+        if micro.source:
+            row["source"] = micro.source
+        if micro.approx:
+            row["approx"] = True
+        result.append(row)
     return result
+
+
+def _add_sourced_ingredient(
+    repo, *, name, basis_amount_g, macros: dict, micros: list[dict], notes="", source="", fdc_id=None, auto_match=False
+) -> tuple[int, dict]:
+    resolved = resolve_ingredient_numbers(
+        name=name, basis_amount_g=basis_amount_g, macros=macros, micros=micros,
+        source=source, fdc_id=fdc_id, auto_match=auto_match,
+    )
+    m = resolved["macros"]
+    ingredient_id = repo.add_ingredient(
+        name, m["protein_g"], m["carbs_g"], m["fat_g"], m["kcal"], m["fiber_g"], basis_amount_g, notes,
+        resolved["micros"], source=resolved["source"], fdc_id=resolved["fdc_id"],
+        usda_description=resolved["usda_description"],
+    )
+    return ingredient_id, resolved
 
 
 @router.post("/ingredients")
 def create_ingredient(body: IngredientCreate) -> dict:
+    """2026-11-05: numbers are sourced at write time — see
+    usda_sourcing.resolve_ingredient_numbers for the label > USDA > estimate
+    precedence. The response echoes what was actually stored."""
     repo = get_repo()
-    micros = _canonicalize_micros(body.micros)
-    ingredient_id = repo.add_ingredient(
-        body.name, body.protein_g, body.carbs_g, body.fat_g, body.kcal, body.fiber_g, body.basis_amount_g, body.notes, micros
+    ingredient_id, resolved = _add_sourced_ingredient(
+        repo, name=body.name, basis_amount_g=body.basis_amount_g,
+        macros={k: getattr(body, k) for k in ("protein_g", "carbs_g", "fat_g", "fiber_g", "kcal")},
+        micros=_canonicalize_micros(body.micros), notes=body.notes,
+        source=body.source, fdc_id=body.fdc_id, auto_match=body.auto_match,
     )
     safe_index_log_row(f"ingredient:{ingredient_id}")  # retrieval index — failure-isolated
-    return {"id": ingredient_id, **body.model_dump()}
+    return {
+        "id": ingredient_id, **body.model_dump(), **resolved["macros"], "micros": resolved["micros"],
+        "source": resolved["source"], "fdc_id": resolved["fdc_id"], "usda_description": resolved["usda_description"],
+    }
+
+
+@router.post("/ingredients/backfill-usda")
+def backfill_ingredients_usda(dry_run: bool = True) -> dict:
+    """Re-sources existing presets from the offline USDA db: estimated/legacy
+    → USDA numbers, label → gaps filled. dry_run=true (default) only reports
+    the plan; dry_run=false applies it and recomputes affected composed meals."""
+    result = usda_backfill(get_repo(), dry_run=dry_run)
+    if not dry_run:
+        for c in result["changes"]:
+            safe_index_log_row(f"ingredient:{c['id']}")
+    return result
 
 
 @router.get("/ingredients")
@@ -343,9 +397,14 @@ def create_meal_from_ingredients(body: MealFromIngredientsCreate) -> dict:
             resolved_components.append({"ingredient_id": comp.ingredient_id, "quantity_g": comp.quantity_g})
         else:
             micros = _canonicalize_micros(comp.micros)
-            ingredient_id = repo.add_ingredient(
-                comp.name or body.name, comp.protein_g, comp.carbs_g, comp.fat_g, comp.kcal,
-                comp.fiber_g, comp.basis_amount_g, "", micros,
+            # A USDA-matched component becomes a per-100 g USDA preset (the
+            # reusable shape); everything else keeps its proposal's basis.
+            basis = 100 if comp.fdc_id is not None else comp.basis_amount_g
+            ingredient_id, _ = _add_sourced_ingredient(
+                repo, name=comp.name or body.name, basis_amount_g=basis,
+                macros={k: getattr(comp, k) for k in ("protein_g", "carbs_g", "fat_g", "fiber_g", "kcal")},
+                micros=micros, source=comp.source or ("usda" if comp.fdc_id is not None else "estimated"),
+                fdc_id=comp.fdc_id,
             )
             resolved_components.append({"ingredient_id": ingredient_id, "quantity_g": comp.quantity_g})
     meal_id = repo.add_meal_from_ingredients(body.name, resolved_components, body.notes)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ...nutrition_db.nutrients import UNITS as _USDA_UNITS
+
 # Real NIH ODS / FDA Daily Value reference data, banded by sex and the two
 # adult age brackets where the numbers actually diverge (19-50 vs 51+) — the
 # same simplification the FDA's own "51+" label variant uses. Weight/height
@@ -40,6 +42,10 @@ MALE_RDA_19_50: dict[str, tuple[float, str]] = {
     "Saturated Fat": (20, "g"),
     "Cholesterol": (300, "mg"),
     "Added Sugars": (50, "g"),
+    # 2026-11-05: ALA has a real Adequate Intake (NIH ODS omega-3 fact sheet:
+    # 1.6 g/day men, 1.1 g/day women). The only fatty acid/compound with
+    # official guidance — everything else new is "no official target".
+    "ALA (omega-3)": (1.6, "g"),
 }
 
 MALE_RDA_51_PLUS: dict[str, tuple[float, str]] = {
@@ -63,6 +69,7 @@ FEMALE_RDA_19_50: dict[str, tuple[float, str]] = {
     "Potassium": (2600, "mg"),
     "Manganese": (1.8, "mg"),
     "Choline": (425, "mg"),
+    "ALA (omega-3)": (1.1, "g"),
 }
 
 FEMALE_RDA_51_PLUS: dict[str, tuple[float, str]] = {
@@ -78,7 +85,38 @@ IS_LIMIT = {"Sodium", "Saturated Fat", "Cholesterol", "Added Sugars"}
 # Units don't change by sex/age, only target amounts do — this is what
 # to_canonical_unit() and the AI prompts (which just need "what unit is X
 # measured in", not a personalized target) actually need.
-NUTRIENT_UNITS: dict[str, str] = {nutrient: unit for nutrient, (_, unit) in MALE_RDA_19_50.items()}
+#
+# NUTRIENT_UNITS is ALSO the list the AI-estimate prompts ask for — kept to
+# the original 30 on purpose (2026-11-05): fatty acids, flavonoids and
+# carotenoids come ONLY from USDA data, never from a model's guess.
+_DB_ONLY = {"ALA (omega-3)"}
+NUTRIENT_UNITS: dict[str, str] = {
+    nutrient: unit for nutrient, (_, unit) in MALE_RDA_19_50.items() if nutrient not in _DB_ONLY
+}
+
+# Every nutrient Quintacle knows a canonical unit for: the estimate set plus
+# the USDA registry (nutrition_db/nutrients.py — omega-3/6, flavonoid
+# classes, carotenoids, …). Canonicalization uses this.
+ALL_NUTRIENT_UNITS: dict[str, str] = {
+    **{k: v for k, v in _USDA_UNITS.items() if v != "kcal"},
+    **{nutrient: unit for nutrient, (_, unit) in MALE_RDA_19_50.items()},
+}
+
+# Officially-sourced kinds, for the UI label next to a target.
+TARGET_KIND: dict[str, str] = {"ALA (omega-3)": "AI (NIH ODS)"}
+
+# Clearly-labelled REFERENCE figures — not RDAs, never shown as "% of RDA".
+# "EPA + DHA" is a computed figure (EPA + DHA, mg) rather than a nutrient row.
+REFERENCE_TARGETS: dict[str, dict] = {
+    "EPA + DHA": {
+        "low": 250, "high": 500, "unit": "mg",
+        "label": "common guidance (250–500 mg/day, e.g. ~2 servings of fatty fish a week) — not an RDA",
+    },
+    "Flavan-3-ols": {
+        "low": 400, "high": 600, "unit": "mg",
+        "label": "research suggestion (400–600 mg/day, 2022 flavan-3-ol guideline) — not an RDA",
+    },
+}
 
 _MCG_PER_UNIT = {"g": 1_000_000, "mg": 1_000, "mcg": 1}
 
@@ -97,7 +135,7 @@ def to_canonical_unit(amount: float, from_unit: str, nutrient: str) -> tuple[flo
     """Converts a model-supplied (amount, unit) into the nutrient's canonical unit.
     A model that answers a known nutrient in the wrong unit (e.g. Copper in mg
     instead of mcg) gets converted, not silently mislabeled."""
-    canonical_unit = NUTRIENT_UNITS.get(nutrient)
+    canonical_unit = ALL_NUTRIENT_UNITS.get(nutrient)
     if canonical_unit is None:
         return amount, from_unit
     if from_unit == canonical_unit:

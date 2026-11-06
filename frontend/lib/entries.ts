@@ -448,6 +448,8 @@ export async function commitEntry(date: string, entry: ParsedEntry, assets: File
         fiber_g: entry.fiber_g,
         kcal: entry.kcal,
         micros: entry.micros,
+        source: entry.source ?? "",
+        fdc_id: entry.fdc_id ?? null,
       });
     case "meal_composition":
       return createMealFromIngredients(entry.meal_name, entry.components);

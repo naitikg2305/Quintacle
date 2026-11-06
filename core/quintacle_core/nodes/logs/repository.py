@@ -11,6 +11,19 @@ from .log_store import IngredientPresetStore, LogFileStore, MealPresetStore, Rou
 from .quotas import next_period_start, period_window
 
 
+def _merge_sources(sources: set[str]) -> str:
+    """One label for a summed nutrient: the single source, or 'mixed'."""
+    return next(iter(sources)) if len(sources) == 1 else ("mixed" if sources else "")
+
+
+def insert_ingredient_micros(conn, ingredient_id: int, micros: list[dict]) -> None:
+    for m in micros:
+        conn.execute(
+            "INSERT INTO ingredient_micros (ingredient_id, nutrient, amount, unit, source, approx) VALUES (?, ?, ?, ?, ?, ?)",
+            (ingredient_id, m["nutrient"], m["amount"], m["unit"], m.get("source", "") or "", int(bool(m.get("approx")))),
+        )
+
+
 class LogsRepository:
     def __init__(self, conn: sqlite3.Connection, log_store: LogFileStore | None = None):
         self.conn = conn
@@ -87,8 +100,8 @@ class LogsRepository:
             meal_id = cur.lastrowid
         for m in micros:
             self.conn.execute(
-                "INSERT INTO meal_micros (meal_id, nutrient, amount, unit) VALUES (?, ?, ?, ?)",
-                (meal_id, m["nutrient"], m["amount"], m["unit"]),
+                "INSERT INTO meal_micros (meal_id, nutrient, amount, unit, source) VALUES (?, ?, ?, ?, ?)",
+                (meal_id, m["nutrient"], m["amount"], m["unit"], m.get("source", "") or ""),
             )
         self.conn.commit()
         return meal_id
@@ -109,39 +122,46 @@ class LogsRepository:
         basis_amount_g: float = 100,
         notes: str = "",
         micros: list[dict] | None = None,
+        source: str = "",
+        fdc_id: int | None = None,
+        usda_description: str = "",
+        exact_name: bool = False,
     ) -> int:
         micros = micros or []
-        known_names = [r["name"] for r in self.conn.execute("SELECT name FROM ingredients")]
-        name = canonicalize_name(name, known_names)
+        if not exact_name:
+            known_names = [r["name"] for r in self.conn.execute("SELECT name FROM ingredients")]
+            name = canonicalize_name(name, known_names)
         if self.ingredient_store:
-            self.ingredient_store.write(
-                name,
-                {
-                    "basis_amount_g": basis_amount_g, "protein_g": protein_g, "carbs_g": carbs_g,
-                    "fat_g": fat_g, "fiber_g": fiber_g, "kcal": kcal, "notes": notes,
-                },
-                micros,
-            )
+            fields = {
+                "basis_amount_g": basis_amount_g, "protein_g": protein_g, "carbs_g": carbs_g,
+                "fat_g": fat_g, "fiber_g": fiber_g, "kcal": kcal, "notes": notes,
+            }
+            # 2026-11-05 USDA sourcing — only written when known, so legacy
+            # preset files round-trip unchanged.
+            if source:
+                fields["source"] = source
+            if fdc_id is not None:
+                fields["fdc_id"] = fdc_id
+                fields["usda_description"] = usda_description
+            self.ingredient_store.write(name, fields, micros)
         existing = self.conn.execute("SELECT id FROM ingredients WHERE name = ?", (name,)).fetchone()
-        values = (basis_amount_g, protein_g, carbs_g, fat_g, fiber_g, kcal, notes)
+        values = (basis_amount_g, protein_g, carbs_g, fat_g, fiber_g, kcal, notes, source, fdc_id, usda_description)
         if existing:
             ingredient_id = existing["id"]
             self.conn.execute(
-                "UPDATE ingredients SET basis_amount_g=?, protein_g=?, carbs_g=?, fat_g=?, fiber_g=?, kcal=?, notes=? WHERE id=?",
+                """UPDATE ingredients SET basis_amount_g=?, protein_g=?, carbs_g=?, fat_g=?, fiber_g=?, kcal=?, notes=?,
+                   source=?, fdc_id=?, usda_description=? WHERE id=?""",
                 values + (ingredient_id,),
             )
             self.conn.execute("DELETE FROM ingredient_micros WHERE ingredient_id=?", (ingredient_id,))
         else:
             cur = self.conn.execute(
-                "INSERT INTO ingredients (name, basis_amount_g, protein_g, carbs_g, fat_g, fiber_g, kcal, notes) VALUES (?,?,?,?,?,?,?,?)",
+                """INSERT INTO ingredients (name, basis_amount_g, protein_g, carbs_g, fat_g, fiber_g, kcal, notes,
+                   source, fdc_id, usda_description) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (name,) + values,
             )
             ingredient_id = cur.lastrowid
-        for m in micros:
-            self.conn.execute(
-                "INSERT INTO ingredient_micros (ingredient_id, nutrient, amount, unit) VALUES (?, ?, ?, ?)",
-                (ingredient_id, m["nutrient"], m["amount"], m["unit"]),
-            )
+        insert_ingredient_micros(self.conn, ingredient_id, micros)
         self.conn.commit()
         return ingredient_id
 
@@ -153,7 +173,8 @@ class LogsRepository:
 
     def micros_for_ingredient(self, ingredient_id: int) -> list[sqlite3.Row]:
         return self.conn.execute(
-            "SELECT nutrient, amount, unit FROM ingredient_micros WHERE ingredient_id = ? ORDER BY nutrient", (ingredient_id,)
+            "SELECT nutrient, amount, unit, source, approx FROM ingredient_micros WHERE ingredient_id = ? ORDER BY nutrient",
+            (ingredient_id,),
         ).fetchall()
 
     def compute_meal_totals(self, components: list[dict]) -> dict:
@@ -164,6 +185,7 @@ class LogsRepository:
         ingredient's macros once, every meal built from it recomputes right."""
         totals = {"protein_g": 0.0, "carbs_g": 0.0, "fat_g": 0.0, "fiber_g": 0.0, "kcal": 0.0}
         micros: dict[tuple[str, str], float] = {}
+        sources: dict[tuple[str, str], set[str]] = {}
         for comp in components:
             ingredient = self.get_ingredient(comp["ingredient_id"])
             if ingredient is None:
@@ -174,7 +196,14 @@ class LogsRepository:
             for m in self.micros_for_ingredient(comp["ingredient_id"]):
                 key = (m["nutrient"], m["unit"])
                 micros[key] = micros.get(key, 0.0) + m["amount"] * ratio
-        return {**totals, "micros": [{"nutrient": n, "unit": u, "amount": a} for (n, u), a in micros.items()]}
+                sources.setdefault(key, set()).add(m["source"] or ingredient["source"] or "estimated")
+        return {
+            **totals,
+            "micros": [
+                {"nutrient": n, "unit": u, "amount": a, "source": _merge_sources(sources.get((n, u), set()))}
+                for (n, u), a in micros.items()
+            ],
+        }
 
     def add_meal_from_ingredients(self, name: str, components: list[dict], notes: str = "") -> int:
         """components: [{ingredient_id, quantity_g}, ...] — every id must
@@ -226,7 +255,7 @@ class LogsRepository:
 
     def micros_for_meal(self, meal_id: int) -> list[sqlite3.Row]:
         return self.conn.execute(
-            "SELECT nutrient, amount, unit FROM meal_micros WHERE meal_id = ? ORDER BY nutrient", (meal_id,)
+            "SELECT nutrient, amount, unit, source FROM meal_micros WHERE meal_id = ? ORDER BY nutrient", (meal_id,)
         ).fetchall()
 
     def micros_between(self, start: date, end: date) -> list[sqlite3.Row]:

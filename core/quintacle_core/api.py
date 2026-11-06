@@ -48,6 +48,8 @@ from .nodes.kb.llm import suggest_kb_entry, suggest_kb_placement
 from .nodes.logs.meal_composer import resolve_composition, suggest_meal_composition
 from .nodes.logs.routine_llm import resolve_workout_routine, suggest_workout_routine
 from .nodes.logs.nutrition_llm import estimate_nutrition, estimate_nutrition_from_image
+from .nodes.logs.usda_sourcing import basis_from_text, looks_like_label_text, usda_proposal
+from .nodes.logs.nutrition_api import router as nutrition_router
 from .nodes.schedule.api import init_store as init_schedule_store, get_store as get_schedule_store, router as schedule_router
 from .nodes.logs.api import init_repo, init_profile_ref, get_repo as get_logs_repo, get_log_store, router as logs_router
 from .nodes.logs.log_store import LogFileStore
@@ -126,6 +128,43 @@ def _name_exists(name: str, known_names: list[str]) -> bool:
     return bool(known_names) and canonicalize_name(name, known_names) in known_names
 
 
+def _source_ingredient_text(text: str, name: str, provider: str | None) -> dict:
+    """2026-11-05 USDA-first ingredient proposals. Typed label numbers →
+    the estimate reads them (source=label, gaps filled from a USDA match of
+    the name at save time); a plain food → USDA numbers when the offline db
+    has a match (no estimate call at all); otherwise the AI estimate
+    (source=estimated). Candidates always ride along for the UI override."""
+    if looks_like_label_text(text):
+        fields = estimate_nutrition(text, provider=provider).model_dump()
+        usda = usda_proposal(name, fields["basis_amount_g"], provider) or {}
+        fill = usda.get("fdc_id") if usda.get("matched") else None
+        return {**fields, "source": "label", "fdc_id": fill, "usda_description": usda.get("usda_description", "") if fill else "",
+                "usda_candidates": usda.get("usda_candidates", [])}
+    usda = usda_proposal(name, basis_from_text(text), provider)
+    if usda and usda.get("matched"):
+        return {k: v for k, v in usda.items() if k != "matched"}
+    fields = estimate_nutrition(text, provider=provider).model_dump()
+    return {**fields, "micros": [{**m, "source": "estimated"} for m in fields["micros"]], "source": "estimated",
+            "fdc_id": None, "usda_description": "", "usda_candidates": (usda or {}).get("usda_candidates", [])}
+
+
+def _source_ingredient_image(fields: dict) -> dict:
+    """Photo lane: a printed label's values win (source=label, gaps filled
+    from USDA at save). A photo of a plain food: the model only identified
+    and weighed it — the numbers come from USDA when it matches."""
+    from_label = bool(fields.pop("from_label", False))
+    usda = usda_proposal(fields.get("suggested_name", ""), fields.get("basis_amount_g") or 100) or {}
+    candidates = usda.get("usda_candidates", [])
+    if from_label:
+        fill = usda.get("fdc_id") if usda.get("matched") else None
+        return {**fields, "source": "label", "fdc_id": fill,
+                "usda_description": usda.get("usda_description", "") if fill else "", "usda_candidates": candidates}
+    if usda.get("matched"):
+        return {**fields, **{k: v for k, v in usda.items() if k != "matched"}}
+    return {**fields, "micros": [{**m, "source": "estimated"} for m in fields.get("micros", [])], "source": "estimated",
+            "fdc_id": None, "usda_description": "", "usda_candidates": candidates}
+
+
 DATA_DIR = Path(os.environ.get("QUINTACLE_DATA_DIR", Path.home() / ".quintacle"))
 
 # The proposal entry types the frontend actually attaches the dropped photo to
@@ -181,6 +220,7 @@ def create_app() -> FastAPI:
     retrieval.init_retrieval_index(conn)
     init_repo(conn, LogFileStore(kb_root))
     app.include_router(logs_router)
+    app.include_router(nutrition_router)  # /nutrition: USDA db status/install, match, full nutrient panels
 
     init_journal_store(DATA_DIR / "journal")
     app.include_router(journal_router)
@@ -357,12 +397,11 @@ def create_app() -> FastAPI:
                 return {"type": "workout_routine", **resolved}
             if kind == "ingredient_preset":
                 known_names = [i["name"] for i in get_logs_repo().list_ingredients()]
-                estimate = estimate_nutrition(text, provider=provider)
                 clause = re.split(r"[,\n.:;]", text.strip())[0].strip()
                 name = canonicalize_name(clause[:60] or "New ingredient", known_names)
                 if _name_exists(name, known_names):
                     return None
-                return {"type": "ingredient_preset", "suggested_name": name, **estimate.model_dump()}
+                return {"type": "ingredient_preset", "suggested_name": name, **_source_ingredient_text(text, clause, provider)}
             known_ingredients = [dict(row) for row in get_logs_repo().list_ingredients()]
             suggestion = suggest_meal_composition(text, known_ingredients, provider=provider)
             resolved = resolve_composition(suggestion, known_ingredients)
@@ -589,10 +628,10 @@ def create_app() -> FastAPI:
             known_ingredient_names = [i["name"] for i in get_logs_repo().list_ingredients()]
             if is_image:
                 estimate = estimate_nutrition_from_image(photos, rest)
-                fields = estimate.model_dump()
+                fields = _source_ingredient_image(estimate.model_dump())
             else:
-                estimate = estimate_nutrition(rest)
-                fields = {"suggested_name": rest.strip()[:60] or "New ingredient", **estimate.model_dump()}
+                clause = re.split(r"[,\n.:;]", rest.strip())[0].strip() or rest.strip()
+                fields = {"suggested_name": rest.strip()[:60] or "New ingredient", **_source_ingredient_text(rest, clause, None)}
             # Same fuzzy-match safety net as exercise/substance names — a
             # second "Lamb" photo should update the existing preset, not fork
             # a near-duplicate because the model phrased the name slightly differently.

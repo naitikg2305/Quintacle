@@ -16,6 +16,7 @@ from openai import OpenAI
 from ... import clock
 from ...llm_config import DEFAULT_MODEL, RESEARCH_MODEL
 from ...web_search import chat_web_block
+from ...nutrition_db.chat_lane import chat_nutrition_block
 from .my_photos import PhotoRegistry, render_my_photos
 from .privacy import PrivacyGate, note_node_id
 from .store import KBStore
@@ -1285,6 +1286,11 @@ def run_kb_chat(
     web_text = chat_web_block(entry["provider"], web, _last_user_text(messages), mode)
     if web_text:
         kb_text, nothing_to_ground = (f"{kb_text}\n\n{web_text}" if kb_text else web_text), False
+    # Nutrition lane (2026-11-05, see nutrition_db/chat_lane.py): code-computed
+    # USDA facts for foods named in the newest message; offline db only.
+    food_text = chat_nutrition_block(_last_user_text(messages), entry["provider"])
+    if food_text:
+        kb_text, nothing_to_ground = (f"{kb_text}\n\n{food_text}" if kb_text else food_text), False
     if mode == "serious" and nothing_to_ground:
         # §12 correction: zero-match short-circuit. Serious mode is the
         # escape hatch FROM hallucination, so with nothing to ground on the
