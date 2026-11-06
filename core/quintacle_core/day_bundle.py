@@ -185,6 +185,7 @@ def day_chats(for_date: date, conversations_root: Path | None) -> list[dict]:
             m = body.split("### You", 1)
             if len(m) == 2:
                 first = next((ln.strip() for ln in m[1].splitlines() if ln.strip()), "")
+                first = first.lstrip("·•*-–\t ").strip()  # pasted bullets
         except OSError:
             pass
         out.append({"topic": f.parent.name.replace("-", " "), "time": f.stem[11:15], "first_message": first[:160],
