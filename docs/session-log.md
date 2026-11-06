@@ -3,6 +3,63 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-06 — Local-first images: OCR + YOLO, cloud only on request (worktree agent)
+
+The owner: "it should always have been local. I was thinking more YOLO
+first, and OCR — YOLO plus OCR … how would this work on my phone?" Every
+image-understanding call used to go to the cloud through
+`max_backend.cloud_client()`. Now they all pass one gate,
+`perception/image_policy.py` (`QUINTACLE_IMAGE_PROVIDER`, default **local**;
+`auto` = local then cloud; `cloud` = the old calls). Local never uses the
+cloud on its own. An unreadable photo comes back as "couldn't read locally —
+Redo with cloud?", and the existing Redo button re-sends the ORIGINAL image
+with `provider=cloud`. Private assets are always local.
+
+New:
+- `perception/ocr.py` runs RapidOCR 3.x (PP-OCR ONNX, models bundled,
+  ~32 MB), else the tesseract CLI, else None. It merges text pieces on the
+  same row into one line and caches by content hash. Deps live in
+  `core/requirements-ocr.txt`.
+- `perception/image_router.py` decides the photo kind. OCR keyword rules
+  come first (fuzzy, so they survive OCR typos), then YOLO tags, then a
+  one-label local VLM question.
+- `nodes/logs/label_parser.py` reads US FDA panels deterministically,
+  including amounts, %DV and %DV-only rows. It converts %DV through the new
+  `FDA_LABEL_DV` table. It also handles OCR noise and EU per-100 g panels.
+  If it reads calories, protein, carbs and fat, it's done. Otherwise the
+  OCR text goes to the local text model, and code-read values win.
+- `nodes/finance/receipt_parser.py` reads merchant, date, total and items.
+- `perception/local_describe.py` covers wardrobe, grooming and outfit
+  photos through the local VLM, with fallbacks to OCR and YOLO.
+- Food photos: the VLM gives a name and weight, then the USDA match runs.
+- Document, statement and video photos also run locally.
+- `structure_document` now goes through `parse_structured`.
+- Proposals carry `pipeline`, and the review card shows a "read locally"
+  badge.
+- Phone: `setup-perception.sh --ocr` installs tesseract plus English data,
+  and tries RapidOCR on `python-onnxruntime`. The phone env file exports
+  `QUINTACLE_IMAGE_PROVIDER=local`.
+
+Still cloud: PDF description and PDF statements (not images), geocoding,
+and the off-by-default polish.
+
+Verified:
+- pytest: 1075 passed. The new tests are `test_local_image_pipeline.py`
+  and `test_label_parser.py`, both with no real OCR, models or network; in
+  local mode every `cloud_client` is patched to fail.
+- Frontend: tsc 0, `CAPACITOR_BUILD=true next build` OK, eslint shows no
+  new errors.
+- Real RapidOCR in a temp venv read a PIL-drawn label and a blurred receipt
+  exactly, and the parsers got every field.
+
+Not done:
+- No live Ollama or VLM run.
+- This machine's tesseract lacks `eng.traineddata`.
+- Not tested on the phone.
+
+Reference: `docs/reference/perception-and-autojournal.md` (2026-11-06
+section), plus `nutrition.md`, `finance.md`, `android.md` and `endpoints.md`.
+
 ## 2026-11-05 — USDA FoodData Central as the nutrition source of truth (worktree agent)
 
 The owner asked for real numbers, not AI guesses ("I look deeply into it,

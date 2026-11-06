@@ -52,7 +52,9 @@ def is_image(filename: str) -> bool:
     return _extension(filename) in _IMAGE_MIME
 
 
-def describe_images(photos: list[tuple[bytes, str]], question: str | None = None) -> str:
+def describe_images(
+    photos: list[tuple[bytes, str]], question: str | None = None, *, provider: str | None = None, private: bool = False
+) -> str:
     """One vision call over one-or-more (bytes, mime) photos — the same
     machinery every drop-time description already runs on, exposed for
     on-demand "look at this photo again, now" calls (/kb/asset/describe,
@@ -71,21 +73,75 @@ def describe_images(photos: list[tuple[bytes, str]], question: str | None = None
 
     The dispatch lives here, in the one shared function, so every call site
     (drop-time description, /kb/asset/describe, MCP describe_photo)
-    inherits the switch without knowing it exists."""
-    mode = os.environ.get("QUINTACLE_VISION", "cloud").strip().lower()
-    if mode in ("local", "auto"):
-        from ...local_vlm import describe_images_local  # lazy: cloud path never touches it
+    inherits the switch without knowing it exists.
 
-        description = describe_images_local(photos, question)
-        if description is not None:
+    2026-11-06 — LOCAL BY DEFAULT (the owner's "it should always have been
+    local"). The mode now resolves: per-request override (Redo with cloud)
+    > QUINTACLE_IMAGE_PROVIDER > the legacy QUINTACLE_VISION (still honored
+    when set) > "local". The local path also folds in local OCR text (a
+    document/sign/whiteboard reads better as text than as a caption) and, if
+    the VLM is down, still answers from OCR text + YOLO tags. `private`
+    pins local regardless (a private note's asset never reaches cloud)."""
+    from ...perception import image_policy
+
+    if private:
+        mode = "local"
+    elif provider or image_policy.request_override() or os.environ.get(image_policy.IMAGE_PROVIDER_ENV):
+        mode = image_policy.image_provider(provider)
+    else:
+        mode = (os.environ.get("QUINTACLE_VISION") or image_policy.DEFAULT_IMAGE_PROVIDER).strip().lower()
+    if mode in ("local", "auto"):
+        local = _describe_images_local(photos, question)
+        if local is not None:
+            description, pipeline = local
+            image_policy.record_pipeline(pipeline)
             return description
         if mode == "local":
-            raise RuntimeError(
-                "QUINTACLE_VISION=local but local vision is unavailable — "
-                "is Ollama running with the vision model pulled? (see logs from quintacle_core.local_vlm)"
+            raise image_policy.LocalImageUnavailable(
+                "couldn't read this image locally — local vision is unavailable (is Ollama running with "
+                "the vision model pulled? see logs from quintacle_core.local_vlm) and local OCR found no text"
+                + ("" if private else " — Redo with cloud?"),
+                what="image",
             )
-        logger.warning("QUINTACLE_VISION=auto: local VLM unavailable, falling back to cloud (%s)", DEFAULT_MODEL)
-    return _describe_images_cloud(photos, question)
+        logger.warning("image provider auto: local VLM unavailable, falling back to cloud (%s)", DEFAULT_MODEL)
+    description = _describe_images_cloud(photos, question)
+    image_policy.record_pipeline("cloud")
+    return description
+
+
+def _describe_images_local(photos: list[tuple[bytes, str]], question: str | None = None) -> tuple[str, str] | None:
+    """Local VLM caption + local OCR text; OCR + YOLO tags alone when the
+    VLM is down. None when the local stack has nothing at all."""
+    from ...local_vlm import describe_images_local  # lazy: cloud path never touches it
+    from ...perception.image_router import detect_photo_tags
+    from ...perception.ocr import ocr_image
+
+    caption = describe_images_local(photos, question)
+    if question and question.strip():
+        # A specific question needs an actual answer, not an OCR dump.
+        return (caption, "yolo+local-vlm") if caption is not None else None
+    texts = []
+    for data, _mime in photos:
+        try:
+            r = ocr_image(data)
+        except ValueError:
+            r = None
+        if r is not None and r.word_count >= 3:
+            texts.append(r.text)
+    ocr_text = "\n".join(texts).strip()
+    if caption is not None:
+        if ocr_text:
+            return f"{caption}\n\nText in the image (local OCR):\n{ocr_text}", "yolo+local-vlm"
+        return caption, "yolo+local-vlm"
+    tags = detect_photo_tags(photos[0][0]) or []
+    if not ocr_text and not tags:
+        return None
+    parts = []
+    if tags:
+        parts.append(f"Photo — objects detected locally: {', '.join(tags)}.")
+    if ocr_text:
+        parts.append(f"Text in the image (local OCR):\n{ocr_text}")
+    return "\n\n".join(parts), ("ocr+parser" if ocr_text else "yolo")
 
 
 def _describe_images_cloud(photos: list[tuple[bytes, str]], question: str | None = None) -> str:
@@ -194,10 +250,31 @@ def _extract_video_frames(data: bytes, count: int = _VIDEO_SAMPLE_FRAMES) -> lis
         return frames
 
 
+_VIDEO_QUESTION = (
+    "These are {n} frames sampled evenly across a video, in order. Describe what the video appears to "
+    "show in a few sentences — you're seeing snapshots, not motion or audio."
+)
+
+
 def _describe_video(data: bytes) -> str:
+    """Frames -> one description. 2026-11-06: frames are images, so the
+    image policy applies — the local VLM reads them (default), cloud only
+    for provider=cloud or the auto fallback."""
     frames = _extract_video_frames(data)
     if not frames:
         return ""
+    from ...perception.image_policy import run_image_task
+
+    def local():
+        from ...local_vlm import describe_images_local
+
+        text = describe_images_local(frames, _VIDEO_QUESTION.format(n=len(frames)))
+        return (text, "yolo+local-vlm") if text else None
+
+    return run_image_task(local, lambda: _describe_video_cloud(frames), what="video")
+
+
+def _describe_video_cloud(frames: list[tuple[bytes, str]]) -> str:
     client = cloud_client()
     response = client.messages.create(
         model=DEFAULT_MODEL,

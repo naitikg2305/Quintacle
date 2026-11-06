@@ -424,3 +424,17 @@ takes `fdc_id`/`source`. `POST /logs/meals/suggest-composition` components
 carry `source`, `fdc_id`, `usda_description` and `usda_candidates`.
 `/drop` ingredient proposals carry the same fields. `/logs/nutrition/{date}`
 now also lists ALA (omega-3) against its AI.
+
+**2026-11-06 — local-first images.** `POST /drop`'s `provider` form field
+now also pins the IMAGE calls (`perception/image_policy.py`; default
+`QUINTACLE_IMAGE_PROVIDER=local`). The response gains `pipeline`
+(`"ocr+parser" | "ocr+local-llm" | "yolo+local-vlm" | "yolo" | "cloud" | null`),
+also set on each of the branch's own proposals. When the local stack can't
+read the photo: HTTP 200 `{entries: [], provider_used: "local", pipeline:
+null, local_unavailable: "<reason> — Redo with cloud?"}`; re-send the same
+drop with `provider=cloud`. Any other endpoint that hits an unreadable image
+(`/kb/drop`, `/kb/asset/describe`, …) returns 422 `{detail,
+local_unavailable: true}`; `/kb/batch-drop` keeps going and files that one
+file by name. `/kb/asset/describe` on a private note's asset is pinned
+local. Ingredient proposals from a label photo add `field_confidence`,
+`label_dv`, `serving_size_text`, `servings_per_container`, `per_100g`.

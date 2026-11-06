@@ -32,3 +32,13 @@ def _deterministic_prose_summaries(monkeypatch):
     # db build one from tests/fixtures/usda and point QUINTACLE_USDA_DB at it.
     monkeypatch.setenv("QUINTACLE_USDA_DB", "/nonexistent/quintacle-test/usda.db")
     monkeypatch.setenv("QUINTACLE_USDA_PICK_PROVIDER", "off")
+    # Local-first image pipeline (2026-11-06, perception/image_policy.py):
+    # never a real OCR engine (this machine has tesseract on PATH), never a
+    # real YOLO run (weights download on first use), never a real local VLM.
+    # Tests stub each stage explicitly.
+    monkeypatch.setenv("QUINTACLE_OCR_BACKEND", "off")
+    monkeypatch.setenv("QUINTACLE_IMAGE_TAGS", "off")
+    monkeypatch.setenv("QUINTACLE_VISION_BACKEND", "off")
+    from quintacle_core.perception import ocr as _ocr
+
+    _ocr.clear_cache()

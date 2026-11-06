@@ -14,6 +14,14 @@ independently:
 | Ingest (structured parse) | `llm_dispatch.parse_structured`, `core/quintacle_core/llm_dispatch.py` | **`auto` — local first, cloud fallback** | `QUINTACLE_INGEST_PROVIDER` / per-request `?provider=` |
 | Vision (photo descriptions) | `local_vlm.describe_images_local`, `core/quintacle_core/local_vlm/` | **`cloud`** | `QUINTACLE_VISION` + `QUINTACLE_VISION_BACKEND` |
 
+> **2026-11-06 status:** the Vision row's default is now **`local`** and it
+> covers every image call (classification, labels, receipts, describe_*),
+> not just descriptions: `QUINTACLE_IMAGE_PROVIDER=local|auto|cloud`
+> (`perception/image_policy.py`), OCR + parsers → local text model → YOLO +
+> local VLM. `QUINTACLE_VISION` is still honored when set and
+> `QUINTACLE_IMAGE_PROVIDER` isn't. See
+> [perception-and-autojournal.md](perception-and-autojournal.md).
+
 (Perception — YOLO/faces/scene — is a fourth local thing but not a *model
 lane* with a cloud twin; it is local by construction. See
 [perception-and-autojournal.md](perception-and-autojournal.md).)

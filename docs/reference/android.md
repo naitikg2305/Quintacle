@@ -168,3 +168,28 @@ cd frontend && npm run android:build && cd android && ./gradlew assembleDebug
 serves `index.html` for any extensionless path (html5mode), so in-app
 navigation works (client-side, RSC payloads have extensions), but a hard
 reload while on e.g. `/career` loads the root shell, not `career.html`.
+
+## 2026-11-06 — photos understood on the phone (local OCR + YOLO)
+
+Image understanding is local-first now (`QUINTACLE_IMAGE_PROVIDER=local`,
+exported by `phone/tier1-local-llm/quintacle-phone-env.sh`; it overrides the
+older `QUINTACLE_VISION=auto` there). How a photo drop works on the S25U:
+
+1. **OCR**, the main lane for labels, receipts and documents —
+   `bash scripts/termux/setup-perception.sh --ocr`:
+   - `pkg install tesseract` + `eng.traineddata` (tessdata_fast, ~4 MB) — the
+     reliable phone engine, one native package, no pip;
+   - best effort RapidOCR: `pkg install python-onnxruntime` (bionic
+     onnxruntime, a subpackage of termux-packages' `onnxruntime`), `x11-repo`
+     + `opencv-python`, `libgeos` for shapely, then pip `rapidocr` (models
+     bundled, ~32 MB). If any step fails, tesseract stays the engine.
+   Package names were checked against termux-packages on 2026-11-06; the
+   script is **untested on a device**.
+2. **Parsing** is plain Python (label parser, receipt parser) — no model.
+3. **YOLO tags** already run on the phone via the Tier 2 TFLite lane
+   (same setup script, no flag); the router reuses them for food/clothing.
+4. **Local VLM** (Tier 3, llama.cpp `llama-server`) only for food/outfit
+   photos with no text. When it isn't running, the drop answers
+   "couldn't read locally — Redo with cloud?" instead of billing the cloud.
+   `QUINTACLE_VISION_BACKEND=off` skips the 2 s connect probe when no VLM
+   is installed.

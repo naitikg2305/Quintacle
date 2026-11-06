@@ -89,7 +89,33 @@ _STATEMENT_SYSTEM = (
 )
 
 
-def extract_statement_transactions(data: bytes, media_type: str, user_description: str = "") -> list[dict]:
+def extract_statement_transactions(data: bytes, media_type: str, user_description: str = "", provider: str | None = None) -> list[dict]:
+    """2026-11-06: a PHOTO of a statement is local-first (perception/
+    image_policy.py): local OCR, then the local TEXT model transcribes rows
+    from the OCR text into the same schema. PDFs keep the cloud document
+    lane below — a PDF isn't an image, and the local stack has no PDF
+    reader yet (documented exception)."""
+    if media_type == "application/pdf":
+        return _extract_statement_cloud(data, media_type, user_description)
+    from ...perception.image_policy import LocalImageUnavailable, run_image_task
+
+    def local():
+        from ...llm_dispatch import parse_structured
+        from ...perception.ocr import ocr_image
+
+        reading = ocr_image(data)
+        if reading is None or not reading.text.strip():
+            raise LocalImageUnavailable("no readable text found by local OCR (or no OCR engine installed)", what="statement photo")
+        content = f"OCR text of the statement (may contain OCR errors):\n{reading.text}"
+        if user_description.strip():
+            content += f"\n\nThe owner adds: {user_description.strip()}"
+        parsed = parse_structured(_STATEMENT_SYSTEM, content, _StatementExtraction, provider="local", max_tokens=8192).parsed
+        return [t.model_dump() for t in parsed.transactions], "ocr+local-llm"
+
+    return run_image_task(local, lambda: _extract_statement_cloud(data, media_type, user_description), what="statement photo", provider=provider)
+
+
+def _extract_statement_cloud(data: bytes, media_type: str, user_description: str = "") -> list[dict]:
     """PDF/photo statements through the SAME cloud vision lane receipts use
     (drop_router.extract_finance_from_receipt's pattern — vision+schema sites
     deliberately stay cloud, per the 2026-10-15 local-first amendment). The

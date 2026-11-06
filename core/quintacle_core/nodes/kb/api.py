@@ -42,6 +42,7 @@ from .photo_organizer import compute_photo_folder
 from .file_meta import apply_file_meta, backfill_file_meta, proposal_file_meta
 from .photo_place import backfill_photo_places, bake_photo_place, insert_place_line, is_image_name
 from .privacy import PRIVATE_MARKER, public_notes_index, strip_private_turns
+from ...perception.image_policy import LocalImageUnavailable
 from .spreadsheet import read_spreadsheet, write_spreadsheet
 from .store import KBStore, _ASSET_LINES_RE
 from .view import ViewConfig, infer_view
@@ -389,7 +390,17 @@ def describe_asset(body: AssetDescribeRequest) -> dict:
     data = get_store().read_asset(body.folder, body.path)
     if data is None:
         raise HTTPException(404, "asset not found")
-    return {"folder": body.folder, "path": body.path, "description": describe_images([(data, mime)], body.question)}
+    # 2026-11-06: local-first by default (image_policy); an asset owned by a
+    # PRIVATE note is pinned local no matter what the provider settings say.
+    private = any(
+        body.path in row.get("assets", []) and get_store().is_private(body.folder, row["slug"])
+        for row in get_store().list_entries_meta(body.folder)
+    )
+    return {
+        "folder": body.folder,
+        "path": body.path,
+        "description": describe_images([(data, mime)], body.question, private=private),
+    }
 
 
 class AssetPerceiveRequest(BaseModel):
@@ -603,7 +614,12 @@ async def batch_drop(
         file_id = f"file_{i}"
         data = await f.read()
         file_meta_by_id[file_id] = proposal_file_meta([(f.filename or "upload", data)])
-        description = describe_drop(f.filename or "upload", data, "")
+        try:
+            description = describe_drop(f.filename or "upload", data, "")
+        except LocalImageUnavailable as exc:
+            # 2026-11-06 local-first: one unreadable photo mustn't sink the
+            # whole batch — it's filed by name/EXIF and says why it's bare.
+            description = f"Dropped file: {f.filename or 'upload'} ({exc})"
         entries.append({"file_id": file_id, "description": description})
         filenames_by_id[file_id] = f.filename or "upload"
         if not is_image(f.filename or ""):

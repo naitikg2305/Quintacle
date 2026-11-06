@@ -22,7 +22,12 @@ step-back) wins over the QUINTACLE_INGEST_PROVIDER env default.
 TEXT-ONLY in this wave: vision+schema sites (classify_image_type, receipt
 extraction, the describe_* estimators) stay on cloud until the local
 vision+schema path is proven — plain local vision descriptions are already
-covered separately by QUINTACLE_VISION (see nodes/kb/drop.py). Geocoding
+covered separately by QUINTACLE_VISION (see nodes/kb/drop.py).
+[2026-11-06 status: superseded for images — every vision site now routes
+through perception/image_policy.py (QUINTACLE_IMAGE_PROVIDER, default
+local): OCR + deterministic parsers first, then THIS module's local text
+parse over the OCR text, then the local VLM. The note above is kept as the
+decision history.] Geocoding
 also deliberately stays cloud: resolving place names is world knowledge, a
 poor fit for a small local model (documented exception).
 """
@@ -108,10 +113,17 @@ def summarize_providers(used: list[str]) -> str | None:
 
 
 def _record(result: ParseResult) -> ParseResult:
+    record_provider(result.provider_used)
+    return result
+
+
+def record_provider(provider_used: str) -> None:
+    """Append one served-by to the current request's collector. Public since
+    2026-11-06 so the local-first IMAGE pipeline (perception/image_policy.py)
+    reports into the same provider_used the Redo-with-cloud UI keys off."""
     used = _collector.get()
     if used is not None:
-        used.append(result.provider_used)
-    return result
+        used.append(provider_used)
 
 
 # --- the two backends ------------------------------------------------------

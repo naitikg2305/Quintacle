@@ -81,6 +81,28 @@ spend caps.
 - Savings rate = `(income − spend) / income` per month, computed in
   `insights.monthly_breakdown` only.
 
+## 2026-11-06 — receipt and statement PHOTOS read locally
+
+Receipt photos (`drop_router.extract_finance_from_receipt`) now go local
+OCR → `nodes/finance/receipt_parser.parse_receipt`, all in code: merchant
+(first name-like top line — skips addresses, phones, URLs, dates, "welcome"),
+date (11/05/2026, 11-05-26, 2026-11-05, 05.11.2026 day-first, 25/12/2025,
+Nov 5 2026, 5 November 2026 …), total (GRAND TOTAL / AMOUNT DUE / BALANCE
+DUE outrank TOTAL, which outranks BALANCE/AMOUNT; SUBTOTAL, TAX, CASH,
+CHANGE, TIP, SAVINGS never count; among equals the largest plausible, never
+below the subtotal; no total line → subtotal + tax computed in code),
+best-effort line items (into `notes` when the owner typed nothing), and a
+keyword category/kind guess from the merchant. Fuzzy keyword matching
+survives OCR (`T0TAL`). Only when no total is found does the OCR TEXT go to
+the local text model, and code's merchant/date still win. `pipeline:
+"ocr+parser"` / `"ocr+local-llm"`.
+
+Statement **photos** (`statement:` prefix + an image) → local OCR + the
+local text model transcribing rows into the same schema (`ocr+local-llm`),
+then the unchanged code validation/dedup. **PDF** statements keep the cloud
+document lane (not an image; documented exception). Policy and Redo with
+cloud: [perception-and-autojournal.md](perception-and-autojournal.md).
+
 ## Statement imports (§2b — drops, not aggregator APIs)
 
 Flow (the review gate, end to end):

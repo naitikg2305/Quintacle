@@ -26,7 +26,65 @@
 # dynamic_range_quant), which start-backend.sh sources. If anything here
 # fails, perceive_photo() returns None with one warning — drops still work.
 
+#
+# 2026-11-06 — local OCR for the local-first image pipeline (labels,
+# receipts, documents read on-device; perception/ocr.py):
+#   bash scripts/termux/setup-perception.sh --ocr
+#       installs ONLY the OCR lane (skips the TFLite steps):
+#       1. tesseract (`pkg install tesseract`) + its English data
+#          (eng.traineddata from tessdata_fast, ~4 MB) — the reliable phone
+#          OCR, a single native package;
+#       2. best effort, RapidOCR: `pkg install python-onnxruntime` (the
+#          bionic onnxruntime build — PyPI has no Android wheel), opencv-python
+#          from x11-repo, libgeos for shapely, then pip rapidocr. If any of
+#          that fails the script says so and tesseract stays the engine.
+#   UNTESTED ON A DEVICE (package names checked against termux-packages on
+#   2026-11-06: packages/onnxruntime -> python-onnxruntime subpackage,
+#   x11-packages/opencv -> opencv-python subpackage, packages/libgeos,
+#   packages/tesseract).
+
 set -euo pipefail
+
+if [ "${1:-}" = "--ocr" ]; then
+  if [ -z "${PREFIX:-}" ] || [ ! -d "${PREFIX:-/nonexistent}" ]; then
+    echo "!! \$PREFIX is not set to a Termux install — this script is Termux-only. Aborting."
+    exit 1
+  fi
+  OCR_CORE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/core"
+  echo "== OCR 1/3: tesseract + English data =="
+  pkg install -y tesseract
+  TESSDATA="$PREFIX/share/tessdata"
+  mkdir -p "$TESSDATA"
+  if [ ! -f "$TESSDATA/eng.traineddata" ]; then
+    curl -fL -o "$TESSDATA/eng.traineddata" \
+      https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata
+  fi
+  echo "   ok   tesseract $(tesseract --version 2>&1 | head -1)"
+
+  echo "== OCR 2/3: RapidOCR (best effort) =="
+  RAPID_OK=0
+  if pkg install -y python-numpy python-pillow python-onnxruntime libgeos \
+     && { pkg install -y x11-repo && pkg install -y opencv-python; } \
+     && "$OCR_CORE_DIR/.venv/bin/pip" install -q shapely pyclipper \
+     && "$OCR_CORE_DIR/.venv/bin/pip" install -q --no-deps rapidocr \
+     && "$OCR_CORE_DIR/.venv/bin/pip" install -q omegaconf colorlog tqdm requests six pyyaml; then
+    RAPID_OK=1
+  fi
+  if [ "$RAPID_OK" = 1 ]; then
+    echo "   ok   rapidocr installed (QUINTACLE_OCR_BACKEND=auto will prefer it)"
+  else
+    echo "   !!   RapidOCR didn't install — tesseract stays the OCR engine (that's fine)."
+  fi
+
+  echo "== OCR 3/3: smoke check =="
+  cd "$OCR_CORE_DIR"
+  QUINTACLE_DATA_DIR="${QUINTACLE_DATA_DIR:-$HOME/.quintacle}" .venv/bin/python - <<'PYEOF'
+from quintacle_core.perception import ocr
+print(f"  OCR backend: {ocr.ocr_backend()}")
+PYEOF
+  echo "Done. Restart the backend; photo drops now read labels/receipts on the phone."
+  exit 0
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"

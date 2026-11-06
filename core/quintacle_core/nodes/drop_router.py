@@ -278,6 +278,9 @@ def parse_routine_definition(text: str) -> tuple[str, list[str]] | None:
 # on what's actually in the image. Kept to a single cheap vision call with a
 # fixed, small label set (not open-ended "what folder should this go in?"),
 # which the rest of the routing after it stays deterministic against.
+# [2026-11-06: no longer a cloud call by default — classify_image_type runs
+# OCR keyword rules -> YOLO tags -> a local VLM label first; see
+# perception/image_router.py and image_policy.py.]
 ImageKind = Literal["nutrition_label", "prepared_meal", "receipt", "outfit_item", "full_outfit", "document", "generic"]
 
 _IMAGE_KIND_TO_ENTRY_TYPE: dict[ImageKind, str] = {
@@ -295,9 +298,26 @@ class _ImageClassification(BaseModel):
     kind: ImageKind
 
 
-def classify_image_type(data: bytes, mime_type: str) -> ImageKind:
-    """Cheap vision call distinguishing what KIND of photo this is, so the
-    caller can route it without asking the user to say so manually every time."""
+def classify_image_type(data: bytes, mime_type: str, provider: str | None = None) -> ImageKind:
+    """Distinguishes what KIND of photo this is, so the caller can route it
+    without asking the user to say so manually every time.
+
+    2026-11-06: local-first (perception/image_policy.py, default local) —
+    OCR keyword rules, then YOLO tags, then a one-label local VLM question
+    (perception/image_router.py). The cloud vision call below runs only for
+    provider=cloud (Redo with cloud) or as the auto fallback."""
+    from ..perception.image_policy import run_image_task
+    from ..perception.image_router import classify_local
+
+    return run_image_task(
+        lambda: (classify_local(data, mime_type), None),
+        lambda: _classify_image_type_cloud(data, mime_type),
+        what="photo",
+        provider=provider,
+    )
+
+
+def _classify_image_type_cloud(data: bytes, mime_type: str) -> ImageKind:
     client = cloud_client()
     response = client.messages.parse(
         model=DEFAULT_MODEL,
@@ -373,11 +393,75 @@ class _ReceiptExtraction(BaseModel):
     kind: Literal["subscription", "food", "alcohol", "experience", "shopping", "big_purchase", "regular"] = "regular"
 
 
-def extract_finance_from_receipt(photos: list[tuple[bytes, str]], user_description: str = "") -> FinanceEntry:
-    """Vision extraction for one or two receipt/invoice photos (e.g. a long
+_RECEIPT_TEXT_SYSTEM = (
+    "You are given OCR text read from a photographed receipt/invoice (it may contain OCR errors). "
+    "Extract the total amount charged (a single positive number, dollars — the final total, not the "
+    "subtotal or cash tendered), the merchant name, a short lowercase spending category guess "
+    "(groceries, dining, transport, subscription, etc.), entry_date as YYYY-MM-DD if a date is printed "
+    "(null if none), and kind — one of subscription, food, alcohol, experience, shopping, big_purchase, "
+    "regular. Only transcribe; never compute."
+)
+
+
+def _receipt_entry(amount: float, merchant: str, category: str, notes: str, entry_date: str | None, kind: str) -> FinanceEntry:
+    entry = FinanceEntry(type="finance", amount=amount, merchant=merchant, category=category, notes=notes)
+    entry.entry_date = entry_date
+    entry.kind = kind
+    return entry
+
+
+def _extract_receipt_local(photos: list[tuple[bytes, str]], user_description: str) -> tuple[FinanceEntry, str]:
+    """OCR every photo (a long receipt shot in two halves reads as one text),
+    parse in code; the local TEXT model sees the OCR text only when code
+    found no total — and code's merchant/date still win."""
+    from ..perception.image_policy import LocalImageUnavailable
+    from ..perception.ocr import ocr_image
+    from .finance.receipt_parser import parse_receipt
+
+    texts = [r.text for r in (ocr_image(data) for data, _mime in photos) if r is not None and r.text.strip()]
+    if not texts:
+        raise LocalImageUnavailable("no readable text found by local OCR (or no OCR engine installed)", what="receipt")
+    text = "\n".join(texts)
+    parsed = parse_receipt(text)
+    items = ", ".join(f"{i['name']} ({i['price']:.2f})" for i in parsed.items[:8])
+    notes = user_description.strip() or (f"Items: {items}" if items else "")
+    if parsed.total is not None:
+        return _receipt_entry(parsed.total, parsed.merchant, parsed.category, notes[:300], parsed.entry_date, parsed.kind), "ocr+parser"
+    content = text + (f"\n\nThe owner adds: {user_description.strip()}" if user_description.strip() else "")
+    model = parse_structured(_RECEIPT_TEXT_SYSTEM, content, _ReceiptExtraction, provider="local", max_tokens=512).parsed
+    return (
+        _receipt_entry(
+            model.amount,
+            parsed.merchant or model.merchant,
+            parsed.category or model.category,
+            notes[:300] or model.notes,
+            parsed.entry_date or model.entry_date,
+            parsed.kind if parsed.kind != "regular" else model.kind,
+        ),
+        "ocr+local-llm",
+    )
+
+
+def extract_finance_from_receipt(photos: list[tuple[bytes, str]], user_description: str = "", provider: str | None = None) -> FinanceEntry:
+    """Extraction for one or two receipt/invoice photos (e.g. a long
     receipt shot in two overlapping halves) — the one finance path that
     can't be handled by the deterministic "expense: $12 at chipotle" text
-    prefix, since there's no text to parse."""
+    prefix, since there's no typed text to parse.
+
+    2026-11-06: local-first — OCR + nodes/finance/receipt_parser.py, the
+    local text model over the OCR text only when no total is found; the
+    cloud vision call runs only for provider=cloud or the auto fallback."""
+    from ..perception.image_policy import run_image_task
+
+    return run_image_task(
+        lambda: _extract_receipt_local(photos, user_description),
+        lambda: _extract_receipt_cloud(photos, user_description),
+        what="receipt",
+        provider=provider,
+    )
+
+
+def _extract_receipt_cloud(photos: list[tuple[bytes, str]], user_description: str = "") -> FinanceEntry:
     client = cloud_client()
     content: list[dict] = image_content_blocks(photos)
     if user_description.strip():

@@ -231,6 +231,88 @@ desktop no-op, and the README's device-pending list is the honest status.
 | `QUINTACLE_AUTOJOURNAL_POLISH` | unset \| `1` (billed) | `auto_journal.maybe_polish` |
 | `QUINTACLE_DATA_DIR` | `~/.quintacle` | perception root lives under it |
 
+## 2026-11-06 — local-first images: OCR + YOLO first, cloud only on request
+
+Derived from the worktree branch built on `8122c47`. The owner's decision:
+"it should always have been local … YOLO plus OCR". Before this, every image
+understanding call (photo-kind classification, receipts, nutrition labels,
+the wardrobe/grooming/outfit describe_* estimators, document photos) went to
+the cloud via `max_backend.cloud_client()`. Now all of them go through one
+policy gate.
+
+**Policy** — `perception/image_policy.py`, `QUINTACLE_IMAGE_PROVIDER`:
+
+| value | behavior |
+|---|---|
+| `local` (default) | never cloud automatically. Unreadable locally → `LocalImageUnavailable` → `/drop` answers `{entries: [], provider_used: "local", local_unavailable: "couldn't read this … locally (…) — Redo with cloud?"}`; other endpoints answer 422 `{detail, local_unavailable: true}` |
+| `auto` | local first, cloud fallback with one warning log |
+| `cloud` | the old cloud vision calls, unchanged |
+
+Precedence: per-request override (`/drop`'s `provider` form field: "Redo
+with cloud" re-sends the ORIGINAL image with `provider=cloud`) >
+`QUINTACLE_IMAGE_PROVIDER` > legacy `QUINTACLE_VISION` (still honored by
+`describe_images` when set) > `local`. A private note's asset
+(`/kb/asset/describe`) is pinned local whatever is configured. The text
+model that structures image-derived text follows the same policy:
+`image_policy.text_provider_for_image` → document photos pass `provider="local"`
+into `structure_document`, and the label/receipt fallbacks call
+`parse_structured(provider="local")`.
+
+**Pipeline** (every step records which one served it; `/drop` puts it on the
+branch's proposals as `pipeline` and on the response):
+
+1. **OCR** — `perception/ocr.py`, `ocr_image(bytes) -> OcrResult(lines=[OcrLine(text, box, conf)], text, engine) | None`.
+   `QUINTACLE_OCR_BACKEND=auto|rapidocr|tesseract|off`. RapidOCR 3.x (PP-OCR
+   ONNX on onnxruntime, models bundled in the wheel, ~32 MB) else the
+   `tesseract` CLI (TSV output, `--psm 4`) else None. Fragments are
+   row-grouped so "Total Fat 8g" + "10%" read as one line. Images are
+   EXIF-uprighted and capped at 2000 px; results cached per content hash
+   (classify + extract read the photo once). Deps: `core/requirements-ocr.txt`.
+2. **Router** — `perception/image_router.py`. `classify_text` keyword
+   rules (case-insensitive, fuzzy via difflib windows so `T0TAL`/`Ca1ories`
+   still match): nutrition label = ≥2 of nutrition facts / serving size /
+   calories / total fat / % daily value / … (EU phrases too), checked first
+   so "total fat" never reads as a receipt total; receipt = a total word +
+   ≥2 price lines, or ≥3 receipt words + a price, or a card mask `****1234`;
+   document = ≥2 ID/lease words, or 1 + dense text. Else `classify_tags`
+   over YOLOX-nano tags (`detect_photo_tags` — tags only, no faces stored):
+   food tags / ≥2 tableware → prepared_meal, bag/tie/umbrella with no
+   person → outfit_item. Else (a person in frame, or nothing) the local VLM
+   answers one fixed-label question (`parse_vlm_label`). No OCR, no tagger,
+   no VLM at all → LocalImageUnavailable; otherwise the fallback is `generic`.
+3. **Extraction per kind**: label → `nodes/logs/label_parser.py`
+   (`ocr+parser`, or `ocr+local-llm` when calories/protein/carbs/fat aren't
+   all read); receipt → `nodes/finance/receipt_parser.py` (`ocr+parser`,
+   local text model only when no total); food photo → local VLM
+   "NAME / GRAMS" + YOLO hint → USDA match (`yolo+local-vlm`, or `yolo`
+   from the tag alone); wardrobe / grooming / outfit → `perception/local_describe.py`
+   (VLM formatted reply parsed in code, categories snapped to the known
+   vocabulary; grooming falls back to the OCR'd product name); kb/document
+   photo → `describe_images` = VLM caption + OCR text, or OCR + tags alone;
+   statement photo → OCR + local text model (`ocr+local-llm`); video frames →
+   local VLM.
+
+**Still cloud, by design**: PDF description and PDF statements (not images;
+no local PDF reader yet), reverse geocoding (world knowledge, documented
+exception), the off-by-default auto-journal polish. Anything only when
+`provider=cloud`/`auto`.
+
+New env knobs: `QUINTACLE_IMAGE_PROVIDER` (`local`|`auto`|`cloud`),
+`QUINTACLE_OCR_BACKEND` (`auto`|`rapidocr`|`tesseract`|`off`),
+`QUINTACLE_IMAGE_TAGS=off` (skip YOLO in routing), `QUINTACLE_VISION_BACKEND=off`
+(no local VLM). The test conftest sets the last three to off.
+
+Verified manually 2026-11-06 (temp venv, rapidocr 3.10.0 + onnxruntime
+1.31.1): a PIL-drawn US label → RapidOCR read every row exactly (~2 s CPU,
+first call) → router `nutrition_label` → parser `core_complete` with all 15
+fields at conf ≈0.93–0.95; a blurred, 2°-rotated rendered receipt → merchant,
+date, total 21.76, subtotal, tax and all 4 items. This machine's tesseract
+has no `eng.traineddata` installed, so that lane degraded to `None` as
+designed (`pacman -S tesseract-data-eng` to enable it).
+
+Tests: `core/tests/test_local_image_pipeline.py`, `test_label_parser.py`,
+updated `test_local_vlm.py` (default is now local).
+
 ## Tests
 
 `core/tests/test_perception.py`, `core/tests/test_backend_tflite.py`

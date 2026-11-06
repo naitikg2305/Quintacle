@@ -117,6 +117,7 @@ from .nodes.career.api import init_career, router as career_router
 from .nodes.business.api import router as business_router
 from .nodes.projects.api import router as projects_router
 from .perception import perceive_photo
+from .perception import image_policy
 from .sync import init_sync, router as sync_router
 
 logger = logging.getLogger(__name__)
@@ -203,6 +204,23 @@ def create_app() -> FastAPI:
         from fastapi.responses import JSONResponse
 
         return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(image_policy.LocalImageUnavailable)
+    async def _local_image_unavailable_handler(request, exc: image_policy.LocalImageUnavailable):
+        # 2026-11-06 local-first images: the local stack couldn't read a
+        # photo and the policy forbids silently billing the cloud. /drop
+        # answers with a proposal STATE (no entries + the reason) so the
+        # review UI can offer "Redo with cloud" — the button re-sends the
+        # ORIGINAL drop with provider=cloud. Every other endpoint: a
+        # readable 422 instead of a 500.
+        from fastapi.responses import JSONResponse
+
+        if request.url.path == "/drop":
+            return JSONResponse(
+                status_code=200,
+                content={"entries": [], "provider_used": "local", "pipeline": None, "local_unavailable": str(exc)},
+            )
+        return JSONResponse(status_code=422, content={"detail": str(exc), "local_unavailable": True})
 
     init_schedule_store(DATA_DIR / "schedule" / "todos")
     app.include_router(schedule_router)
@@ -436,8 +454,11 @@ def create_app() -> FastAPI:
         `provider` (local|cloud|auto) overrides the ingest default for the
         TEXT-parse calls in this request — "redo with cloud" re-sends the
         SAME original drop with provider=cloud (a step back, never
-        re-prompting over local output). Vision calls stay on their own
-        QUINTACLE_VISION switch. `provider_used` in the response is who
+        re-prompting over local output). [2026-11-06: image calls now follow
+        the same `provider` too, via perception/image_policy.py — default
+        local (OCR + parsers, YOLO, local VLM); the response adds
+        `pipeline`, and `local_unavailable` (no entries) when the local
+        stack couldn't read the photo.] `provider_used` in the response is who
         actually answered the routed calls ("mixed" when auto fell back
         mid-request, null when handling was fully deterministic/vision).
 
@@ -457,6 +478,12 @@ def create_app() -> FastAPI:
         if provider is not None and provider.strip().lower() not in llm_dispatch.VALID_PROVIDERS:
             raise HTTPException(400, f"provider must be one of {', '.join(llm_dispatch.VALID_PROVIDERS)}")
         used = llm_dispatch.collect_providers()
+        # 2026-11-06 local-first images: the same `provider` pins every image
+        # call in this request (perception/image_policy.py — default local;
+        # "Redo with cloud" sends provider=cloud), and each image step
+        # records the pipeline that served it for the review card's badge.
+        image_policy.set_request_provider(provider)
+        pipelines = image_policy.collect_pipelines()
 
         data = await file.read() if file is not None else None
         filename = file.filename if (file is not None and file.filename) else ""
@@ -568,7 +595,10 @@ def create_app() -> FastAPI:
             resolved = resolve_grooming_routine(suggestion, known_items)
             entries = [{"type": "grooming_routine_composition", **resolved}]
         elif entry_type == "document_entry":
-            estimate = structure_document(get_description())
+            # A document PHOTO's text came from local OCR/VLM — structuring
+            # it follows the image policy (local => local text model).
+            doc_provider = image_policy.text_provider_for_image(provider) if is_image else provider
+            estimate = structure_document(get_description(), provider=doc_provider)
             entries = [{"type": "document_entry", **estimate.model_dump()}]
             experience_check_text = get_description()
         elif entry_type == "home_item":
@@ -734,6 +764,10 @@ def create_app() -> FastAPI:
             entries = [e.model_dump() for e in parsed]
             preset_check_text = rest
 
+        # The branch's own proposals (before the additive extras below) are
+        # the ones the image pipeline badge describes.
+        n_primary = len(entries)
+
         # Propose-everything-plausible, prune-what-you-don't-want: independent
         # of whatever got classified above, also check whether this drop
         # describes a place/visit worth its own Experience record — cheap
@@ -872,7 +906,14 @@ def create_app() -> FastAPI:
                 if entry.get("type") == "kb_entry":
                     entry["file_meta"] = file_meta
 
-        return {"entries": entries, "provider_used": llm_dispatch.summarize_providers(used)}
+        # "read locally" badge data: which image pipeline served this drop
+        # ("ocr+parser" | "ocr+local-llm" | "yolo+local-vlm" | "yolo" | "cloud").
+        pipeline = image_policy.summarize_pipeline(pipelines)
+        if pipeline is not None:
+            for entry in entries[:n_primary]:
+                entry["pipeline"] = pipeline
+
+        return {"entries": entries, "provider_used": llm_dispatch.summarize_providers(used), "pipeline": pipeline}
 
     @app.get("/retrieve")
     def retrieve_nodes(q: str, k: int = 10, types: str | None = None) -> dict:

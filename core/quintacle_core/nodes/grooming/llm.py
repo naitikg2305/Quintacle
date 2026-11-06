@@ -7,6 +7,7 @@ from ...llm_config import DEFAULT_MODEL
 from ..journal.normalize import canonicalize_name
 from ..vision import image_content_blocks
 from ...max_backend import cloud_client
+from ...perception.image_policy import run_image_task
 
 _ITEM_CATEGORIES = "skincare, haircare, shaving, oral, fragrance, tool, or another short lowercase category"
 
@@ -17,11 +18,39 @@ class GroomingItemEstimate(BaseModel):
     description: str
 
 
-def describe_grooming_item(photos: list[tuple[bytes, str]], user_description: str = "") -> GroomingItemEstimate:
+_GROOMING_CATEGORIES = ("skincare", "haircare", "shaving", "oral", "fragrance", "tool")
+# Printed-label words -> category, for the no-VLM OCR fallback (first hit wins).
+_GROOMING_KEYWORDS = {
+    "shampoo": "haircare", "conditioner": "haircare", "hair": "haircare", "pomade": "haircare",
+    "toothpaste": "oral", "mouthwash": "oral", "floss": "oral", "fluoride": "oral",
+    "aftershave": "shaving", "shave": "shaving", "shaving": "shaving", "razor": "shaving",
+    "parfum": "fragrance", "cologne": "fragrance", "eau de": "fragrance", "fragrance": "fragrance",
+    "cleanser": "skincare", "moisturiz": "skincare", "serum": "skincare", "spf": "skincare", "sunscreen": "skincare",
+    "lotion": "skincare", "cream": "skincare", "retinol": "skincare", "toner": "skincare",
+}
+
+
+def describe_grooming_item(photos: list[tuple[bytes, str]], user_description: str = "", provider: str | None = None) -> GroomingItemEstimate:
     """Vision-based product capture — one or two photos (e.g. the front of
     the bottle plus its ingredients label) turned into a reusable grooming
     item preset. AI used once per product; every routine built from it after
-    that is presence-only, no re-describing."""
+    that is presence-only, no re-describing.
+
+    2026-11-06: local-first — OCR reads the bottle's printed name (a hint to
+    the local VLM, and the whole answer when no VLM is running)."""
+    from ...perception.local_describe import describe_item_local
+
+    def local():
+        fields, pipeline = describe_item_local(
+            photos, noun="grooming product", categories=_GROOMING_CATEGORIES,
+            user_description=user_description, category_keywords=_GROOMING_KEYWORDS, use_ocr=True,
+        )
+        return GroomingItemEstimate(**fields), pipeline
+
+    return run_image_task(local, lambda: _describe_grooming_item_cloud(photos, user_description), what="product photo", provider=provider)
+
+
+def _describe_grooming_item_cloud(photos: list[tuple[bytes, str]], user_description: str = "") -> GroomingItemEstimate:
     client = cloud_client()
     content: list[dict] = image_content_blocks(photos)
     if user_description.strip():

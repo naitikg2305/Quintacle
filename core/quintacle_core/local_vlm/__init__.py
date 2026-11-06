@@ -19,6 +19,7 @@ Two servers can sit behind that localhost URL, selected per call by
 QUINTACLE_VISION_BACKEND:
 
   ollama (default)  Ollama's /api/chat (ollama.py) — the desktop daemon.
+  off               no local VLM (2026-11-06) — returns None at once.
   llamacpp          llama.cpp's llama-server, OpenAI-compatible
                     /v1/chat/completions (llamacpp.py) — the only one of
                     the two that also runs on the phone (Termux /
@@ -39,6 +40,11 @@ def describe_images_local(photos: list[tuple[bytes, str]], question: str | None 
     the shared contract — description text, or None when local vision is
     unavailable. Imports stay lazy so the unused backend costs nothing."""
     backend = os.environ.get("QUINTACLE_VISION_BACKEND", "ollama").strip().lower()
+    if backend == "off":
+        # 2026-11-06: an explicit "no local VLM here" (the test suite sets it
+        # so a dev machine's Ollama is never hit; a phone without llama-server
+        # can set it to skip the 2 s connect probe on every photo).
+        return None
     if backend == "llamacpp":
         from .llamacpp import describe_images_llamacpp
 

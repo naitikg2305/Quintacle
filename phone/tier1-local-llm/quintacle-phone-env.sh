@@ -20,6 +20,16 @@ export QUINTACLE_OLLAMA_HOST="${QUINTACLE_OLLAMA_HOST:-http://127.0.0.1:11434}"
 # they switch to local automatically the day Tier 3's model is pulled.
 export QUINTACLE_VISION="${QUINTACLE_VISION:-auto}"
 
+# 2026-11-06 — local-first IMAGES (perception/image_policy.py). This wins
+# over the legacy QUINTACLE_VISION above for every image call: labels,
+# receipts and documents are read by on-phone OCR (tesseract / RapidOCR,
+# `bash scripts/termux/setup-perception.sh --ocr`) + deterministic parsers;
+# food/outfit photos use YOLO tags (+ the Tier 3 VLM when it runs). "local"
+# never bills the cloud automatically — an unreadable photo comes back as
+# "couldn't read locally — Redo with cloud?". Set "auto" for the old
+# fall-back-to-cloud behavior.
+export QUINTACLE_IMAGE_PROVIDER="${QUINTACLE_IMAGE_PROVIDER:-local}"
+
 # Local model for ingest/parse calls (llm_dispatch.py reads it; the desktop
 # default is qwen3:8b). 2026-11-05: the phone default is qwen3:4b — the
 # 1.5B tier mangles multi-entry schemas (llm_dispatch.py's own note), and 4B

@@ -1076,6 +1076,9 @@ export type ProviderUsed = "local" | "cloud" | "mixed" | null;
 // What the caller may ask for — "redo with cloud" re-sends the SAME original
 // input with "cloud" (a step back, never re-prompting over local output).
 export type IngestProvider = "local" | "cloud" | "auto";
+// 2026-11-06 local-first images: which image pipeline read a dropped photo
+// (perception/image_policy.py). Anything but "cloud" = read on-device.
+export type ImagePipeline = "ocr+parser" | "ocr+local-llm" | "yolo+local-vlm" | "yolo" | "cloud";
 
 export const parseJournal = (date: string, content: string, provider?: IngestProvider) =>
   request<{ entries: ParsedEntry[]; provider_used: ProviderUsed }>(
@@ -1282,7 +1285,14 @@ export async function proposeDrop(
   // "Private, skip AI" (2026-11-05): the backend makes ZERO model calls and
   // returns one private kb_entry for the owner to file by hand.
   privateSkipAI = false
-): Promise<{ entries: ParsedEntry[]; provider_used: ProviderUsed }> {
+): Promise<{
+  entries: ParsedEntry[];
+  provider_used: ProviderUsed;
+  // The photo's pipeline (null/absent for text-only drops) and, when the
+  // local stack couldn't read it, the reason — the UI offers Redo with cloud.
+  pipeline?: ImagePipeline | null;
+  local_unavailable?: string;
+}> {
   const form = new FormData();
   form.append("text", text);
   if (file) form.append("file", file);

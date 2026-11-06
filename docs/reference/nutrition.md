@@ -9,6 +9,38 @@ nutrients against NIH ODS / FDA reference tables by sex and age
 (`_canonicalize_micros` in `nodes/logs/api.py`). All of that still holds.
 The section below adds a real data source.
 
+## 2026-11-06 — label photos read locally (OCR + deterministic parser)
+
+A nutrition-label photo is no longer sent to a cloud model by default
+(policy: [perception-and-autojournal.md](perception-and-autojournal.md#2026-11-06--local-first-images-ocr--yolo-first-cloud-only-on-request)).
+`nutrition_llm.estimate_nutrition_from_image(photos, desc, provider)`:
+
+1. local OCR → `nodes/logs/label_parser.parse_label` reads, in code, the US
+   FDA panel: serving size + grams, servings per container, calories, total
+   fat, saturated, trans, cholesterol, sodium, total carbohydrate, fiber,
+   total sugars, "Includes Ng Added Sugars", protein, and every listed
+   vitamin/mineral, amounts and %DV. A %DV-only row converts through the
+   new `nutrition_targets.FDA_LABEL_DV` (the 21 CFR 101.9 label DVs, NOT the
+   personal RDAs — calcium 1300 mg, iron 18 mg, potassium 4700 mg …). OCR
+   noise handled: O/0, l/1, "rng", µg, glued numbers, a value on the next
+   line, comma decimals, "<1g" = 0.5. EU per-100 g panels (kJ/kcal, "of
+   which saturates", salt → sodium = salt ÷ 2.5) as a stretch.
+   Code sanity: absurd grams dropped, calories that disagree with 4/4/9 lose
+   confidence (the printed value is kept), calories derived from macros
+   when missing (but then not "core").
+2. calories + protein + carbs + fat all READ → done, `pipeline: "ocr+parser"`,
+   no model. Otherwise the OCR TEXT goes to the local text model
+   (`parse_structured(provider="local")`) and `overlay_parsed` lets every
+   code-read value override the model's → `"ocr+local-llm"`.
+3. Output = the old `NutritionEstimateFromImage` shape with `from_label=True`
+   (→ `source: "label"`), `basis_amount_g` = serving grams (100 for per-100 g),
+   plus `field_confidence` {field: 0–1}, `label_dv`, `serving_size_text`,
+   `servings_per_container`, `per_100g`. The existing USDA fill
+   (`_source_ingredient_image`) still fills nutrients the label doesn't list.
+4. No label text → a food photo: local VLM "NAME / GRAMS" (YOLO tags as a
+   hint), USDA match on that name; local text-model estimate only when USDA
+   has no match. VLM down but YOLO saw "pizza" → name from the tag (`yolo`).
+
 ## 2026-11-05 — USDA FoodData Central as the source of truth (offline)
 
 **Why.** The owner studies nutrition closely ("I look deeply into it, like

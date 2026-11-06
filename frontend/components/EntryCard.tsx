@@ -1,6 +1,6 @@
 "use client";
 
-import { ExerciseSet, FINANCE_KINDS, Meal, ParsedEntry, STOCK_ACTIONS } from "@/lib/api";
+import { ExerciseSet, FINANCE_KINDS, ImagePipeline, Meal, ParsedEntry, STOCK_ACTIONS } from "@/lib/api";
 import MealCompositionEditor from "./MealCompositionEditor";
 import StatementImportCard from "./StatementImportCard";
 import OutfitEditor from "./OutfitEditor";
@@ -44,9 +44,21 @@ function manualOverride(entry: ParsedEntry): Partial<ParsedEntry> {
 // dump and the general Drop page — both produce the same ParsedEntry union,
 // so both review it the same way before committing (Approval before write).
 export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpdate, onRemove, onUpdateSet, onAddSet, onRemoveSet }: Props) {
+  const pipeline = (entry as { pipeline?: ImagePipeline }).pipeline;
   return (
     <div className="flex gap-2 items-start border-b pb-2 last:border-b-0">
-      <span className="text-xs uppercase opacity-50 w-16 pt-2 shrink-0">{entry.type.replace("_", " ")}</span>
+      <span className="text-xs uppercase opacity-50 w-16 pt-2 shrink-0">
+        {entry.type.replace("_", " ")}
+        {/* 2026-11-06: which image pipeline read the dropped photo. */}
+        {pipeline && (
+          <span
+            className="mt-1 block w-fit rounded-full border px-1.5 py-0.5 text-[9px] normal-case tracking-normal"
+            title={`Image pipeline: ${pipeline}`}
+          >
+            {pipeline === "cloud" ? "read via cloud" : "read locally"}
+          </span>
+        )}
+      </span>
 
       {"entry_date" in entry && (
         <input

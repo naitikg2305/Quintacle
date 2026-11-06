@@ -82,6 +82,50 @@ FEMALE_RDA_51_PLUS: dict[str, tuple[float, str]] = {
 
 IS_LIMIT = {"Sodium", "Saturated Fat", "Cholesterol", "Added Sugars"}
 
+# 2026-11-06: the FDA's LABEL Daily Values (21 CFR 101.9(c), the 2016 rule
+# in force on every current US "Nutrition Facts" panel, adults & children
+# ≥4). These are what a printed "%DV" is a percentage OF — deliberately a
+# separate table from the personalized RDAs above (calcium's label DV is
+# 1300 mg even though a 30-year-old man's RDA is 1000 mg). Used ONLY to turn
+# a %DV-only label line back into an amount (nodes/logs/label_parser.py).
+# Keys use Quintacle's nutrient names; the macro keys are the label rows.
+FDA_LABEL_DV: dict[str, tuple[float, str]] = {
+    "Total Fat": (78, "g"),
+    "Saturated Fat": (20, "g"),
+    "Cholesterol": (300, "mg"),
+    "Sodium": (2300, "mg"),
+    "Total Carbohydrate": (275, "g"),
+    "Dietary Fiber": (28, "g"),
+    "Added Sugars": (50, "g"),
+    "Protein": (50, "g"),
+    "Vitamin A": (900, "mcg"),
+    "Vitamin C": (90, "mg"),
+    "Vitamin D": (20, "mcg"),
+    "Vitamin E": (15, "mg"),
+    "Vitamin K": (120, "mcg"),
+    "Thiamin (B1)": (1.2, "mg"),
+    "Riboflavin (B2)": (1.3, "mg"),
+    "Niacin (B3)": (16, "mg"),
+    "Vitamin B6": (1.7, "mg"),
+    "Folate": (400, "mcg"),
+    "Vitamin B12": (2.4, "mcg"),
+    "Biotin": (30, "mcg"),
+    "Pantothenic Acid (B5)": (5, "mg"),
+    "Calcium": (1300, "mg"),
+    "Iron": (18, "mg"),
+    "Phosphorus": (1250, "mg"),
+    "Iodine": (150, "mcg"),
+    "Magnesium": (420, "mg"),
+    "Zinc": (11, "mg"),
+    "Selenium": (55, "mcg"),
+    "Copper": (900, "mcg"),
+    "Manganese": (2.3, "mg"),
+    "Molybdenum": (45, "mcg"),
+    "Chloride": (2300, "mg"),
+    "Potassium": (4700, "mg"),
+    "Choline": (550, "mg"),
+}
+
 # Units don't change by sex/age, only target amounts do — this is what
 # to_canonical_unit() and the AI prompts (which just need "what unit is X
 # measured in", not a personalized target) actually need.

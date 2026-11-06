@@ -197,6 +197,9 @@ function KBPageInner() {
   // cloud" re-sends that snapshot (a step back, never re-prompting over the
   // local output) and REPLACES the current proposals.
   const [providerUsed, setProviderUsed] = useState<ProviderUsed>(null);
+  // 2026-11-06: set when the local image stack couldn't read the photo —
+  // nothing was proposed, so Redo with cloud is offered without entries.
+  const [localUnavailable, setLocalUnavailable] = useState<string | null>(null);
   const [lastSort, setLastSort] = useState<{ text: string; file: File | null; keepAsIs: boolean; extra: File | null; date: string } | null>(
     null
   );
@@ -446,7 +449,21 @@ function KBPageInner() {
     setBusy(true);
     setStatus("sorting...");
     try {
-      const { entries: proposed, provider_used } = await proposeDrop(scratchpad, att.file, keepAsIs, att.extraPhotos[0] ?? null, dropDate);
+      const { entries: proposed, provider_used, local_unavailable } = await proposeDrop(
+        scratchpad,
+        att.file,
+        keepAsIs,
+        att.extraPhotos[0] ?? null,
+        dropDate
+      );
+      setLocalUnavailable(local_unavailable ?? null);
+      if (local_unavailable) {
+        setProviderUsed(provider_used);
+        setLastSort({ text: scratchpad, file: att.file, keepAsIs, extra: att.extraPhotos[0] ?? null, date: dropDate });
+        setStatus(local_unavailable);
+        setBusy(false);
+        return;
+      }
       // A CSV/OFX statement proposal keeps the raw file text client-side so
       // the review card can re-parse after a column-mapping correction
       // without re-dropping the file.
@@ -489,6 +506,7 @@ function KBPageInner() {
       );
       setEntries(proposed);
       setProviderUsed(provider_used);
+      setLocalUnavailable(null);
       setStatus(`${proposed.length} entr${proposed.length === 1 ? "y" : "ies"} re-proposed via cloud — review below`);
     } catch (e) {
       setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -1412,7 +1430,7 @@ function KBPageInner() {
                   {providerUsed === "local" ? "sorted locally" : providerUsed === "cloud" ? "sorted via cloud" : "sorted locally + cloud"}
                 </span>
               )}
-              {providerUsed === "local" && entries.length > 0 && (
+              {providerUsed === "local" && (entries.length > 0 || localUnavailable) && (
                 <button
                   onClick={redoWithCloud}
                   disabled={busy || hasPrivatePending}

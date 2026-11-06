@@ -1,0 +1,25 @@
+# Local OCR for the local-first image pipeline (2026-11-06,
+# core/quintacle_core/perception/ocr.py). OPTIONAL — deliberately NOT in
+# requirements.txt: the core starts and the full test suite passes without
+# it; ocr_image() returns None and images fall through to YOLO / the local
+# VLM / "Redo with cloud?".
+#
+# Desktop:
+#   core/.venv/bin/pip install -r core/requirements-ocr.txt
+#
+# RapidOCR 3.x = PaddleOCR's PP-OCR det/cls/rec models as ONNX on
+# onnxruntime CPU. The wheel BUNDLES its models (~32 MB on disk:
+# PP-OCRv6_det_small 9.9 MB, PP-OCRv6_rec_small 21 MB, ppocr cls 0.6 MB) —
+# nothing downloads at first use. Pulls opencv-python-headless, shapely,
+# pyclipper, omegaconf, numpy. Verified 2026-11-06 in a Python 3.14 venv:
+# rapidocr 3.10.0 + onnxruntime 1.31.1, ~2 s per label photo on CPU.
+#
+# Fallback engine, no pip at all: the `tesseract` CLI (Arch:
+# `pacman -S tesseract tesseract-data-eng`; Debian: `apt install
+# tesseract-ocr`). QUINTACLE_OCR_BACKEND=auto picks rapidocr, else tesseract.
+#
+# Phone (Termux): see scripts/termux/setup-perception.sh --ocr — onnxruntime
+# is the bionic pkg `python-onnxruntime` (no PyPI wheel for Android), and
+# tesseract is a plain `pkg install tesseract`.
+rapidocr>=3.4
+onnxruntime>=1.17

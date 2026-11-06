@@ -165,7 +165,7 @@ def test_describe_asset_answers_question_about_image(tmp_path, monkeypatch):
 
     calls = {}
 
-    def fake_describe(photos, question=None):
+    def fake_describe(photos, question=None, private=False):
         calls["photos"], calls["question"] = photos, question
         return "an orange sky over water"
 

@@ -98,6 +98,16 @@ sprints get their own section below; never rewrite a past sprint's entries.
   phone falls back automatically).
 - Phone parity: on-device local model (qwen3:4b), face/object models via Termux
   TFLite, update script; APK build pending JDK 21 + Android SDK.
+- **2026-11-06 — photos are local-first** (owner: "it should always have been
+  local … YOLO plus OCR"). Every image call (photo-kind classification,
+  receipts, nutrition labels, wardrobe/grooming/outfit/document photos,
+  statement photos, video frames) now runs OCR + deterministic parsers →
+  local text model over the OCR text → YOLO + local VLM, and never the cloud
+  automatically (`QUINTACLE_IMAGE_PROVIDER=local`). An unreadable photo
+  shows "couldn't read locally — Redo with cloud?"; review cards show a
+  "read locally" badge. Needs `pip install -r core/requirements-ocr.txt`
+  (or tesseract + its English data) on the desktop; phone:
+  `setup-perception.sh --ocr`. See `reference/perception-and-autojournal.md`.
 
 ## Open (carry to sprint 2)
 

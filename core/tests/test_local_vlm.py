@@ -31,12 +31,32 @@ def _local_must_not_run(*args, **kwargs):
     raise AssertionError("local vision must not be called in this mode")
 
 
-def test_default_is_cloud_and_never_touches_local(monkeypatch):
+def test_default_is_local_and_never_touches_cloud(monkeypatch):
+    # 2026-11-06 owner decision: images are local by default (was cloud).
     monkeypatch.delenv("QUINTACLE_VISION", raising=False)
+    monkeypatch.delenv("QUINTACLE_IMAGE_PROVIDER", raising=False)
+    monkeypatch.setattr(drop, "_describe_images_cloud", _cloud_must_not_run)
+    monkeypatch.setattr(local_vlm, "describe_images_local", lambda photos, question=None: "local says")
+
+    assert drop.describe_images(PHOTOS, "what is it?") == "local says"
+
+
+def test_image_provider_env_wins_over_legacy_vision_switch(monkeypatch):
+    monkeypatch.setenv("QUINTACLE_VISION", "auto")
+    monkeypatch.setenv("QUINTACLE_IMAGE_PROVIDER", "cloud")
     monkeypatch.setattr(drop, "_describe_images_cloud", lambda photos, question=None: "cloud says")
     monkeypatch.setattr(local_vlm, "describe_images_local", _local_must_not_run)
 
-    assert drop.describe_images(PHOTOS, "what is it?") == "cloud says"
+    assert drop.describe_images(PHOTOS) == "cloud says"
+
+
+def test_private_pins_local_even_when_cloud_is_configured(monkeypatch):
+    monkeypatch.setenv("QUINTACLE_IMAGE_PROVIDER", "cloud")
+    monkeypatch.setattr(drop, "_describe_images_cloud", _cloud_must_not_run)
+    monkeypatch.setattr(local_vlm, "describe_images_local", lambda photos, question=None: None)
+
+    with pytest.raises(RuntimeError, match="couldn't read this image locally"):
+        drop.describe_images(PHOTOS, private=True)
 
 
 def test_explicit_cloud_same_as_default(monkeypatch):
