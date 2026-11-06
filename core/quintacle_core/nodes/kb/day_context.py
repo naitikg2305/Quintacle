@@ -290,6 +290,34 @@ def _connections_section(d: date, gate=None) -> str | None:
     return "\n".join(lines) if lines else None
 
 
+def _work_log_section(d: date, gate=None) -> str | None:
+    """2026-11-05: the day's work log (Daily Log/Work Logs) — "what did I work
+    on Tuesday" answers from it."""
+    try:
+        from ...day_bundle import day_work_log
+        from .api import get_store
+
+        wl = day_work_log(d, get_store())
+    except Exception:
+        return None
+    if wl is None or (gate is not None and not gate.admit(f"note:{wl['folder']}/{wl['slug']}")):
+        return None
+    return wl["content"][:2500] or None
+
+
+def _saved_section(d: date, gate=None) -> str | None:
+    """2026-11-05: titles of notes saved that day (light — titles only)."""
+    try:
+        from ...day_bundle import day_notes_saved
+        from .api import get_store
+
+        notes = day_notes_saved(d, get_store(), set())
+    except Exception:
+        return None
+    lines = [f"- {n['title']} ({n['folder']})" for n in notes if gate is None or gate.admit(f"note:{n['folder']}/{n['slug']}")]
+    return "\n".join(lines[:25]) if lines else None
+
+
 def day_bundle(d: date, gate=None) -> str:
     """The day's full picture as finished context text — all code, zero model
     calls, every number already computed in SQL. Sections in a fixed order
@@ -300,7 +328,9 @@ def day_bundle(d: date, gate=None) -> str:
     sections = [
         ("Journal", _journal_section(d)),
         ("Logged that day", _rows_section(d)),
+        ("Work log", _work_log_section(d, gate)),
         ("Todos", _todos_section(d)),
+        ("Saved that day", _saved_section(d, gate)),
         ("People, places & events", _connections_section(d, gate)),
     ]
     parts: list[str] = []

@@ -451,6 +451,64 @@ export default function DayViewPage() {
               </div>
             )}
 
+
+            {expandedDetail.money && (expandedDetail.money.spent > 0 || expandedDetail.money.earned > 0) && (
+              <div>
+                <h3 className="mb-1 font-mono text-[11px] font-normal uppercase tracking-[0.14em] text-accent">Money</h3>
+                <p className="text-sm">
+                  Spent <span className="font-mono">${expandedDetail.money.spent.toFixed(2)}</span>
+                  {expandedDetail.money.earned > 0 && (
+                    <>
+                      {" · "}Earned <span className="font-mono text-ok">${expandedDetail.money.earned.toFixed(2)}</span>
+                      {" · "}Net <span className="font-mono">${expandedDetail.money.net.toFixed(2)}</span>
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
+
+            {expandedDetail.work_log && (
+              <details className="rounded-lg border border-line p-2">
+                <summary className="cursor-pointer font-mono text-[11px] uppercase tracking-[0.14em] text-accent">Work log</summary>
+                <div className="prose prose-sm prose-invert mt-2 max-w-none whitespace-pre-wrap text-sm">{expandedDetail.work_log.content}</div>
+                <Link
+                  href={`/kb/browse?path=${encodeURIComponent(expandedDetail.work_log.folder)}&open=${encodeURIComponent(expandedDetail.work_log.slug)}`}
+                  className="text-xs text-accent hover:underline"
+                >
+                  Open in Browse →
+                </Link>
+              </details>
+            )}
+
+            {(expandedDetail.notes_saved?.length ?? 0) > 0 && (
+              <div>
+                <h3 className="mb-1 font-mono text-[11px] font-normal uppercase tracking-[0.14em] text-accent">Saved that day</h3>
+                <ul className="space-y-0.5 text-sm">
+                  {expandedDetail.notes_saved!.map((n) => (
+                    <li key={`${n.folder}/${n.slug}`}>
+                      <Link href={`/kb/browse?path=${encodeURIComponent(n.folder)}&open=${encodeURIComponent(n.slug)}`} className="hover:text-accent">
+                        {n.private ? "🔒 " : ""}{n.title}
+                      </Link>
+                      <span className="ml-2 text-xs text-muted">{n.folder}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {(expandedDetail.chats?.length ?? 0) > 0 && (
+              <div>
+                <h3 className="mb-1 font-mono text-[11px] font-normal uppercase tracking-[0.14em] text-accent">Chats</h3>
+                <ul className="space-y-0.5 text-sm">
+                  {expandedDetail.chats!.map((c) => (
+                    <li key={c.path} className="truncate">
+                      <span className="font-mono text-xs text-muted">{c.time.slice(0, 2)}:{c.time.slice(2)}</span> {c.first_message || c.topic}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {Object.keys(expandedActivitiesByCategory).length === 0 &&
               expandedDetail.food.entries.length === 0 &&
               expandedDetail.exercise.length === 0 &&
@@ -458,6 +516,9 @@ export default function DayViewPage() {
               expandedDetail.body_stats.length === 0 &&
               expandedDetail.todos_completed.length === 0 &&
               expandedDetail.photos.length === 0 &&
+              !expandedDetail.work_log &&
+              !(expandedDetail.notes_saved?.length) &&
+              !(expandedDetail.money && (expandedDetail.money.spent || expandedDetail.money.earned)) &&
               !expandedDetail.journal && <p className="text-sm text-muted">Nothing logged.</p>}
           </>
         )}

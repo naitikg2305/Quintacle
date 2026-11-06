@@ -367,6 +367,7 @@ def create_app() -> FastAPI:
             logs_repo=get_logs_repo(),
             kb_store=get_kb_store(),
             edges_conn=get_graph_store().conn,
+            conversations_root=DATA_DIR / "conversations",  # owner-facing: chats listed (topic + first line)
         )
 
     def _propose_preset_entry(text: str, provider: str | None) -> dict | None:

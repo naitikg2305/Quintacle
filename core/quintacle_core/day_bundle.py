@@ -14,8 +14,10 @@ init_* registries vs. the MCP server's module-level stores).
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 
 from .graph_capture import log_row_label
 from .nodes.journal.store import JournalStore
@@ -126,6 +128,70 @@ def day_events(
     return events
 
 
+# --- 2026-11-05: the rest of the day -----------------------------------------
+# A day is assembled on demand (no per-day folder — one item can belong to a
+# day, a trip and a project without being copied). These four close the gaps:
+# the day's work log, income next to spending, notes saved that day (titles
+# only — light), and that day's chats (topic + first line only).
+
+WORK_LOG_FOLDER = "daily-log/work-logs"
+
+
+def day_work_log(for_date: date, kb_store: KBStore) -> dict | None:
+    entry = kb_store.read_full(WORK_LOG_FOLDER, f"work-log-{for_date.isoformat()}")
+    if entry is None:
+        return None
+    return {"folder": WORK_LOG_FOLDER, "slug": f"work-log-{for_date.isoformat()}", "title": entry["title"],
+            "content": _description_of(entry["content"])}
+
+
+def day_notes_saved(for_date: date, kb_store: KBStore, exclude: set[tuple[str, str]]) -> list[dict]:
+    """Notes whose real `edited` stamp (ET, written on every save) falls on
+    this date. File mtime is a cheap pre-filter (a note edited that day has
+    an mtime on/after it), so a big KB isn't fully parsed per request.
+    Charters, work logs and notes already listed elsewhere are skipped."""
+    day = for_date.isoformat()
+    start_ts = datetime.combine(for_date, datetime.min.time()).timestamp() - 86400  # tz slack
+    out: list[dict] = []
+    for n in kb_store.notes_index():
+        folder, slug = n["folder"], n["slug"]
+        if (folder, slug) in exclude or slug.startswith("about-") or folder.startswith(WORK_LOG_FOLDER):
+            continue
+        try:
+            if os.path.getmtime(kb_store.entry_path(folder, slug)) < start_ts:
+                continue
+        except OSError:
+            continue
+        meta = kb_store.read_meta(folder, slug) if hasattr(kb_store, "read_meta") else {}
+        if str((meta or {}).get("edited", ""))[:10] != day:
+            continue
+        out.append({"folder": folder, "slug": slug, "title": n.get("title") or slug,
+                    "private": bool((meta or {}).get("private"))})
+    return sorted(out, key=lambda x: x["title"].lower())
+
+
+def day_chats(for_date: date, conversations_root: Path | None) -> list[dict]:
+    """Archived chats started that day: topic + the first thing you asked.
+    Transcript files are named <topic>/<YYYY-MM-DD-HHMM>.md."""
+    if conversations_root is None or not conversations_root.exists():
+        return []
+    day = for_date.isoformat()
+    out = []
+    for f in sorted(conversations_root.glob(f"*/{day}-*.md")):
+        first = ""
+        try:
+            text = f.read_text(encoding="utf-8")
+            body = text.split("---", 2)[-1] if text.startswith("---") else text
+            m = body.split("### You", 1)
+            if len(m) == 2:
+                first = next((ln.strip() for ln in m[1].splitlines() if ln.strip()), "")
+        except OSError:
+            pass
+        out.append({"topic": f.parent.name.replace("-", " "), "time": f.stem[11:15], "first_message": first[:160],
+                    "path": f"{f.parent.name}/{f.name}"})
+    return out
+
+
 def build_day_bundle(
     for_date: date,
     *,
@@ -134,6 +200,7 @@ def build_day_bundle(
     logs_repo: LogsRepository,
     kb_store: KBStore,
     edges_conn: sqlite3.Connection,
+    conversations_root: Path | None = None,
 ) -> dict:
     """Calendar B: what actually happened on a given date, pulled
     deterministically from every node that touches it — architecture.md's
@@ -146,6 +213,10 @@ def build_day_bundle(
         (t for t in todos if t.done and t.completed_at and t.completed_at.date() == for_date),
         key=lambda t: t.completed_at,
     )
+    photos = day_photos(for_date, kb_store, edges_conn)
+    income = [dict(row) for row in logs_repo.income_between(for_date, for_date)]
+    earned = sum(float(r.get("amount") or 0) for r in income)
+    spent = sum(float(dict(r).get("amount") or 0) for r in logs_repo.expenses_for_date(for_date))
     return {
         "date": for_date.isoformat(),
         "journal": journal_store.load(for_date),
@@ -163,6 +234,11 @@ def build_day_bundle(
         "body_stats": [dict(row) for row in logs_repo.body_stats_for_date(for_date)],
         "substances": [dict(row) for row in logs_repo.substances_for_date(for_date)],
         "expenses": [dict(row) for row in logs_repo.expenses_for_date(for_date)],
-        "photos": day_photos(for_date, kb_store, edges_conn),
+        "income": income,
+        "money": {"spent": round(spent, 2), "earned": round(earned, 2), "net": round(earned - spent, 2)},
+        "photos": photos,
         "events": day_events(for_date, edges_conn, kb_store, todo_store),
+        "work_log": day_work_log(for_date, kb_store),
+        "notes_saved": day_notes_saved(for_date, kb_store, {(p["folder"], p["slug"]) for p in photos}),
+        "chats": day_chats(for_date, conversations_root),
     }

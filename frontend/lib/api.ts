@@ -1321,6 +1321,12 @@ export type DayDetail = {
   body_stats: unknown[];
   substances: unknown[];
   photos: DayPhoto[];
+  // 2026-11-05: the rest of the day
+  income?: { id: number; amount: number; source: string; kind: string }[];
+  money?: { spent: number; earned: number; net: number };
+  work_log?: { folder: string; slug: string; title: string; content: string } | null;
+  notes_saved?: { folder: string; slug: string; title: string; private?: boolean }[];
+  chats?: { topic: string; time: string; first_message: string; path: string }[];
 };
 
 export const getDayDetail = (date: string) => request<DayDetail>(`/day/${date}`);

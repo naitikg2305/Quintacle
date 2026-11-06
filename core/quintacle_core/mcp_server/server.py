@@ -693,6 +693,11 @@ def day_recall(for_date: str) -> dict:
     # Private notes linked to the day never surface — neither as a photo
     # nor as a labelled event member.
     bundle["photos"] = [p for p in bundle["photos"] if not kb_store.is_private(p["folder"], p["slug"])]
+    # 2026-11-05: notes saved that day — private ones never leave; chats are
+    # never exposed over MCP (no conversations_root passed, so the list is empty).
+    bundle["notes_saved"] = [n for n in bundle["notes_saved"] if not n.get("private")]
+    for n in bundle["notes_saved"]:
+        n.pop("private", None)
     for event in bundle["events"]:
         event["members"] = [m for m in event["members"] if not is_private_node(kb_store, m["id"])]
     return bundle
