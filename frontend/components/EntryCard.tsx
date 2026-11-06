@@ -537,6 +537,32 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
               })
             }
           />
+          {entry.source === "label" &&
+            (() => {
+              // 2026-11-06: say plainly what came off the label vs what was backfilled.
+              const ms = entry.micros ?? [];
+              const filled = ms.filter((m) => m.source === "usda");
+              const printed = ms.length - filled.length;
+              return (
+                <p className="rounded border border-line bg-surface-2/40 px-2 py-1 text-xs text-muted">
+                  <span className="text-foreground">From the label:</span> macros + {printed} printed values
+                  {filled.length > 0 ? (
+                    <>
+                      {" · "}
+                      <span className="text-accent">Backfilled from USDA</span>
+                      {entry.usda_description ? ` (${entry.usda_description})` : ""}: {filled.length} values —{" "}
+                      {filled
+                        .slice(0, 8)
+                        .map((m) => m.nutrient)
+                        .join(", ")}
+                      {filled.length > 8 ? `, +${filled.length - 8} more` : ""}
+                    </>
+                  ) : (
+                    <> · nothing backfilled yet — pick the food below to fill the rest from USDA</>
+                  )}
+                </p>
+              );
+            })()}
           <DraftNutrientPanel
             title={`All nutrients · per ${entry.basis_amount_g} g`}
             components={[
