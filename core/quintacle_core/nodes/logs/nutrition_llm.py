@@ -75,6 +75,9 @@ class LocalNutritionReading(NutritionEstimateFromImage):
     serving_size_text: str = ""
     servings_per_container: float | None = None
     per_100g: bool = False
+    # 2026-11-06: the OCR text rides along (never to a model) so the USDA
+    # fill can backtrack the food from the label's numbers + ingredient words.
+    ocr_text: str = ""
 
 
 _LABEL_TEXT_PROMPT = (
@@ -133,13 +136,13 @@ def _estimate_from_image_local(photos: list[tuple[bytes, str]], user_description
         if labelish:
             name = user_name or guess_product_name([ln for r in readings for ln in r.lines])
             if parse.core_complete:
-                return LocalNutritionReading(**to_estimate(parse, name or "Labeled food")), "ocr+parser"
+                return LocalNutritionReading(**to_estimate(parse, name or "Labeled food"), ocr_text=ocr_text[:4000]), "ocr+parser"
             content = f"OCR text of the label:\n{ocr_text}" + (f"\n\nThe owner adds: {user_description.strip()}" if user_description.strip() else "")
             model = parse_structured(_LABEL_TEXT_PROMPT, content, NutritionEstimateFromImage, provider="local", max_tokens=2048).parsed
             fields = overlay_parsed(model.model_dump(), parse)
             if name:
                 fields["suggested_name"] = name
-            return LocalNutritionReading(**fields), "ocr+local-llm"
+            return LocalNutritionReading(**fields, ocr_text=ocr_text[:4000]), "ocr+local-llm"
 
     # A plain food photo: name + weight from the local VLM (YOLO tags as a hint / fallback).
     from ...local_vlm import describe_images_local

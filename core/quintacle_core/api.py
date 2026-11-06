@@ -129,6 +129,41 @@ def _name_exists(name: str, known_names: list[str]) -> bool:
     return bool(known_names) and canonicalize_name(name, known_names) in known_names
 
 
+_GENERIC_LABEL_NAMES = {"", "labeled food", "labelled food", "food", "product"}
+
+
+def _label_profile_match(fields: dict, hint_text: str = "") -> dict:
+    """2026-11-06: when a label's name can't be matched (a Nutrition Facts
+    panel names no food), find USDA foods by the label's own numbers."""
+    from .nutrition_db import store as usda_store
+
+    basis = float(fields.get("basis_amount_g") or 0) or 100.0
+    k = 100.0 / basis
+    per100 = {key: float(fields[key]) * k for key in ("kcal", "protein_g", "carbs_g", "fat_g") if fields.get(key) is not None}
+    units_mg = {"Sodium": "sodium_mg", "Calcium": "calcium_mg"}
+    for m in fields.get("micros") or []:
+        key = units_mg.get(m.get("nutrient"))
+        if key and m.get("amount") is not None and (m.get("unit") or "mg").lower() == "mg":
+            per100[key] = float(m["amount"]) * k
+    words = re.findall(r"[A-Za-z]{3,}", f"{fields.get('suggested_name', '')} {hint_text}")
+    cands = usda_store.nearest_by_profile(per100, words)
+    if not cands:
+        return {}
+    best = cands[0]
+    # Auto-pick only on a clear winner: words agreed, or the runner-up is
+    # clearly farther. Otherwise leave the choice to the owner (picker shows
+    # the shortlist) — numbers alone can't tell Greek yogurt from cottage cheese.
+    clear = best.get("hint_hits", 0) > 0 or (len(cands) == 1 or cands[1]["score"] >= best["score"] * 1.25)
+    shortlist = [{"fdc_id": c["fdc_id"], "description": c["description"], "category": c["category"],
+                  "source": c["source"]} for c in cands]
+    if not clear:
+        return {"fdc_id": None, "usda_description": "", "usda_match_by": "nutrition profile (pick one)",
+                "usda_candidates": shortlist}
+    return {"fdc_id": best["fdc_id"], "usda_description": best["description"], "usda_match_by": "nutrition profile",
+            "usda_candidates": [{"fdc_id": c["fdc_id"], "description": c["description"], "category": c["category"],
+                                 "source": c["source"]} for c in cands]}
+
+
 def _source_ingredient_text(text: str, name: str, provider: str | None) -> dict:
     """2026-11-05 USDA-first ingredient proposals. Typed label numbers →
     the estimate reads them (source=label, gaps filled from a USDA match of
@@ -139,6 +174,10 @@ def _source_ingredient_text(text: str, name: str, provider: str | None) -> dict:
         fields = estimate_nutrition(text, provider=provider).model_dump()
         usda = usda_proposal(name, fields["basis_amount_g"], provider) or {}
         fill = usda.get("fdc_id") if usda.get("matched") else None
+        if fill is None:
+            prof = _label_profile_match(fields, text)
+            if prof:
+                return {**fields, "source": "label", **prof}
         return {**fields, "source": "label", "fdc_id": fill, "usda_description": usda.get("usda_description", "") if fill else "",
                 "usda_candidates": usda.get("usda_candidates", [])}
     usda = usda_proposal(name, basis_from_text(text), provider)
@@ -154,10 +193,15 @@ def _source_ingredient_image(fields: dict) -> dict:
     from USDA at save). A photo of a plain food: the model only identified
     and weighed it — the numbers come from USDA when it matches."""
     from_label = bool(fields.pop("from_label", False))
+    ocr_text = fields.pop("ocr_text", "") or ""
     usda = usda_proposal(fields.get("suggested_name", ""), fields.get("basis_amount_g") or 100) or {}
     candidates = usda.get("usda_candidates", [])
     if from_label:
         fill = usda.get("fdc_id") if usda.get("matched") else None
+        if fill is None:  # no name to match → backtrack from the label's own numbers
+            prof = _label_profile_match(fields, ocr_text)
+            if prof:
+                return {**fields, "source": "label", **prof}
         return {**fields, "source": "label", "fdc_id": fill,
                 "usda_description": usda.get("usda_description", "") if fill else "", "usda_candidates": candidates}
     if usda.get("matched"):

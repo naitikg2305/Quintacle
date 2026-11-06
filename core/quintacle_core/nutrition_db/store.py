@@ -211,6 +211,78 @@ def match_food(text: str, limit: int = 8) -> list[dict]:
     return scored[:limit]
 
 
+# 2026-11-06: "backtrack from the macros". A Nutrition Facts panel names no
+# food, so a label photo had nothing to match USDA by name. Instead compare
+# the label's per-100 g profile against every USDA food (pure arithmetic) and
+# rank the nearest. Scales are typical spreads, so 1 g of fat, 1 g of protein
+# and ~15 kcal weigh about the same; sugar/sodium/calcium join when known.
+_PROFILE_KEYS = {  # label field -> (USDA nutrient name, scale per 100 g)
+    "kcal": ("Energy", 15.0),
+    "protein_g": ("Protein", 1.5),
+    "carbs_g": ("Carbohydrates", 2.0),
+    "fat_g": ("Fat", 1.0),
+    "sugars_g": ("Total Sugars", 2.0),
+    "sodium_mg": ("Sodium", 60.0),
+    "calcium_mg": ("Calcium", 40.0),
+}
+
+
+def nearest_by_profile(per100: dict[str, float], hint_words: list[str] | None = None, limit: int = 8) -> list[dict]:
+    """USDA foods closest to a per-100 g nutrition profile. Needs at least
+    kcal + two macros. `hint_words` (e.g. OCR'd 'milk', 'cultures', a typed
+    'yogurt') boost foods whose description contains them."""
+    conn = _connect()
+    usable = {k: float(v) for k, v in per100.items() if k in _PROFILE_KEYS and v is not None}
+    if conn is None or "kcal" not in usable or len(usable) < 3:
+        return []
+    names = [_PROFILE_KEYS[k][0] for k in usable]
+    marks = ",".join("?" * len(names))
+    with _lock:
+        rows = conn.execute(
+            f"""SELECT f.fdc_id, f.description, f.category, f.source, n.name, fn.amount
+                FROM food_nutrient fn JOIN nutrients n ON n.id = fn.nutrient_id
+                JOIN foods f ON f.fdc_id = fn.fdc_id WHERE n.name IN ({marks})""",
+            names,
+        ).fetchall()
+    foods: dict[int, dict] = {}
+    for r in rows:
+        f = foods.setdefault(r["fdc_id"], {"fdc_id": r["fdc_id"], "description": r["description"],
+                                            "category": r["category"], "source": r["source"], "vals": {}})
+        f["vals"][r["name"]] = float(r["amount"] or 0)
+    hints = [w.lower() for w in (hint_words or []) if len(w) > 2]
+    # Ingredient-line words → the USDA food group they imply (an OCR'd
+    # "cultured pasteurized nonfat milk" means dairy even though no USDA
+    # yogurt description contains "milk").
+    implied: set[str] = set()
+    for w in hints:
+        if w.startswith(("cultur", "yogurt", "yoghurt", "milk", "cream", "whey", "cheese", "casein", "lact")):
+            implied |= {"dairy", "yogurt"} if w.startswith(("cultur", "yogurt", "yoghurt")) else {"dairy"}
+        elif w.startswith("egg"):
+            implied.add("egg")
+        elif w.startswith(("chicken", "beef", "pork", "lamb", "turkey")):
+            implied.add(w[:4])
+    scored = []
+    for f in foods.values():
+        if not all(_PROFILE_KEYS[k][0] in f["vals"] for k in ("kcal", "protein_g", "fat_g") if k in usable):
+            continue
+        dist = 0.0
+        for k, v in usable.items():
+            name, scale = _PROFILE_KEYS[k]
+            if name in f["vals"]:
+                dist += ((f["vals"][name] - v) / scale) ** 2
+        dist = dist ** 0.5
+        desc = f["description"].lower()
+        cat = (f["category"] or "").lower()
+        hits = sum(1 for w in hints if w in desc)
+        hits += sum(1 for g in implied if g in desc or g in cat)
+        odd = 1.35 if ("alaska native" in desc or "food distribution" in desc or "usda commodity" in desc) else 1.0
+        scored.append({"fdc_id": f["fdc_id"], "description": f["description"], "category": f["category"],
+                       "source": f["source"], "distance": round(dist, 3), "hint_hits": hits,
+                       "score": round(dist * odd / (1 + 0.6 * hits), 3)})
+    scored.sort(key=lambda c: (c["score"], len(c["description"])))
+    return scored[:limit]
+
+
 def food(fdc_id: int) -> dict | None:
     conn = _connect()
     if conn is None:
