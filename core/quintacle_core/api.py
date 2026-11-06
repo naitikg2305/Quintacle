@@ -164,6 +164,23 @@ def _label_profile_match(fields: dict, hint_text: str = "") -> dict:
                                  "source": c["source"]} for c in cands]}
 
 
+def _with_usda_fill(entry: dict) -> dict:
+    """2026-11-06: show the full nutrient panel on the REVIEW CARD, not only
+    after Save — label values stay (source=label), every nutrient the label
+    doesn't print is filled from the matched USDA food (source=usda). Save
+    re-derives the same from the db (resolve_ingredient_numbers)."""
+    fdc = entry.get("fdc_id")
+    if not fdc or entry.get("source") != "label":
+        return entry
+    try:
+        from .nodes.logs.usda_sourcing import merge_label_with_usda
+
+        micros = [m for m in entry.get("micros") or [] if m.get("source") in (None, "", "label")]
+        return {**entry, "micros": merge_label_with_usda(micros, fdc, float(entry.get("basis_amount_g") or 100))}
+    except Exception:
+        return entry
+
+
 def _source_ingredient_text(text: str, name: str, provider: str | None) -> dict:
     """2026-11-05 USDA-first ingredient proposals. Typed label numbers →
     the estimate reads them (source=label, gaps filled from a USDA match of
@@ -177,9 +194,9 @@ def _source_ingredient_text(text: str, name: str, provider: str | None) -> dict:
         if fill is None:
             prof = _label_profile_match(fields, text)
             if prof:
-                return {**fields, "source": "label", **prof}
-        return {**fields, "source": "label", "fdc_id": fill, "usda_description": usda.get("usda_description", "") if fill else "",
-                "usda_candidates": usda.get("usda_candidates", [])}
+                return _with_usda_fill({**fields, "source": "label", **prof})
+        return _with_usda_fill({**fields, "source": "label", "fdc_id": fill, "usda_description": usda.get("usda_description", "") if fill else "",
+                "usda_candidates": usda.get("usda_candidates", [])})
     usda = usda_proposal(name, basis_from_text(text), provider)
     if usda and usda.get("matched"):
         return {k: v for k, v in usda.items() if k != "matched"}
@@ -201,9 +218,9 @@ def _source_ingredient_image(fields: dict) -> dict:
         if fill is None:  # no name to match → backtrack from the label's own numbers
             prof = _label_profile_match(fields, ocr_text)
             if prof:
-                return {**fields, "source": "label", **prof}
-        return {**fields, "source": "label", "fdc_id": fill,
-                "usda_description": usda.get("usda_description", "") if fill else "", "usda_candidates": candidates}
+                return _with_usda_fill({**fields, "source": "label", **prof})
+        return _with_usda_fill({**fields, "source": "label", "fdc_id": fill,
+                "usda_description": usda.get("usda_description", "") if fill else "", "usda_candidates": candidates})
     if usda.get("matched"):
         return {**fields, **{k: v for k, v in usda.items() if k != "matched"}}
     return {**fields, "micros": [{**m, "source": "estimated"} for m in fields.get("micros", [])], "source": "estimated",

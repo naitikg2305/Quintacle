@@ -511,7 +511,17 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
             onApply={(f, candidates) =>
               onUpdate(i, {
                 ...(entry.source === "label"
-                  ? { fdc_id: f.fdc_id, usda_description: f.usda_description }
+                  ? (() => {
+                      // 2026-11-06: picking the food on a LABEL card keeps the printed
+                      // values and fills every nutrient the label doesn't list from USDA.
+                      const printed = (entry.micros ?? []).filter((m) => !m.source || m.source === "label");
+                      const have = new Set(printed.map((m) => m.nutrient));
+                      return {
+                        fdc_id: f.fdc_id,
+                        usda_description: f.usda_description,
+                        micros: [...printed, ...(f.micros ?? []).filter((m) => !have.has(m.nutrient))],
+                      };
+                    })()
                   : {
                       protein_g: f.protein_g,
                       carbs_g: f.carbs_g,
