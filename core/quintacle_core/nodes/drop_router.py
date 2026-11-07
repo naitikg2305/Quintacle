@@ -230,6 +230,12 @@ def looks_like_preset(text: str) -> Literal["meal_composition", "workout_routine
     qty = _food_quantity_count(text)
     nutrients = len({m.group(1).lower()[:4] for m in _NUTRIENT_NUM_RE.finditer(text)})
     label = bool(_LABEL_WORDING_RE.search(text))
+    # 2026-11-07 fix: a planned meal pasted from chat lists several foods WITH
+    # amounts and usually a nutrition summary ("protein 45 g, 650 kcal…" —
+    # the USDA chat lane makes that common). 3+ food quantities without real
+    # label wording ("Nutrition Facts", "Serving size") is a MEAL, not a label.
+    if qty >= 3 and not label:
+        return "meal_composition"
     if nutrients >= 3 or (label and nutrients >= 1) or (label and qty < 3 and re.search(r"\d", text)):
         return "ingredient_preset"
     setrep = _setrep_segments(text)

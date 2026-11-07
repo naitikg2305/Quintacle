@@ -265,3 +265,14 @@ from quintacle_core.nodes.drop_router import strip_set_scheme
 )
 def test_strip_set_scheme(raw, expected):
     assert strip_set_scheme(raw) == expected
+
+
+def test_chat_meal_plan_with_nutrition_summary_is_a_meal_2026_11_07():
+    from quintacle_core.nodes.drop_router import looks_like_preset
+
+    plan = (
+        "Lamb dinner plan:\n- 200g roast lamb leg\n- 150g basmati rice\n- 100g greek yogurt\n- 80g spinach\n"
+        "Totals: protein 62 g, 780 kcal, fat 24 g, selenium 54 mcg"
+    )
+    assert looks_like_preset(plan) == "meal_composition"
+    assert looks_like_preset("Nutrition Facts Serving size 150g Calories 90 Protein 15g Fat 0.5g Carbs 5g") == "ingredient_preset"
