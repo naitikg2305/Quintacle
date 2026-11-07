@@ -36,7 +36,7 @@ from pathlib import Path
 import frontmatter
 
 from . import photo_organizer
-from .drop import extract_photo_date, extract_photo_datetime, extract_photo_location
+from .drop import clean_location, extract_photo_date, extract_photo_datetime, extract_photo_location, valid_coords
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +165,8 @@ def cached_geocode(lat: float, lon: float, cache_path: Path | None, *, allow_clo
     when allow_cloud) the photo_organizer.geocode model call, whose result is
     cached. None on a miss with cloud disallowed, or on ANY geocode error
     (logged, never raised — a save must not fail over geocoding)."""
+    if not valid_coords(lat, lon):  # NaN/0,0 never reaches the cache or the model (2026-11-07)
+        return None
     key = _cache_key(lat, lon)
     cache = _load_cache(cache_path)
     if key in cache:
@@ -211,7 +213,8 @@ def compose_place_line(place: dict | None, location: dict | None, taken: datetim
             parts.append(", ".join(names))
         if place.get("continent"):
             parts.append(place["continent"])
-    if location and location.get("lat") is not None and location.get("lon") is not None:
+    location = clean_location(location)
+    if location:
         parts.append(f"{float(location['lat']):.4f}, {float(location['lon']):.4f}")
     if isinstance(taken, datetime):
         parts.append(f"taken {taken.strftime('%Y-%m-%d %H:%M')}")
@@ -269,13 +272,13 @@ def resolve_photo_place(
             continue
         try:
             if location is None:
-                location = extract_photo_location(data)
+                location = clean_location(extract_photo_location(data))
             if taken is None:
                 taken = extract_photo_datetime(data) or extract_photo_date(data)
         except Exception:
             continue
-    if location is None and isinstance(fallback_location, dict) and "lat" in fallback_location and "lon" in fallback_location:
-        location = {"lat": fallback_location["lat"], "lon": fallback_location["lon"]}
+    if location is None:
+        location = clean_location(fallback_location)  # a stored NaN location is no location
     place = None
     if location is not None:
         try:

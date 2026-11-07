@@ -35,6 +35,9 @@ def describe_images_llamacpp(photos: list[tuple[bytes, str]], question: str | No
     model = os.environ.get("QUINTACLE_VISION_MODEL")
 
     from ..nodes.vision import vision_prompt
+    from . import VLM_SEED, prepare_images
+
+    photos = prepare_images(photos)  # 2026-11-07: same downscale as the Ollama path
 
     content: list[dict] = [
         # OpenAI-style content parts: images as data URLs, mime kept honest.
@@ -46,6 +49,8 @@ def describe_images_llamacpp(photos: list[tuple[bytes, str]], question: str | No
     payload: dict = {
         "messages": [{"role": "user", "content": content}],
         "stream": False,
+        "temperature": 0,  # 2026-11-07: routing answers must repeat
+        "seed": VLM_SEED,
     }
     if model:
         payload["model"] = model

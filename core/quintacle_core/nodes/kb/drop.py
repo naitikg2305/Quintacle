@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import math
 import os
 import tempfile
 import zipfile
@@ -161,7 +162,97 @@ def _describe_image(photos: list[tuple[bytes, str]]) -> str:
     return describe_images(photos)
 
 
+# 2026-11-07: a PDF with at least this many letters/digits in its text layer
+# is READ locally (like a .txt) — fewer means a scan / image-only PDF.
+_PDF_MIN_TEXT_CHARS = 40
+_PDF_OCR_MAX_PAGES = 10
+
+
+def _extract_pdf_text(data: bytes) -> str:
+    """The PDF's own text layer via pypdf (pure python, Termux-safe; lazy so
+    a phone install that hasn't picked it up yet degrades to "no text").
+    Pages joined with blank lines; "" on any failure."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        logger.warning("pypdf not installed — PDF text can't be read locally (pip install -r core/requirements.txt)")
+        return ""
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        if reader.is_encrypted:
+            try:
+                reader.decrypt("")
+            except Exception:
+                return ""
+        pages = []
+        for page in reader.pages:
+            try:
+                pages.append((page.extract_text() or "").strip())
+            except Exception as exc:  # one bad page must not lose the rest
+                logger.debug("pdf page text extraction failed: %s", exc)
+        return "\n\n".join(p for p in pages if p)
+    except Exception as exc:
+        logger.warning("pdf text extraction failed: %s", exc)
+        return ""
+
+
+def _ocr_pdf_images(data: bytes) -> str:
+    """A scanned PDF is usually one embedded JPEG per page — pypdf hands
+    those out without any rasterizer, so local OCR can read them. "" when
+    pypdf/OCR is unavailable or nothing reads."""
+    try:
+        from pypdf import PdfReader
+
+        from ...perception.ocr import ocr_image
+    except ImportError:
+        return ""
+    texts: list[str] = []
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        for page in list(reader.pages)[:_PDF_OCR_MAX_PAGES]:
+            for img in page.images:
+                try:
+                    r = ocr_image(img.data)
+                except Exception:
+                    r = None
+                if r is None:
+                    if not texts:
+                        return ""  # no OCR backend at all — don't walk every image
+                    continue
+                if r.text.strip():
+                    texts.append(r.text.strip())
+    except Exception as exc:
+        logger.warning("pdf image OCR failed: %s", exc)
+    return "\n\n".join(texts)
+
+
+def _meaningful(text: str) -> int:
+    return sum(ch.isalnum() for ch in text)
+
+
 def _describe_pdf(data: bytes) -> str:
+    """2026-11-07 — local first. Text layer (pypdf) → handed to the sorter
+    as-is, capped like _read_text; a scan → local OCR of its page images;
+    only then the cloud summary, and only as the image policy allows
+    (local mode raises "couldn't read this PDF locally — Redo with cloud?",
+    auto falls back, cloud / Redo-with-cloud goes straight there)."""
+    from ...perception import image_policy
+
+    if image_policy.image_provider() != "cloud":
+        text = _extract_pdf_text(data)
+        if _meaningful(text) >= _PDF_MIN_TEXT_CHARS:
+            return _cap_text(text, len(data))
+
+    def local():
+        ocr_text = _ocr_pdf_images(data)
+        if _meaningful(ocr_text) >= _PDF_MIN_TEXT_CHARS:
+            return _cap_text(ocr_text, len(data)), "ocr+parser"
+        raise image_policy.LocalImageUnavailable("no text layer and local OCR read nothing", what="PDF")
+
+    return image_policy.run_image_task(local, lambda: _describe_pdf_cloud(data), what="PDF")
+
+
+def _describe_pdf_cloud(data: bytes) -> str:
     client = cloud_client()
     response = client.messages.create(
         model=DEFAULT_MODEL,
@@ -354,6 +445,35 @@ def _dms_to_decimal(dms, ref: str) -> float:
     return -value if ref in ("S", "W") else value
 
 
+def valid_coords(lat, lon) -> bool:
+    """True only for real coordinates: finite numbers in range and not the
+    0,0 "null island" a blank GPS block decodes to. 2026-11-07: Samsung
+    photos taken with location off carry an EMPTY GPSInfo block whose
+    rationals are 0/0 — Pillow reads those as NaN, so every one of them
+    used to come out as {lat: NaN, lon: NaN} and trigger a cloud geocode."""
+    try:
+        lat, lon = float(lat), float(lon)
+    except (TypeError, ValueError):
+        return False
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return False
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return False
+    return not (lat == 0 and lon == 0)
+
+
+def clean_location(location) -> dict | None:
+    """{lat, lon} when `location` holds valid coordinates, else None — the
+    guard every consumer (photo place line, place graph, geocode, photo
+    folder) runs before trusting a stored or extracted location."""
+    if not isinstance(location, dict):
+        return None
+    lat, lon = location.get("lat"), location.get("lon")
+    if not valid_coords(lat, lon):
+        return None
+    return {"lat": float(lat), "lon": float(lon)}
+
+
 def extract_photo_location(data: bytes) -> dict | None:
     """Deterministic — reads the photo's embedded GPS coordinates (EXIF
     GPSInfo), no AI. Groundwork for eventually answering "what was I doing
@@ -367,6 +487,8 @@ def extract_photo_location(data: bytes) -> dict | None:
             return None
         lat = _dms_to_decimal(gps[2], gps.get(1, "N"))  # GPSLatitude, GPSLatitudeRef
         lon = _dms_to_decimal(gps[4], gps.get(3, "E"))  # GPSLongitude, GPSLongitudeRef
+        if not valid_coords(lat, lon):  # empty GPS block -> NaN / 0,0 (2026-11-07)
+            return None
         return {"lat": round(lat, 6), "lon": round(lon, 6)}
     except Exception:
         return None
@@ -384,9 +506,12 @@ _TEXT_CAP = 20_000
 
 
 def _read_text(data: bytes) -> str:
-    text = data.decode("utf-8", errors="replace").strip()
+    return _cap_text(data.decode("utf-8", errors="replace").strip(), len(data))
+
+
+def _cap_text(text: str, total_bytes: int) -> str:
     if len(text) > _TEXT_CAP:
-        text = text[:_TEXT_CAP] + f"\n\n[…truncated — {len(data):,} bytes total]"
+        text = text[:_TEXT_CAP] + f"\n\n[…truncated — {total_bytes:,} bytes total]"
     return text
 
 

@@ -18,7 +18,13 @@ class GeocodedLocation(BaseModel):
 def geocode(lat: float, lon: float) -> GeocodedLocation:
     """Reverse-geocode via Claude's own geographic knowledge — no external
     geocoding API or key. Good enough for sorting personal photos into
-    country/state/city folders; not a precision mapping product."""
+    country/state/city folders; not a precision mapping product.
+    2026-11-07: refuses NaN / out-of-range / 0,0 coordinates outright
+    (ValueError) instead of spending a cloud call on them."""
+    from .drop import valid_coords
+
+    if not valid_coords(lat, lon):
+        raise ValueError(f"not real coordinates: {lat}, {lon}")
     client = cloud_client()
     response = client.messages.parse(
         model=DEFAULT_MODEL,
@@ -56,6 +62,9 @@ def compute_photo_folder(
     base = f"Media/Photos/{photo_date.year}/{photo_date.strftime('%B')}"
     if trip_name:
         return f"{base}/{trip_name}"
+    from .drop import clean_location
+
+    location = clean_location(location)  # 2026-11-07: NaN/0,0 = no location
     if location:
         geo = geocode(location["lat"], location["lon"])
         home = {c.strip().lower() for c in (home_countries or [])}

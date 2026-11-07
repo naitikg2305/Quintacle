@@ -54,6 +54,69 @@ and `test_place_graph_merge.py`). Docs: dated notes in `reference/finance.md`,
 `reference/nutrition.md`, `reference/graph-engine.md` and
 `sprint-1-testing-fixes.md`.
 
+## 2026-11-07 — Real-file fixes: local vision, empty GPS, local PDFs, deterministic local answers (worktree agent)
+
+The golden check on the owner's real phone photos and PDFs found four bugs.
+This session fixed them. The label and receipt parsers and the place graph
+were left alone; a parallel agent owns those.
+
+- **The local VLM never answered a real photo.**
+  - First cause: qwen2.5vl:3b overflowed Ollama's 4096 context.
+    `local_vlm.prepare_image` now runs before both backends: EXIF transpose,
+    long side capped at 1024 px, JPEG q85. The Ollama call also sends
+    `num_ctx: 8192`.
+  - Second cause, found once the context was fixed: on this RTX 5070 Ti
+    (Ollama 0.34.2), fully GPU-offloaded qwen2.5vl answers every image
+    prompt with `????` or aborts with "token repeat limit reached". Text
+    prompts are fine. `num_gpu=36` (= block_count: output layer off the GPU)
+    or `0` both work.
+  - The client now detects garbled output, retries once with `num_gpu` from
+    `/api/show`, and remembers it. `QUINTACLE_VISION_NUM_GPU` pins it.
+- **An empty GPS block gave NaN coordinates.** `drop.valid_coords` and
+  `clean_location` were added. `extract_photo_location` returns None for
+  these. The photo place line, `cached_geocode`, `geocode`,
+  `compute_photo_folder` and the 🗂 line all reject NaN, inf and 0,0.
+- **PDFs are local.** `_describe_pdf` now tries, in order:
+  1. The `pypdf` text layer. pypdf is a new line in `core/requirements.txt`
+     and is lazy-imported.
+  2. Local OCR of the page images, for scans.
+  3. The cloud summary, only under the image policy. In local mode the user
+     gets "couldn't read this PDF locally — Redo with cloud?".
+- **Determinism.** These calls now send `temperature: 0` and `seed: 42`:
+  - `llm_dispatch._parse_local`, which also serves the USDA candidate pick.
+  - Both local VLM backends.
+
+  Chat is unchanged.
+
+Golden check, `Food recipe/*` + `Travel itinerary/*` (57 files), compare
+only, not re-recorded:
+
+| Result | Baseline | After |
+|---|---|---|
+| needs cloud: geocode | 39 | 0 |
+| yolo (tags only) | 7 | 0 |
+| unreadable locally (`local_unavailable`) | 4 | 0 |
+| needs cloud: PDF describe | 3 | 0 (all 3 read locally) |
+| yolo+local-vlm | 0 | 49 |
+| ocr+parser / ocr+local-llm | 1 / 1 | 1 / 2 |
+| text/local (.md) | 2 | 2 (unchanged) |
+
+What the after-run showed:
+- Food photos now get real names: "Red onion" (USDA 790577), "Carrot",
+  "Red bell pepper", "tomato". The old YOLO guesses were "orange" → Orange
+  peel, "banana", "cake".
+- Many bell-pepper shots are `estimated`, not USDA-matched. The pick
+  declines the generic "bell pepper".
+- The flight-ticket PDF got doc_type "lease", which is model wording.
+
+**Run time:** about 50–80 s per photo. qwen3:8b (7.5 GB) and qwen2.5vl
+don't both fit in 12 GB of VRAM, so Ollama runs the VLM on CPU when both are
+loaded. Alone on the GPU it takes about 1 s warm.
+
+Tests: `core/tests/test_real_file_fixes.py` (28 tests). Suite: `1119 passed`
+with pypdf installed; `1116 passed, 3 skipped` without it.
+**Owner action:** `core/.venv/bin/pip install -r core/requirements.txt` (pypdf).
+
 ## 2026-11-07 — Tests from the owner's hands-on testing + golden check on his real files (worktree agent)
 
 The owner: "what if you add tests according to what I tested. you have the master testing doc?"

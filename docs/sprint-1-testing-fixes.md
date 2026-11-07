@@ -149,6 +149,22 @@ synthetic tests (`core/tests/test_real_world_ocr_fixes.py`,
   phone photos, EXIF GPS NaN → cloud geocode, PDF drops cloud-only, local
   text-parse temperature.
 
+## Fixes from the golden check on real files (2026-11-07)
+
+- **Local vision failed on every real photo** (context overflow, then
+  `????` output on this GPU). Images are now downscaled to 1024 px and
+  EXIF-oriented, `num_ctx` is 8192, and a garbled answer is retried with
+  the output layer off the GPU. See `reference/perception-and-autojournal.md`.
+- **Empty GPS → NaN coordinates → cloud geocode.** An empty GPS block now
+  means no location, and every consumer rejects NaN or 0,0.
+- **PDFs were cloud-only.** The text layer is now read locally, a scan is
+  OCR'd locally, and cloud is used only under the image policy.
+  **Install `pypdf` (new line in `core/requirements.txt`):**
+  `core/.venv/bin/pip install -r core/requirements.txt`. Without it, PDFs
+  fall back to "Redo with cloud?".
+- **Local answers varied run to run.** Local structured parsing, the USDA
+  pick and local vision now use `temperature: 0` with a fixed seed.
+
 ## Open (carry to sprint 2)
 
 - Trip ↔ photos link (photos taken during a plan's dates/destinations attach to it).

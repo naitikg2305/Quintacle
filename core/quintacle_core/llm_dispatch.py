@@ -63,6 +63,7 @@ LOCAL_PARSE_MODEL_ENV = "QUINTACLE_LOCAL_PARSE_MODEL"
 DEFAULT_LOCAL_PARSE_MODEL = "qwen3:8b"
 
 VALID_PROVIDERS = ("local", "cloud", "auto")
+PARSE_SEED = 42
 
 
 class LocalParseError(OllamaError):
@@ -163,7 +164,10 @@ def _parse_local(system: str, user_content, output_format: type[BaseModel], max_
         # truncates. num_predict mirrors the cloud call's max_tokens cap; a
         # truncated JSON tail fails validation below and (in auto) falls
         # back to cloud rather than committing a half-parsed result.
-        "options": {"num_ctx": 16384, "num_predict": max_tokens},
+        # 2026-11-07: temperature 0 + a fixed seed — structured parsing (and
+        # the USDA candidate pick, which routes through here) must give the
+        # same answer for the same input; chat generation is untouched.
+        "options": {"num_ctx": 16384, "num_predict": max_tokens, "temperature": 0, "seed": PARSE_SEED},
         # Schema-constrained extraction doesn't want a thinking preamble —
         # verified live that Ollama accepts this for both thinking (qwen3)
         # and plain (qwen2.5) models.

@@ -31,7 +31,65 @@ QUINTACLE_VISION dispatch in nodes/kb/drop.py stays backend-agnostic.
 
 from __future__ import annotations
 
+import io
+import logging
 import os
+
+logger = logging.getLogger(__name__)
+
+# 2026-11-07: real phone photos (12 MP+) blew qwen2.5vl:3b's default 4096
+# context ("request (~4110 tokens) exceeds the available context size") —
+# Qwen2.5-VL spends one token per 28x28 patch, so the image is downscaled
+# here before ANY backend sees it, and the Ollama call raises num_ctx.
+# 1024 px on the long side keeps labels/receipts legible (~1300 image
+# tokens) while leaving room for the prompt and the answer.
+MAX_SIDE_ENV = "QUINTACLE_VISION_MAX_SIDE"
+DEFAULT_MAX_SIDE = 1024
+JPEG_QUALITY = 85
+# Routing/classification wants the same answer twice for the same photo:
+# greedy decoding + a fixed seed (both backends honor these).
+VLM_SEED = 42
+
+
+def max_side() -> int:
+    try:
+        return max(64, int(os.environ.get(MAX_SIDE_ENV, "") or DEFAULT_MAX_SIDE))
+    except ValueError:
+        return DEFAULT_MAX_SIDE
+
+
+def prepare_image(data: bytes, mime: str = "image/jpeg", *, limit: int | None = None) -> tuple[bytes, str]:
+    """One photo made VLM-sized: EXIF orientation applied (a sideways phone
+    shot reads upright — the pixels are rotated, the tag dropped), long side
+    capped at `limit` (default QUINTACLE_VISION_MAX_SIDE / 1024), re-encoded
+    as JPEG q85 (alpha flattened onto white). Bytes that Pillow can't open
+    pass through untouched — the backend then fails/answers as before."""
+    from PIL import Image, ImageOps
+
+    limit = limit or max_side()
+    try:
+        img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img)
+        img.load()
+    except Exception as exc:  # not an image Pillow knows — leave it to the backend
+        logger.debug("local VLM: couldn't preprocess image (%s); sending as-is", exc)
+        return data, mime
+    if max(img.size) > limit:
+        img.thumbnail((limit, limit), Image.Resampling.LANCZOS)
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        bg = Image.new("RGB", rgba.size, (255, 255, 255))
+        bg.paste(rgba, mask=rgba.getchannel("A"))
+        img = bg
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=JPEG_QUALITY)
+    return out.getvalue(), "image/jpeg"
+
+
+def prepare_images(photos: list[tuple[bytes, str]]) -> list[tuple[bytes, str]]:
+    return [prepare_image(data, mime) for data, mime in photos]
 
 
 def describe_images_local(photos: list[tuple[bytes, str]], question: str | None = None) -> str | None:
@@ -55,4 +113,4 @@ def describe_images_local(photos: list[tuple[bytes, str]], question: str | None 
     return describe_images_ollama(photos, question)
 
 
-__all__ = ["describe_images_local"]
+__all__ = ["DEFAULT_MAX_SIDE", "VLM_SEED", "describe_images_local", "prepare_image", "prepare_images"]

@@ -304,6 +304,44 @@ the taken or created date, used for the journal link.
   removes a stale edge does not restore it on undo.
 - `POST /kb/files/backfill-meta` (dry run by default) covers older notes.
 
+### 2026-11-07 — PDFs read locally; empty GPS is no location
+
+- **PDF text is local now.** `_describe_pdf` used to be cloud-only (a native
+  Claude document read; the "PDF → native Claude document read" line in
+  Step 2 is the history). It now tries three readers in order:
+  1. The PDF's text layer, via `pypdf`. This is pure Python and in
+     `core/requirements.txt`, so it is Termux-safe; it is lazy-imported, and
+     a missing install degrades to "no text". At 40 or more letters/digits,
+     the text goes to the sorter as-is, capped like `_read_text` (20k chars).
+  2. A scan: the embedded page images (pypdf hands them out with no
+     rasterizer) go through local OCR, up to 10 pages. Pipeline:
+     `ocr+parser`.
+  3. Neither worked: the image policy decides. `local` (the default) raises
+     "couldn't read this PDF locally … — Redo with cloud?". `auto` falls back
+     to the old cloud summary (`_describe_pdf_cloud`). `cloud` (Redo with
+     cloud) goes straight there and skips the local read, so a redo is a
+     step back to the original file.
+
+  The 🗂 file-meta line is unchanged. It reads the PDF's metadata itself
+  (`file_meta.py`). PDF *statements* (`/drop` statement prefix →
+  `finance/llm.py`) still take the cloud document lane.
+- **Empty GPS block → no location.** Samsung photos taken with location off
+  carry a GPSInfo IFD of 0/0 rationals. Pillow reads them as NaN, so
+  `extract_photo_location` returned `{lat: NaN, lon: NaN}`, and every such
+  photo triggered a cloud `geocode(nan, nan)` and a bogus 📍 line. New
+  `drop.valid_coords` / `drop.clean_location` reject NaN, inf, out-of-range
+  and 0,0. `extract_photo_location` returns None for these. The consumers
+  guard too:
+  - `photo_place.resolve_photo_place`, including a stored NaN fallback
+    location.
+  - `cached_geocode`.
+  - `compose_place_line`.
+  - `photo_organizer.geocode`, which raises before any cloud call, and
+    `compute_photo_folder`.
+  - The 🗂 line's location part.
+
+  The place graph only sees place dicts produced after these guards.
+
 ## The Drop page's "Still going" session
 
 Pure orchestration of existing endpoints, no backend feature
