@@ -3,6 +3,58 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-07 — Tests from the owner's hands-on testing + golden check on his real files (worktree agent)
+
+The owner: "what if you add tests according to what I tested. you have the master testing doc?"
+
+**Repo: `core/tests/test_owner_scenarios.py`** (11 tests, about 3.5 s). Each test replays one journey from the Master file or `docs/sprint-1-testing-fixes.md` end to end through the real app.
+
+- Inputs are synthetic (a hand-built PDF, PIL-drawn label and receipt images, a short `.md`). None of his files are in the repo.
+- Local models are stubbed at `llm_dispatch._parse_local`, and `_parse_cloud` raises.
+- Covered:
+  - Itinerary PDF → `Fun/Travel/Planned/<Region>` and Travel › Planned.
+  - Move to Planned.
+  - MCP push: ledger and undo.
+  - `.md` chat answer: read at drop; images attached and loadable.
+  - `.txt` read at drop.
+  - Label photo: OCR+parser, USDA profile backtrack and backfill.
+  - Receipt fields.
+  - Trip photo: 📍 line, place graph, `during_trip`.
+  - Chat autosave and the day bundle.
+  - Private itinerary hidden from MCP.
+  - Goal period normalization.
+- Behaviours already covered elsewhere are referenced in the module docstring rather than duplicated.
+
+**Outside the repo: a golden check in the testing folder** (`.tools/golden_run.py`, documented in that folder's README).
+
+- It re-drops all 58 real inputs as proposals on a temp data dir. Only `usda.db` is copied from `~/.quintacle`.
+- It uses the app's real local-first defaults, and cloud is blocked.
+- It compares against `.tools/golden/*.json`. Structural fields are strict; model wording is loose.
+
+Baseline (58 files, about 15 min with Ollama up):
+
+| Result | Files |
+|---|---|
+| needs cloud: geocode | 39 |
+| yolo | 7 |
+| unreadable locally | 4 |
+| needs cloud: PDF describe | 3 |
+| ocr+parser | 2 |
+| text/local | 2 |
+| ocr+local-llm | 1 |
+
+Findings from the real-file run (not fixed here):
+
+- **The local VLM fails on every real phone photo.** qwen2.5vl:3b returns "request (~4110 tokens) exceeds the available context size (4096)". The image isn't downscaled, or num_ctx isn't raised. Food photos therefore drop to YOLO-only guesses ("orange" → USDA "Orange peel, raw") or come back "unreadable locally".
+- **An empty EXIF GPS block reads as `{lat: NaN, lon: NaN}`, not `None`.** This happens on every one of his Samsung photos with location off. `extract_photo_location` returns NaN, so each photo that sorts as a kb_entry calls `geocode(nan, nan)`. That is a cloud call, and a bogus 📍 line on save.
+- **Receipt total is wrong.** On a multi-column Toast receipt, the parser read the total as $19.00; the real total is $510.13. Merchant and date are right.
+- **A chicken-burger label was matched to "Onions, raw".** The parser lacked a core field, so the local LLM read the label and named it "Onion". The USDA match (and so the backfilled micros) is wrong. kcal also came back 169, not the printed 170.
+- **A label with no product name gets an OCR-noise name** ("ada ice. If you'te"). The numbers and the Greek-yogurt profile match are right.
+- **PDF drops are cloud-only** (`_describe_pdf`), so an itinerary PDF can't be sorted local-first.
+- Local text-parse calls set no temperature, so model fields can vary between runs. The golden check shows them as wording only.
+
+Verified: pytest `1091 passed`.
+
 ## 2026-11-06 — Local-first images: OCR + YOLO, cloud only on request (worktree agent)
 
 The owner: "it should always have been local. I was thinking more YOLO

@@ -109,6 +109,24 @@ sprints get their own section below; never rewrite a past sprint's entries.
   (or tesseract + its English data) on the desktop; phone:
   `setup-perception.sh --ocr`. See `reference/perception-and-autojournal.md`.
 
+## Testing — regression checks from the owner's testing (2026-11-07)
+
+Owner: "what if you add tests according to what I tested". There are now two layers:
+
+- **`core/tests/test_owner_scenarios.py`** replays each journey he verified by hand as one end-to-end test through the real app. It uses synthetic stand-ins: a hand-built PDF, PIL-drawn label and receipt images, and a short markdown chat answer. Local models are stubbed at `llm_dispatch` and the cloud raises.
+  - Itinerary PDF drop → travel rule in the sort prompt → `Fun/Travel/Planned/<Region>` → Travel › Planned, with the 🗂 line and the PDF served.
+  - Loose itinerary → Move to Planned (the PDF moves with it).
+  - MCP create + attach PDF → ledger, 🗂 line, place edge, two-step undo.
+  - Chat answer `.md` drop is read, then saved with web and own images, and every path loads via `/kb/asset`. A `.txt` drop is read the same way.
+  - Label photo → OCR+parser, exact macros, USDA profile backtrack and USDA backfill.
+  - Receipt photo → merchant, date and total from the parser.
+  - Trip photo → 📍 line, place hierarchy, and a `during_trip` link to the plan.
+  - Chat autosave keeps one transcript per session, and the day bundle shows chats, work log, notes and income.
+  - A private itinerary is invisible to MCP.
+  - A goal saved as "weekly" is normalized.
+  - Already-covered behaviours are referenced in the module docstring, not duplicated.
+- **Golden check on his real files** lives outside the repo, in the testing folder (`.tools/golden_run.py`, how-to in that folder's README). It re-drops every real input on a temp data dir as proposals only and compares the result with the recorded `.tools/golden/*.json`. Structural fields are strict (types, pipeline, folder root, parser/USDA numbers). Model wording is shown but never fails. Cloud is blocked unless `--allow-cloud`.
+
 ## Open (carry to sprint 2)
 
 - Trip ↔ photos link (photos taken during a plan's dates/destinations attach to it).
