@@ -216,6 +216,14 @@ def _calories(lines: list[str]) -> tuple[LabelValue, int] | None:
             m2 = re.match(r"\s*(\d{1,4})(?!\s*%)\b", lines[i + 1])
             if m2:
                 return LabelValue(float(m2.group(1)), "kcal"), i + 1
+    # 2026-11-07: "Calories" and its number on one visual row with panel
+    # words between them ("calories amount per serving % daily value* 170")
+    # — a tilted/two-column photo's row merge. The first bare number after
+    # the word (not a %, not a unit amount) is the calorie count.
+    for i, line in enumerate(lines):
+        m = re.search(r"calories(?!\s*from)([^\d]{0,60}?)(\d{1,4})(?![\d.,])(?!\s*(?:%|g\b|mg|mcg|kj|kcal))", line)
+        if m and not re.search(r"per\s*day|a\s*day|diet", m.group(1)) and not re.search(r"\d\s*$", line[: m.start()]):
+            return LabelValue(float(m.group(2)), "kcal", None, round(CONF_STATED * 0.95, 3)), i
     for i, line in enumerate(lines):
         m = re.search(r"(\d+(?:\.\d+)?)\s*kcal", line)
         if m:
@@ -382,25 +390,37 @@ def to_estimate(parse: LabelParse, suggested_name: str) -> dict:
     return out
 
 
-def overlay_parsed(model_fields: dict, parse: LabelParse) -> dict:
-    """Merge a local-LLM label read with the deterministic parse: every
-    value code READ wins; the model only fills what code couldn't; model
-    values are tagged CONF_LLM."""
-    parsed = to_estimate(parse, model_fields.get("suggested_name", ""))
-    out = {**model_fields, "from_label": True}
+def overlay_parsed(model_fields: dict, parse: LabelParse, name: str = "") -> dict:
+    """Merge a local-LLM label read with the deterministic parse.
+
+    2026-11-07 (chicken-burger label: the model's "Onion" and a derived
+    169 kcal beat the printed 170): precedence per field is
+      1. a value code READ off the label (stated / from %DV) — always wins;
+      2. the model's value — ONLY for a field code did not read;
+      3. code's derived value (kcal from 4/4/9) when the model gave none.
+    The model never names the product: suggested_name is `name` (owner text
+    or the OCR heuristic), else "" for the caller's fallback."""
+    parsed = to_estimate(parse, name)
+    out = {**model_fields, "from_label": True, "suggested_name": name}
     conf = {}
     for key in ("protein_g", "carbs_g", "fat_g", "fiber_g", "kcal"):
-        if parsed["field_confidence"].get(key, 0) > 0:
+        if parse.has(key) and parsed["field_confidence"].get(key, 0) > 0:
+            out[key] = parsed[key]
+            conf[key] = parsed["field_confidence"][key]
+        elif float(model_fields.get(key) or 0) > 0:
+            conf[key] = CONF_LLM
+        elif parsed["field_confidence"].get(key, 0) > 0:  # derived in code
             out[key] = parsed[key]
             conf[key] = parsed["field_confidence"][key]
         else:
+            out[key] = float(model_fields.get(key) or 0)
             conf[key] = CONF_LLM
     by_name = {m["nutrient"]: m for m in (model_fields.get("micros") or [])}
     for m in parsed["micros"]:
         by_name[m["nutrient"]] = m
     out["micros"] = list(by_name.values())
-    for name in by_name:
-        conf[name] = parsed["field_confidence"].get(name, CONF_LLM)
+    for nutrient in by_name:
+        conf[nutrient] = parsed["field_confidence"].get(nutrient, CONF_LLM)
     if parse.serving_g:
         out["basis_amount_g"] = parse.serving_g
     elif parse.per_100g:
@@ -420,19 +440,134 @@ _LABEL_WORDS_RE = re.compile(
 )
 
 
-def guess_product_name(lines: list[tuple[str, tuple, float]] | None) -> str:
-    """Product name heuristic over OCR lines (text, box, conf): the tallest
-    line that isn't label-panel vocabulary — usually the brand/product on a
-    front-of-package shot. '' when nothing qualifies."""
+# 2026-11-07: package boilerplate that is never the product's name.
+_BOILERPLATE_RE = re.compile(
+    r"(?i)(?:\b(?:ingredients?|distribut\w*|manufactured|packed|llc|inc|corp|www|https?|certified|usda|gluten|gmo|"
+    r"kosher|halal|antibiotics?|hormones?|nitrites?|nitrates?|refrigerat\w*|consumers?|statement|please|allergens?|"
+    r"product\s+of|made\s+in|net\s*wt|best\s+by|use\s+by|sell\s+by|recycl\w*|questions|comments|call|visit|"
+    r"raised|naturally|occurring|except|guarantee\w*|satisfaction|warning|keep|lot|exp)\b|\.com\b|^\s*no\s)"
+)
+# Words that never stand alone as a name.
+_GENERIC_WORDS = {
+    "organic", "natural", "real", "food", "foods", "new", "fresh", "original", "classic", "gf", "vegan", "simple", "pure",
+    "premium", "select", "family", "size", "value", "pack", "free", "added",
+}
+_SENTENCE_WORDS = {
+    "if", "you", "your", "we", "our", "us", "is", "are", "was", "be", "it", "its", "this", "that", "please", "may",
+    "can", "will", "should", "when", "how", "tells", "used", "contributes",
+}
+_EDGE_STOP = {"with", "and", "or", "of", "the", "by", "from", "for", "in", "on", "a", "an", "to", "at"}
+_VOWEL_RE = re.compile(r"[aeiouy]", re.IGNORECASE)
+# Two-consonant word starts English (and brand names) actually use; an OCR
+# garble like "lnecls" / "Sgars" starts with one that never occurs.
+_ONSETS = {
+    "bl", "br", "ch", "cl", "cr", "dr", "dw", "fl", "fr", "gh", "gl", "gn", "gr", "kh", "kl", "kn", "kr", "ph", "pl", "pr",
+    "ps", "qu", "rh", "sc", "sh", "sk", "sl", "sm", "sn", "sp", "sq", "st", "sw", "th", "tr", "ts", "tw", "wh", "wr", "zh",
+}
+MIN_NAME_CONF = 0.8
+
+
+def _name_quality_ok(text: str) -> bool:
+    """A product-name-shaped line: mostly letters, dictionary-like words, no
+    sentence fragments / garble / boilerplate. Code-only heuristic."""
+    clean = text.strip()
+    if _LABEL_WORDS_RE.search(clean) or _BOILERPLATE_RE.search(clean):
+        return False
+    if re.search(r"[*@#=_<>{}\[\]|\\/]", clean):
+        return False
+    if re.search(r"[.!?;:]\s+\S", clean) or re.search(r"[.,;:]$", clean) or clean.count(",") >= 2:
+        return False  # sentence or ingredient-list fragment
+    nonspace = re.sub(r"\s", "", clean)
+    letters = re.findall(r"[A-Za-z]", clean)
+    if len(letters) < 3 or len(letters) < 0.8 * len(nonspace):
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z'’&-]*", clean)
+    if not words or len(words) > 6:
+        return False
+    low = [w.lower().strip("-") for w in words]
+    # apostrophe garble ("you'te") — only a possessive "'s" is name-like (Joe's)
+    if any(("'" in w or "’" in w) and not re.fullmatch(r"[a-z]+['’]s", w) for w in low):
+        return False
+    if any(w in _SENTENCE_WORDS for w in low) or low[-1] in _EDGE_STOP or low[0] in _EDGE_STOP - {"a", "the"}:
+        return False
+    if len(low) == 1 and (low[0] in _GENERIC_WORDS or len(low[0]) < 4):
+        return False
+    if all(w in _GENERIC_WORDS for w in low):
+        return False
+    # dictionary-like: words carry vowels, no long consonant runs, no stray single letters
+    wordish = [w for w in low if len(w) >= 2 and _VOWEL_RE.search(w) and not re.search(r"[b-df-hj-np-tv-xz]{5,}", w)]
+    if len(wordish) < 0.8 * len(low) or any(len(w) == 1 and w not in ("a", "&") for w in low):
+        return False
+    for w in low:
+        head = re.match(r"[a-z]{2}", w)
+        if len(w) >= 4 and head and not _VOWEL_RE.search(head.group()) and head.group() not in _ONSETS:
+            return False
+    return True
+
+
+def guess_product_name(lines: list[tuple] | None) -> str:
+    """Product name heuristic over OCR lines/fragments (text, box, conf[,
+    angle, clipped]): the tallest line that looks like a name — usually the
+    brand/product on a front-of-package shot. '' when nothing qualifies
+    (the caller then names it from the USDA match, or "Labeled food").
+
+    2026-11-07 tightened after "ada ice. If you'te" (Greek yogurt) and a
+    cut-off, tilted "Onion" (chicken burger) won as names: rejected are
+    lines read below MIN_NAME_CONF, text cut off by the photo frame, text
+    tilted far off the page's angle, lines no taller than the panel's own
+    text, sentence fragments, apostrophe garble, non-word strings and
+    package boilerplate (distributor, certifications, claims, URLs)."""
+    items = [ln for ln in (lines or []) if ln and str(ln[0]).strip()]
+    heights = sorted(float(ln[1][3]) for ln in items if ln[1])
+    median_h = heights[len(heights) // 2] if heights else 0.0
     best, best_h = "", 0.0
-    for text, box, _conf in lines or []:
-        clean = text.strip()
-        if len(re.findall(r"[A-Za-z]", clean)) < 3 or _LABEL_WORDS_RE.search(clean):
+    for ln in items:
+        text, box, conf = str(ln[0]).strip(), ln[1], float(ln[2])
+        angle = float(ln[3]) if len(ln) > 3 else 0.0
+        clipped = bool(ln[4]) if len(ln) > 4 else False
+        if conf < MIN_NAME_CONF or clipped or abs(angle) > 8:
+            continue
+        if not _name_quality_ok(text):
             continue
         h = float(box[3]) if box else 0.0
+        if len(items) >= 5 and h < 1.15 * median_h:
+            continue  # panel/fine-print sized — a product name is printed bigger
         if h > best_h:
-            best, best_h = clean, h
+            best, best_h = text, h
+    if best.isupper():
+        best = best.title()
     return best[:60]
+
+
+_USDA_QUALIFIERS = {
+    "raw", "cooked", "plain", "nonfat", "lowfat", "whole", "fresh", "frozen", "canned", "dry", "prepared", "unprepared",
+    "regular", "ns", "nfs", "unenriched", "enriched", "boneless", "skinless", "fat", "free", "reduced", "low", "sodium",
+    "unsalted", "salted", "sweetened", "unsweetened", "commercial", "includes", "without", "with", "made", "all",
+}
+
+
+# USDA description heads that are a food GROUP / outlet, not the food.
+_USDA_GROUP_PREFIXES = {
+    "fast foods", "fast food", "restaurant", "babyfood", "babyfoods", "school lunch", "formulated bar", "snacks",
+    "beverages", "kfc", "mcdonald's", "burger king", "wendy's", "subway", "taco bell", "pizza hut", "usda commodity",
+}
+
+
+def name_from_usda_description(description: str) -> str:
+    """'Yogurt, Greek, plain, nonfat' -> 'Greek yogurt'; 'Onions, raw' ->
+    'Onions'; 'Cheese, cheddar' -> 'Cheddar cheese'. The head noun plus one
+    single-word variety qualifier (never a prep/fat-level word). Code-only."""
+    parts = [p.strip() for p in (description or "").split(",") if p.strip()]
+    while len(parts) > 1 and parts[0].lower() in _USDA_GROUP_PREFIXES:
+        parts = parts[1:]  # "Fast Foods, Fried Chicken, ..." → "Fried Chicken"
+    if not parts:
+        return ""
+    head = parts[0]
+    if len(parts) > 1 and len(head.split()) == 1:
+        q = parts[1]
+        if len(q.split()) == 1 and q.isalpha() and q.lower() not in _USDA_QUALIFIERS and q.lower() not in head.lower():
+            return f"{q[:1].upper()}{q[1:].lower()} {head.lower()}"
+    return head[:1].upper() + head[1:]
 
 
 __all__ = [
@@ -440,6 +575,7 @@ __all__ = [
     "LabelParse",
     "LabelValue",
     "guess_product_name",
+    "name_from_usda_description",
     "normalize_ocr",
     "overlay_parsed",
     "parse_label",

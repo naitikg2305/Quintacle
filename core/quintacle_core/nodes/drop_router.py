@@ -424,11 +424,21 @@ def _extract_receipt_local(photos: list[tuple[bytes, str]], user_description: st
     from ..perception.ocr import ocr_image
     from .finance.receipt_parser import parse_receipt
 
-    texts = [r.text for r in (ocr_image(data) for data, _mime in photos) if r is not None and r.text.strip()]
-    if not texts:
+    readings = [r for r in (ocr_image(data) for data, _mime in photos) if r is not None and r.text.strip()]
+    if not readings:
         raise LocalImageUnavailable("no readable text found by local OCR (or no OCR engine installed)", what="receipt")
-    text = "\n".join(texts)
-    parsed = parse_receipt(text)
+    text = "\n".join(r.text for r in readings)
+    # 2026-11-07: hand the parser the deskewed per-fragment boxes so it pairs
+    # each price with the label on its own visual row (two-column receipts).
+    # Two photos (a long receipt in halves) stack: the second's boxes are
+    # shifted below the first's.
+    fragments: list = []
+    if all(r.fragments for r in readings):
+        offset = 0.0
+        for r in readings:
+            fragments += [(f.text, (f.box[0], f.box[1] + offset, f.box[2], f.box[3]), f.conf) for f in r.fragments]
+            offset = max(f[1][1] + f[1][3] for f in fragments) + 100.0
+    parsed = parse_receipt(text, fragments or None)
     items = ", ".join(f"{i['name']} ({i['price']:.2f})" for i in parsed.items[:8])
     notes = user_description.strip() or (f"Items: {items}" if items else "")
     if parsed.total is not None:

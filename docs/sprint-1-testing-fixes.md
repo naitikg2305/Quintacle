@@ -127,6 +127,28 @@ Owner: "what if you add tests according to what I tested". There are now two lay
   - Already-covered behaviours are referenced in the module docstring, not duplicated.
 - **Golden check on his real files** lives outside the repo, in the testing folder (`.tools/golden_run.py`, how-to in that folder's README). It re-drops every real input on a temp data dir as proposals only and compares the result with the recorded `.tools/golden/*.json`. Structural fields are strict (types, pipeline, folder root, parser/USDA numbers). Model wording is shown but never fails. Cloud is blocked unless `--allow-cloud`.
 
+## Fixed from the golden check on his real files (2026-11-07)
+
+The first golden run on the owner's real inputs found these; fixed with
+synthetic tests (`core/tests/test_real_world_ocr_fixes.py`,
+`core/tests/test_place_graph_merge.py`), none of his files in the repo:
+
+- **Receipt total wrong** (Toast receipt: $19.00 → real $510.13). Tilted
+  photo + two-column layout; OCR now deskews and pairs each price with its
+  label's row; total checked against subtotal + tax + tip in code.
+- **Chicken-burger label named "Onion", 169 kcal.** Calories now read (170);
+  parser values always beat the local LLM, which never names a label; a
+  USDA name match the printed numbers contradict is dropped for a
+  numbers-based match.
+- **Garbled label name** ("ada ice. If you'te"). Name heuristic tightened;
+  no clean name → named from the USDA match ("Greek yogurt").
+- **Place graph**: a plan's/experience's city stuck on an orphan
+  `place:_/_/<city>` node when a Places note exists — now merged into the
+  note on save and by the backfill.
+- Still open from that run (parallel fix): local VLM context overflow on
+  phone photos, EXIF GPS NaN → cloud geocode, PDF drops cloud-only, local
+  text-parse temperature.
+
 ## Open (carry to sprint 2)
 
 - Trip ↔ photos link (photos taken during a plan's dates/destinations attach to it).

@@ -285,6 +285,21 @@ deterministic (no model call) place tree to the edges table:
   level}` (label read back from the retrieval index); the 2D/3D views size
   continent > country > city and only offer "open note" when a node has a
   folder/slug.
+- **2026-11-07 correction — orphan virtual cities.** With a Places/<City>
+  note present, a plan's or experience's city could still sit on an orphan
+  `place:_/_/<city>` node: one saved BEFORE the note emerged was never
+  moved (`_rekey_unknown_city` only handled virtual → virtual), while photos
+  reached the note. Now: (1) Places notes are keyed by the slug of their
+  title AND file name (`_Ctx.real_places`), one rule for photos, plans and
+  experiences; (2) whenever a city resolves to a Places note,
+  `_merge_virtual_into_note` re-points every edge of `place:_/_/<city>` and
+  of a hierarchical `place:<cont>/<country>/<city>` with the same slug onto
+  the note (its `part_of` becomes the note's country link; a virtual city
+  whose country differs from the note's existing country is a different
+  place and is left alone), and removes the virtual node from the index.
+  `POST /kb/graph/backfill-places?dry_run=false` re-links every source, so
+  existing orphans merge; dry run writes nothing. Tests:
+  `core/tests/test_place_graph_merge.py`.
 
 ## Trip ↔ photos (trip_photos.py) — 2026-11-05
 

@@ -31,6 +31,19 @@ Output is ROW-GROUPED: both engines return text fragments (RapidOCR splits
 "Total Fat 8g" and "10%" into two boxes on the same row); group_rows() merges
 fragments whose vertical extents overlap into one line, left-to-right, so the
 parsers see "Total Fat 8g 10%" the way a person reads the panel.
+
+2026-11-07 deskew: a hand-held phone photo is rarely level. On the owner's
+Toast receipt the page sat ~9 degrees off, so the price column (right) ran
+~85 px lower than its labels (left) and the axis-aligned boxes of tilted
+text were twice their real height — row grouping chained the whole receipt
+into a few giant rows and the parser read the total as $19.00 (real
+$510.13). RapidOCR returns each fragment's quadrilateral; its top-edge
+angle and true width/height are kept, the page's dominant angle (median of
+the wide fragments) is undone in code, and rows are grouped by deskewed
+CENTER distance (not union-box overlap, which let one tall/tilted fragment
+glue neighbouring rows together). OcrResult.fragments carries the
+deskewed per-fragment boxes so parsers can pair labels with values
+themselves (receipt_parser does).
 """
 
 from __future__ import annotations
@@ -59,8 +72,10 @@ _TESSERACT_TIMEOUT = 60
 
 class OcrLine(NamedTuple):
     text: str
-    box: tuple[float, float, float, float]  # x, y, w, h in pixels of the (possibly downscaled) image
+    box: tuple[float, float, float, float]  # x, y, w, h — DESKEWED pixels of the (possibly downscaled) image
     conf: float  # 0-1
+    angle: float = 0.0  # this fragment's own text angle (degrees) minus the page's dominant angle
+    clipped: bool = False  # the fragment touches the image border — text cut off by the frame
 
 
 @dataclass
@@ -70,6 +85,9 @@ class OcrResult:
     engine: str  # "rapidocr" | "tesseract"
     image_size: tuple[int, int] = (0, 0)
     extra: dict = field(default_factory=dict)
+    # 2026-11-07: individual (un-merged) fragments, deskewed like `lines`.
+    # Empty for results built by hand (tests) — callers fall back to lines.
+    fragments: list[OcrLine] = field(default_factory=list)
 
     @property
     def word_count(self) -> int:
@@ -120,38 +138,84 @@ class _Frag(NamedTuple):
     x1: float
     y1: float
     conf: float
+    angle: float = 0.0  # degrees, text baseline vs horizontal (image y-down: + = slopes down to the right)
+    tw: float = 0.0  # true (rotated) text width / height from the quad; 0 = use the axis-aligned box
+    th: float = 0.0
+
+
+def _median(values: list[float]) -> float:
+    vals = sorted(values)
+    n = len(vals)
+    return 0.0 if not n else (vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2)
+
+
+def page_angle(frags: list[_Frag]) -> float:
+    """The page's dominant text angle (degrees): median over the WIDE
+    fragments (a 2-letter box's angle is noise); 0 under half a degree."""
+    wide = [f.angle for f in frags if (f.tw or (f.x1 - f.x0)) >= 2.5 * max(f.th or (f.y1 - f.y0), 1.0)]
+    angle = _median(wide if len(wide) >= 3 else [f.angle for f in frags])
+    return angle if abs(angle) >= 0.5 else 0.0
+
+
+def deskew(frags: list[_Frag] | list[tuple], image_size: tuple[int, int] | None = None) -> list[OcrLine]:
+    """Per-fragment boxes in a frame rotated so the page's text runs level.
+    Pure function. Without quad info (tesseract, hand-built tuples) the
+    angle is 0 and the boxes come back unchanged. With `image_size`, a
+    fragment whose ORIGINAL box touches the frame is marked clipped."""
+    import math
+
+    items = [f if isinstance(f, _Frag) else _Frag(*f) for f in frags if str(f[0]).strip()]
+    theta = page_angle(items) if items else 0.0
+    rad = math.radians(theta)
+    cos, sin = math.cos(rad), math.sin(rad)
+    out: list[OcrLine] = []
+    for f in items:
+        cx, cy = (f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2
+        w = f.tw or (f.x1 - f.x0)
+        h = f.th or (f.y1 - f.y0)
+        if theta:
+            cx, cy = cx * cos + cy * sin, -cx * sin + cy * cos
+        clipped = bool(image_size) and (
+            f.x0 <= 2 or f.y0 <= 2 or f.x1 >= image_size[0] - 3 or f.y1 >= image_size[1] - 3
+        )
+        out.append(OcrLine(f.text, (cx - w / 2, cy - h / 2, w, h), round(float(f.conf), 4), round(f.angle - theta, 2), clipped))
+    return out
 
 
 def group_rows(frags: list[_Frag] | list[tuple]) -> list[OcrLine]:
-    """Merge fragments sitting on the same visual row into one line. Two
-    fragments share a row when their vertical overlap is at least half the
-    shorter one's height. Pure function — unit-tested without any engine."""
-    items = [f if isinstance(f, _Frag) else _Frag(*f) for f in frags if str(f[0]).strip()]
-    items.sort(key=lambda f: ((f.y0 + f.y1) / 2, f.x0))
-    rows: list[list[_Frag]] = []
+    """Merge fragments sitting on the same visual row into one line, after
+    deskewing (see deskew()). A fragment joins a row when its center is
+    within half the smaller of (its height, the row's median height) of
+    the row's mean center — center distance, so one tall or tilted box
+    can't chain neighbouring rows together. Pure function — unit-tested
+    without any engine."""
+    items = deskew(frags)
+    items.sort(key=lambda f: (f.box[1] + f.box[3] / 2, f.box[0]))
+    rows: list[list[OcrLine]] = []
     for frag in items:
-        h = max(frag.y1 - frag.y0, 1.0)
-        placed = False
-        for row in reversed(rows[-3:]):  # only recent rows can overlap (sorted by center y)
-            ry0 = min(r.y0 for r in row)
-            ry1 = max(r.y1 for r in row)
-            overlap = min(ry1, frag.y1) - max(ry0, frag.y0)
-            if overlap >= 0.5 * min(h, max(ry1 - ry0, 1.0)):
-                row.append(frag)
-                placed = True
-                break
-        if not placed:
+        h = max(frag.box[3], 1.0)
+        cy = frag.box[1] + h / 2
+        best, best_d = None, None
+        for row in rows[-4:]:  # only recent rows can be near (sorted by center y)
+            rcy = sum(r.box[1] + r.box[3] / 2 for r in row) / len(row)
+            rh = _median([max(r.box[3], 1.0) for r in row])
+            d = abs(cy - rcy)
+            if d <= 0.5 * min(h, rh) and (best_d is None or d < best_d):
+                best, best_d = row, d
+        if best is not None:
+            best.append(frag)
+        else:
             rows.append([frag])
     lines: list[OcrLine] = []
     for row in rows:
-        row.sort(key=lambda f: f.x0)
-        x0 = min(f.x0 for f in row)
-        y0 = min(f.y0 for f in row)
-        x1 = max(f.x1 for f in row)
-        y1 = max(f.y1 for f in row)
+        row.sort(key=lambda f: f.box[0])
+        x0 = min(f.box[0] for f in row)
+        y0 = min(f.box[1] for f in row)
+        x1 = max(f.box[0] + f.box[2] for f in row)
+        y1 = max(f.box[1] + f.box[3] for f in row)
         text = " ".join(f.text.strip() for f in row)
         lines.append(OcrLine(text, (x0, y0, x1 - x0, y1 - y0), round(min(f.conf for f in row), 4)))
-    lines.sort(key=lambda ln: ln.box[1])
+    lines.sort(key=lambda ln: ln.box[1] + ln.box[3] / 2)
     return lines
 
 
@@ -174,6 +238,25 @@ def _get_rapid():
     return _rapid_engine
 
 
+def _quad_frag(box, text, score) -> _Frag:
+    """RapidOCR quad (TL, TR, BR, BL) -> fragment with its axis-aligned
+    extent plus the text's own angle and true width/height."""
+    import math
+
+    pts = [(float(p[0]), float(p[1])) for p in box]
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    if len(pts) == 4:
+        (ax, ay), (bx, by), _c, (dx, dy) = pts
+        angle = math.degrees(math.atan2(by - ay, bx - ax))
+        tw, th = math.hypot(bx - ax, by - ay), math.hypot(dx - ax, dy - ay)
+        if abs(angle) > 45:  # vertical / upside-down text: no usable baseline
+            angle, tw, th = 0.0, 0.0, 0.0
+    else:
+        angle, tw, th = 0.0, 0.0, 0.0
+    return _Frag(str(text), min(xs), min(ys), max(xs), max(ys), float(score), angle, tw, th)
+
+
 def _run_rapidocr(png: bytes) -> list[_Frag]:
     engine = _get_rapid()
     out = engine(png)
@@ -181,15 +264,11 @@ def _run_rapidocr(png: bytes) -> list[_Frag]:
     if hasattr(out, "txts"):  # rapidocr 3.x: RapidOCROutput
         boxes = out.boxes if out.boxes is not None else []
         for box, text, score in zip(boxes, out.txts or (), out.scores or ()):
-            xs = [float(p[0]) for p in box]
-            ys = [float(p[1]) for p in box]
-            frags.append(_Frag(str(text), min(xs), min(ys), max(xs), max(ys), float(score)))
+            frags.append(_quad_frag(box, text, score))
     else:  # rapidocr_onnxruntime 1.x: (result, elapse), result = [[box, text, score], ...] | None
         result = out[0] if isinstance(out, tuple) else out
         for box, text, score in result or []:
-            xs = [float(p[0]) for p in box]
-            ys = [float(p[1]) for p in box]
-            frags.append(_Frag(str(text), min(xs), min(ys), max(xs), max(ys), float(score)))
+            frags.append(_quad_frag(box, text, score))
     return frags
 
 
@@ -278,11 +357,11 @@ def ocr_image(data: bytes) -> OcrResult | None:
         logger.warning("local OCR (%s) failed: %s", backend, str(exc).splitlines()[0] if str(exc) else type(exc).__name__)
         return None
     lines = group_rows(frags)
-    result = OcrResult(lines=lines, text="\n".join(ln.text for ln in lines), engine=backend, image_size=size)
+    result = OcrResult(lines=lines, text="\n".join(ln.text for ln in lines), engine=backend, image_size=size, fragments=deskew(frags, size))
     _CACHE[key] = result
     while len(_CACHE) > _CACHE_SIZE:
         _CACHE.popitem(last=False)
     return result
 
 
-__all__ = ["OCR_BACKEND_ENV", "OcrLine", "OcrResult", "group_rows", "ocr_available", "ocr_backend", "ocr_image", "clear_cache"]
+__all__ = ["OCR_BACKEND_ENV", "OcrLine", "OcrResult", "deskew", "group_rows", "page_angle", "ocr_available", "ocr_backend", "ocr_image", "clear_cache"]

@@ -134,14 +134,19 @@ def _estimate_from_image_local(photos: list[tuple[bytes, str]], user_description
         parse = parse_label(ocr_text, [ln.conf for r in readings for ln in r.lines])
         labelish = classify_text(ocr_text) == "nutrition_label" or sum(parse.has(k) for k in ("kcal", "protein_g", "carbs_g", "fat_g")) >= 2
         if labelish:
-            name = user_name or guess_product_name([ln for r in readings for ln in r.lines])
+            # 2026-11-07: the name comes from the owner's text or the OCR
+            # heuristic over the individual (deskewed) fragments — never the
+            # model. Nothing name-like → "Labeled food"; the USDA profile
+            # match (api._source_ingredient_image) then names it.
+            name = user_name
+            for r in readings:
+                name = name or guess_product_name(r.fragments or r.lines)
+            name = name or "Labeled food"
             if parse.core_complete:
-                return LocalNutritionReading(**to_estimate(parse, name or "Labeled food"), ocr_text=ocr_text[:4000]), "ocr+parser"
+                return LocalNutritionReading(**to_estimate(parse, name), ocr_text=ocr_text[:4000]), "ocr+parser"
             content = f"OCR text of the label:\n{ocr_text}" + (f"\n\nThe owner adds: {user_description.strip()}" if user_description.strip() else "")
             model = parse_structured(_LABEL_TEXT_PROMPT, content, NutritionEstimateFromImage, provider="local", max_tokens=2048).parsed
-            fields = overlay_parsed(model.model_dump(), parse)
-            if name:
-                fields["suggested_name"] = name
+            fields = overlay_parsed(model.model_dump(), parse, name)
             return LocalNutritionReading(**fields, ocr_text=ocr_text[:4000]), "ocr+local-llm"
 
     # A plain food photo: name + weight from the local VLM (YOLO tags as a hint / fallback).

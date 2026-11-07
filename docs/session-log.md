@@ -3,6 +3,57 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-07 — Real-file fixes: receipt total, label names/numbers, place-graph orphans (worktree agent)
+
+Fixes for four findings from the golden run on the owner's real files (entry
+below). The tests are synthetic; none of his files are in the repo.
+
+- **Receipt total** (Toast receipt: $19.00, real $510.13). The photo was tilted
+  about 9°, so the price column drifted below its labels, and the tilted text's
+  axis-aligned boxes chained the rows together.
+  - `perception/ocr.py` now deskews using the fragment quads and groups rows by
+    deskewed center distance. `OcrResult.fragments` carries the per-fragment
+    boxes.
+  - `receipt_parser.parse_receipt(text, fragments)` pairs each price with the
+    nearest label row. Text-only column dumps are zipped back into rows.
+  - Percentages are never amounts, tip and gratuity are read, and suggested-tip
+    tables are skipped.
+  - The total is sanity-checked in code: it must be ≥ subtotal, and
+    subtotal + tax + tip must match.
+- **Chicken-burger label** ("Onion", 169 kcal).
+  - With deskew, "Calories 170" is read, so the parser has all core fields and
+    no model runs.
+  - `overlay_parsed`: values the parser read always win. The LLM only fills
+    fields the parser didn't read, and it never names a label.
+  - A USDA name match is dropped if it contradicts the printed numbers.
+  - Profile-match hints are now whole words. Ingredient-implied groups count,
+    and the placeholder "Labeled food" is no longer used as a hint.
+- **Garbled label name** ("ada ice. If you'te").
+  - `guess_product_name` rejects low OCR confidence, text clipped by the frame,
+    tilted text, panel-sized print, sentence fragments, garble and boilerplate.
+  - With no clean name, the label is named from the USDA match
+    ("Greek yogurt").
+- **Place graph.** Places notes are now matched by slug.
+  `_merge_virtual_into_note` moves orphan `place:_/_/<city>` nodes (and
+  same-country hierarchical ones) onto the Places note when a city resolves to
+  that note. The backfill merges existing orphans.
+
+Golden compare (read-only, `--core` = this worktree; not re-recorded):
+
+| File | Before | After |
+|---|---|---|
+| Receipt `20260920_154949` | amount 19.00 | **510.13** (merchant/date same) |
+| Yogurt `20260908_203808` | name "ada ice. If you'te" | **"Greek yogurt"** (numbers, fdc 330137 same) |
+| Burger `20261001_150959` | `ocr+local-llm`, "Onion", 169 kcal, Onions raw | **`ocr+parser`**, "Chicken", 170 kcal / P19 C3 F9 per 112 g, profile match "Chicken, canned, meat only, with broth" |
+
+The owner should re-record those three files after reviewing:
+`golden_run.py --record --only …`.
+
+Verified: pytest `1118 passed` (+27 new tests in `test_real_world_ocr_fixes.py`
+and `test_place_graph_merge.py`). Docs: dated notes in `reference/finance.md`,
+`reference/nutrition.md`, `reference/graph-engine.md` and
+`sprint-1-testing-fixes.md`.
+
 ## 2026-11-07 — Tests from the owner's hands-on testing + golden check on his real files (worktree agent)
 
 The owner: "what if you add tests according to what I tested. you have the master testing doc?"

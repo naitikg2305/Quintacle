@@ -26,6 +26,13 @@ whose title matches the place name case-insensitively is used INSTEAD of the
 virtual node: the link goes to `note:places/...`, and that note gets the
 part_of edge to its country.
 
+2026-11-07: the match is by slug (title OR file name), and when a city
+resolves to a Places note, any virtual city node with the same slug
+(`place:_/_/<city>` from a plan/experience saved before the note existed,
+or a hierarchical one from an earlier photo) is merged into the note —
+`_merge_virtual_into_note`; the backfill re-links every source, so
+existing orphans merge too.
+
 Display names live in the retrieval index (title of the place node, with a
 one-line summary like "City in Austria, Europe — 3 photos, 1 experience") —
 no registry file; /graph reads the label back from there and falls back to a
@@ -114,7 +121,14 @@ class _Ctx:
                     for n in self.store.notes_index():
                         folder = n["folder"]
                         if folder == _PLACES_FOLDER or folder.startswith(_PLACES_FOLDER + "/"):
-                            self._real.setdefault((n["title"] or "").strip().lower(), f"note:{folder}/{n['slug']}")
+                            note_id = f"note:{folder}/{n['slug']}"
+                            # 2026-11-07: keyed by the SLUG of the title AND of the
+                            # file name — "Vienna", "vienna", "Zürich"/"zurich" and an
+                            # emergent note whose body's first line isn't its name all
+                            # resolve; one rule for photos, plans and experiences.
+                            for key in (place_slug(n["title"] or ""), place_slug(n["slug"] or "")):
+                                if key:
+                                    self._real.setdefault(key, note_id)
                 except Exception:
                     pass
         return self._real
@@ -126,7 +140,7 @@ class _Ctx:
 
 
 def _real_or_virtual(ctx: _Ctx, name: str, virtual_id: str, level: str) -> _Ref:
-    real = ctx.real_places().get(name.strip().lower())
+    real = ctx.real_places().get(place_slug(name))
     if real:
         return _Ref(real, name, level, False)
     return _Ref(virtual_id, name, level, True)
@@ -180,7 +194,7 @@ def resolve_chain(ctx: _Ctx, city: str | None, country: str | None, continent: s
         elif country:
             chain.append(_real_or_virtual(ctx, city, f"place:{cont_slug}/{country_slug}/{cslug}", "city"))
         else:
-            real = ctx.real_places().get(city.lower())
+            real = ctx.real_places().get(cslug)
             known = None if real else _known_city_id(ctx, cslug)
             if real:
                 chain.append(_Ref(real, city, "city", False))
@@ -252,6 +266,54 @@ def _rekey_unknown_city(ctx: _Ctx, city_ref: _Ref) -> None:
         pass
 
 
+def _merge_virtual_into_note(ctx: _Ctx, note_ref: _Ref) -> None:
+    """2026-11-07 place-graph gap: a real Places note is THE city node, but
+    virtual city nodes with the same slug can predate it — `place:_/_/<city>`
+    from an experience / plan saved before the note emerged, or a
+    hierarchical `place:<cont>/<country>/<city>` from an earlier photo.
+    Every edge on such a node is re-pointed to the note (its part_of
+    becomes the note's country link unless the note already has a
+    DIFFERENT country — then that virtual city is another place with the
+    same name and is left alone), and the virtual node leaves the index.
+    Runs on every save that resolves a city to a note, and in the backfill."""
+    if ctx.dry_run or not note_ref.id.startswith("note:"):
+        return
+    slug = place_slug(note_ref.name) or note_ref.id.rsplit("/", 1)[-1]
+    rows = ctx.gs.conn.execute(
+        "SELECT DISTINCT source_id AS id FROM edges WHERE source_id LIKE ? "
+        "UNION SELECT target_id FROM edges WHERE target_id LIKE ?",
+        (f"place:%/{slug}", f"place:%/{slug}"),
+    ).fetchall()
+    note_parent = _parent_of(ctx, note_ref.id)
+    for old in sorted(r["id"] for r in rows):
+        parts = old.partition(":")[2].split("/")
+        if len(parts) != 3 or parts[2] != slug:
+            continue
+        old_parent = _parent_of(ctx, old)
+        if UNKNOWN not in parts[:2] and note_parent and old_parent and old_parent != note_parent:
+            continue  # same city name, different country — not this note's city
+        for row in ctx.gs.conn.execute("SELECT * FROM edges WHERE source_id = ? OR target_id = ?", (old, old)).fetchall():
+            source = note_ref.id if row["source_id"] == old else row["source_id"]
+            target = note_ref.id if row["target_id"] == old else row["target_id"]
+            ctx.gs.remove_edge(row["id"])
+            if source == target:
+                continue
+            if row["kind"] == PART_OF and source == note_ref.id:
+                current = _parent_of(ctx, note_ref.id)
+                if current and current != target:
+                    continue  # the note keeps at most one country parent
+            ctx.gs.create_edge(source, target, row["kind"], row["source_of_edge"])
+            ctx.touched.add(target if source == note_ref.id else source)
+        note_parent = _parent_of(ctx, note_ref.id)
+        ctx.touched.discard(old)
+        try:
+            from .retrieval import safe_remove_node
+
+            safe_remove_node(old)
+        except Exception:
+            pass
+
+
 def _link_chain(ctx: _Ctx, source: str | None, chain: list[_Ref], out: list[dict]) -> str | None:
     """located_in from `source` to the most specific ref, part_of up the rest.
     Returns the target linked to."""
@@ -261,7 +323,10 @@ def _link_chain(ctx: _Ctx, source: str | None, chain: list[_Ref], out: list[dict
         ctx.names.setdefault(ref.id, ref.name)
         ctx.touched.add(ref.id)
     if chain[0].level == "city":
-        _rekey_unknown_city(ctx, chain[0])
+        if chain[0].virtual:
+            _rekey_unknown_city(ctx, chain[0])
+        else:
+            _merge_virtual_into_note(ctx, chain[0])
     for child, parent in zip(chain, chain[1:]):
         if child.level == "city" and not child.virtual:
             # A real Places note keeps at most one country parent.

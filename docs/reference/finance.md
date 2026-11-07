@@ -97,6 +97,35 @@ survives OCR (`T0TAL`). Only when no total is found does the OCR TEXT go to
 the local text model, and code's merchant/date still win. `pipeline:
 "ocr+parser"` / `"ocr+local-llm"`.
 
+**2026-11-07 correction — two-column / tilted receipts.** The owner's real
+Toast POS receipt (Pink Tiger) parsed total **$19.00**; the printed total is
+**$510.13**. Cause: the phone photo sat ~9° off level, so the price column ran
+~85 px lower than its labels, and RapidOCR's axis-aligned boxes of tilted
+text were twice their real height — row grouping chained the receipt into a
+few giant rows, and "Subtotal … $19.00" (the burger's price) became the
+subtotal → total. Fixed in code, no model:
+
+- `perception/ocr.py` keeps each fragment's quad angle + true width/height,
+  undoes the page's dominant angle (`deskew`, `page_angle`), and groups rows
+  by deskewed center distance; `OcrResult.fragments` carries the deskewed
+  per-fragment boxes.
+- `parse_receipt(text, fragments=None)`: with fragments,
+  `rows_from_fragments` pairs every money-only fragment with the ONE label
+  row whose vertical center is nearest (`_extract_receipt_local` passes them;
+  two photos are stacked). Text only: N label lines followed by N amount
+  lines (a column dump) are zipped back (`_zip_columns`).
+- Percentages ("Operations Fee (5.00%)") are never amounts; tip / gratuity /
+  service charge is read (`ReceiptParse.tip`), fees after the subtotal into
+  `fees`; suggested-tip tables ("20%: (Tip $83.48 Total $593.61)") ignored.
+- Total sanity in code: a labelled total must be ≥ subtotal; the candidate
+  equal to subtotal + tax + tip (+ fees) wins (confidence 0.95); a labelled
+  total below that sum keeps confidence 0.6; no usable total → the sum is
+  computed. An item price is never taken as the total.
+
+Golden check after the fix: amount 19.0 → 510.13 (merchant/date unchanged).
+Tests: `core/tests/test_real_world_ocr_fixes.py` (synthetic tilted
+two-column fragments, never the real image).
+
 Statement **photos** (`statement:` prefix + an image) → local OCR + the
 local text model transcribing rows into the same schema (`ocr+local-llm`),
 then the unchanged code validation/dedup. **PDF** statements keep the cloud

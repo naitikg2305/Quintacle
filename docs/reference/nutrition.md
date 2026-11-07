@@ -41,6 +41,49 @@ A nutrition-label photo is no longer sent to a cloud model by default
    hint), USDA match on that name; local text-model estimate only when USDA
    has no match. VLM down but YOLO saw "pizza" → name from the tag (`yolo`).
 
+### 2026-11-07 correction — real-label failures (golden check on the owner's files)
+
+- **Chicken-burger label → "Onion", 169 kcal.** The tilted photo's OCR rows
+  chained ("ed Calories Amount per serving % Daily Value* 170 Peppers …"),
+  so `_calories` missed the printed 170 and core wasn't complete. The local
+  LLM then ran: the name came from a cut-off, tilted "Onion" fragment, the
+  169 was code's own 4/4/9 derivation beating the model's read, and the
+  USDA name match on "Onion" picked "Onions, raw". Fixes:
+  - OCR deskew + center-distance row grouping (`perception/ocr.py`, see
+    finance.md 2026-11-07) — "Calories 170" is one row again; `_calories`
+    also reads "calories <panel words> 170" on one row (never the
+    "2,000 calories" footnote).
+  - `overlay_parsed(model, parse, name)`: a value code READ always wins; the
+    model fills ONLY fields code didn't read; code's derived value only when
+    the model gave none. The model never names a label —
+    `suggested_name` = owner text / the OCR heuristic / "Labeled food".
+  - `api._label_agrees_with_usda`: a NAME match whose per-100 g kcal/macros
+    contradict the printed label (kcal off by > max(50, 40%), a macro by
+    > max(8 g, 50%)) is dropped → profile match on the parsed numbers.
+  - Profile match (`nutrition_db.store.nearest_by_profile`): hint words are
+    distinct whole-word (prefix) hits of 4+ letters minus label/package
+    vocabulary (a substring test let OCR'd "the"/"per" hit "Fish, pike,
+    northern, liver"); when ingredient words imply a group (chicken, milk,
+    egg …) a candidate matching none of them ranks ×2 lower; the placeholder
+    "Labeled food" is no longer a hint ("food" hit every "Fast Foods" row).
+- **Greek-yogurt label named "ada ice. If you'te".** `guess_product_name`
+  now runs over the individual deskewed fragments and rejects: OCR
+  confidence < 0.8, text clipped by the photo frame, text tilted > 8° off
+  the page, lines no taller than the panel's own text, sentence fragments,
+  apostrophe garble (only a possessive "'s" passes), non-word strings
+  (vowel-less words, impossible starts like "ln"/"sg"), single generic
+  words, and package boilerplate (distributor, certifications, claims,
+  URLs). Nothing qualifies → "Labeled food", and `_source_ingredient_image`
+  names it from the profile match's head
+  (`label_parser.name_from_usda_description`: "Yogurt, Greek, plain,
+  nonfat" → "Greek yogurt"; group prefixes like "Fast Foods," skipped).
+- Golden check (read-only) after: yogurt name → "Greek yogurt" (numbers and
+  fdc 330137 unchanged); burger `ocr+local-llm` → `ocr+parser`, kcal 170 /
+  P 19 / C 3 / F 9 per 112 g, name "Chicken", profile match "Chicken,
+  canned, meat only, with broth" (honest limit: USDA SR Legacy has no
+  chicken-burger patty; the ingredient words make it chicken). Tests:
+  `core/tests/test_real_world_ocr_fixes.py`.
+
 ## 2026-11-05 — USDA FoodData Central as the source of truth (offline)
 
 **Why.** The owner studies nutrition closely ("I look deeply into it, like

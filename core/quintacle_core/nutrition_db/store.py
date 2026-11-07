@@ -227,6 +227,17 @@ _PROFILE_KEYS = {  # label field -> (USDA nutrient name, scale per 100 g)
 }
 
 
+# Label-panel / package words that name no food — never a description hint.
+_HINT_STOP = {
+    "nutrition", "facts", "serving", "servings", "size", "amount", "calories", "daily", "value", "values", "total",
+    "includes", "added", "sugars", "sugar", "protein", "sodium", "cholesterol", "carbohydrate", "dietary", "fiber",
+    "vitamin", "calcium", "iron", "potassium", "contains", "ingredients", "organic", "certified", "natural", "food",
+    "foods", "with", "from", "that", "this", "your", "diet", "advice", "general", "used", "tells", "much", "nutrient",
+    "contributes", "except", "those", "naturally", "occurring", "real", "simple", "free", "gluten", "trans",
+    "saturated", "container", "per", "about", "product", "distributed", "where", "comes", "raised", "kitchen",
+}
+
+
 def nearest_by_profile(per100: dict[str, float], hint_words: list[str] | None = None, limit: int = 8) -> list[dict]:
     """USDA foods closest to a per-100 g nutrition profile. Needs at least
     kcal + two macros. `hint_words` (e.g. OCR'd 'milk', 'cultures', a typed
@@ -250,6 +261,7 @@ def nearest_by_profile(per100: dict[str, float], hint_words: list[str] | None = 
                                             "category": r["category"], "source": r["source"], "vals": {}})
         f["vals"][r["name"]] = float(r["amount"] or 0)
     hints = [w.lower() for w in (hint_words or []) if len(w) > 2]
+    hint_set = {w for w in hints if len(w) >= 4 and w not in _HINT_STOP}
     # Ingredient-line words → the USDA food group they imply (an OCR'd
     # "cultured pasteurized nonfat milk" means dairy even though no USDA
     # yogurt description contains "milk").
@@ -273,9 +285,18 @@ def nearest_by_profile(per100: dict[str, float], hint_words: list[str] | None = 
         dist = dist ** 0.5
         desc = f["description"].lower()
         cat = (f["category"] or "").lower()
-        hits = sum(1 for w in hints if w in desc)
+        # 2026-11-07: whole-word (prefix) hits from distinct words of 4+
+        # letters — a raw substring test let OCR'd "the"/"per"/"ern" hit
+        # "Fish, pike, northern, liver" on a chicken-burger label.
+        desc_words = set(re.findall(r"[a-z]+", desc))
+        hits = sum(1 for w in hint_set if any(d.startswith(w) or (len(d) >= 4 and w.startswith(d) and len(w) - len(d) <= 1) for d in desc_words))
         hits += sum(1 for g in implied if g in desc or g in cat)
         odd = 1.35 if ("alaska native" in desc or "food distribution" in desc or "usda commodity" in desc) else 1.0
+        if implied and hits == 0:
+            # 2026-11-07: the ingredient words SAY what the food is (chicken,
+            # milk, egg ...) — a numbers-only neighbour that matches none of
+            # them (a chicken-burger label → "Fish, pike, liver") ranks lower.
+            odd *= 2.0
         scored.append({"fdc_id": f["fdc_id"], "description": f["description"], "category": f["category"],
                        "source": f["source"], "distance": round(dist, 3), "hint_hits": hits,
                        "score": round(dist * odd / (1 + 0.6 * hits), 3)})

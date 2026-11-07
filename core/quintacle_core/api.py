@@ -145,7 +145,10 @@ def _label_profile_match(fields: dict, hint_text: str = "") -> dict:
         key = units_mg.get(m.get("nutrient"))
         if key and m.get("amount") is not None and (m.get("unit") or "mg").lower() == "mg":
             per100[key] = float(m["amount"]) * k
-    words = re.findall(r"[A-Za-z]{3,}", f"{fields.get('suggested_name', '')} {hint_text}")
+    name = fields.get("suggested_name", "") or ""
+    if name.strip().lower() in _GENERIC_LABEL_NAMES:
+        name = ""  # 2026-11-07: "Labeled food" is a placeholder — its "food" hinted every "Fast Foods" row
+    words = re.findall(r"[A-Za-z]{3,}", f"{name} {hint_text}")
     cands = usda_store.nearest_by_profile(per100, words)
     if not cands:
         return {}
@@ -162,6 +165,28 @@ def _label_profile_match(fields: dict, hint_text: str = "") -> dict:
     return {"fdc_id": best["fdc_id"], "usda_description": best["description"], "usda_match_by": "nutrition profile",
             "usda_candidates": [{"fdc_id": c["fdc_id"], "description": c["description"], "category": c["category"],
                                  "source": c["source"]} for c in cands]}
+
+
+def _label_agrees_with_usda(fields: dict, fdc_id: int) -> bool:
+    """2026-11-07: does a NAME-matched USDA food agree with the label's
+    printed numbers? Compared per 100 g in code: kcal within max(50, 40%),
+    protein / fat / carbs each within max(8 g, 50%). Too few printed
+    numbers to judge → True (the name match stands)."""
+    from .nutrition_db import store as usda_store
+
+    basis = float(fields.get("basis_amount_g") or 0) or 100.0
+    label = {k: float(fields[k]) * 100.0 / basis for k in ("kcal", "protein_g", "fat_g", "carbs_g") if fields.get(k) is not None}
+    if "kcal" not in label or not label["kcal"] or len(label) < 3:
+        return True
+    ref = usda_store.preset_from_usda(fdc_id, 100)
+    if not ref:
+        return True
+    if abs(float(ref.get("kcal") or 0) - label["kcal"]) > max(50.0, 0.4 * label["kcal"]):
+        return False
+    for key in ("protein_g", "fat_g", "carbs_g"):
+        if key in label and abs(float(ref.get(key) or 0) - label[key]) > max(8.0, 0.5 * label[key]):
+            return False
+    return True
 
 
 def _with_usda_fill(entry: dict) -> dict:
@@ -211,14 +236,27 @@ def _source_ingredient_image(fields: dict) -> dict:
     and weighed it — the numbers come from USDA when it matches."""
     from_label = bool(fields.pop("from_label", False))
     ocr_text = fields.pop("ocr_text", "") or ""
-    usda = usda_proposal(fields.get("suggested_name", ""), fields.get("basis_amount_g") or 100) or {}
+    name = fields.get("suggested_name", "") or ""
+    generic = from_label and name.strip().lower() in _GENERIC_LABEL_NAMES
+    usda = ({} if generic else usda_proposal(name, fields.get("basis_amount_g") or 100)) or {}
     candidates = usda.get("usda_candidates", [])
     if from_label:
         fill = usda.get("fdc_id") if usda.get("matched") else None
-        if fill is None:  # no name to match → backtrack from the label's own numbers
+        if fill is not None and not _label_agrees_with_usda(fields, fill):
+            fill = None  # 2026-11-07: a name match the printed numbers contradict (burger label → "Onions, raw")
+        if fill is None:  # no usable name match → backtrack from the label's own (parsed) numbers
             prof = _label_profile_match(fields, ocr_text)
             if prof:
-                return _with_usda_fill({**fields, "source": "label", **prof})
+                entry = {**fields, "source": "label", **prof}
+                if generic and prof.get("usda_description"):
+                    # 2026-11-07: no product name on the label → name it from the
+                    # match's head ("Yogurt, Greek, plain, nonfat" → "Greek yogurt").
+                    from .nodes.logs.label_parser import name_from_usda_description
+
+                    entry["suggested_name"] = name_from_usda_description(prof["usda_description"]) or name
+                return _with_usda_fill(entry)
+            if usda.get("matched"):  # contradicted name match, nothing better: keep it as a candidate only
+                usda = {**usda, "matched": False}
         return _with_usda_fill({**fields, "source": "label", "fdc_id": fill,
                 "usda_description": usda.get("usda_description", "") if fill else "", "usda_candidates": candidates})
     if usda.get("matched"):
