@@ -313,6 +313,44 @@ designed (`pacman -S tesseract-data-eng` to enable it).
 Tests: `core/tests/test_local_image_pipeline.py`, `test_label_parser.py`,
 updated `test_local_vlm.py` (default is now local).
 
+## 2026-11-07 — local VLM fixed for real phone photos; determinism
+
+Found by the golden check on the owner's real files: the local VLM had never
+answered a single real phone photo.
+
+- **Context overflow.** qwen2.5vl:3b via Ollama rejected every 12 MP photo
+  with "request (~4110 tokens) exceeds the available context size (4096)".
+  `local_vlm.prepare_image` now runs before BOTH backends (Ollama and
+  llama.cpp): `ImageOps.exif_transpose` (a sideways phone shot reads
+  upright), long side capped at 1024 px (`QUINTACLE_VISION_MAX_SIDE`), JPEG
+  re-encode at q85, alpha flattened onto white. Bytes Pillow can't open pass
+  through untouched. A 3 MB photo becomes ~120 KB, about 1,070 prompt
+  tokens. The Ollama call also sends `num_ctx: 8192`.
+- **Garbled output on this GPU.** With the context fixed, the RTX 5070 Ti
+  (Ollama 0.34.2) answered every image prompt with `????…` or aborted with
+  "token repeat limit reached". Text prompts were fine. Probing `num_gpu`
+  showed `0` (CPU, about 4 s warm) and `36` (all transformer blocks on the
+  GPU, the output layer not) both work. `37` (full offload) is the broken
+  one. `local_vlm/ollama.py` now detects a garbled answer, retries once with
+  `num_gpu = <arch>.block_count` from `/api/show` (0 if unreadable), and
+  remembers it per daemon+model. Warm: about 1 s per photo.
+  `QUINTACLE_VISION_NUM_GPU` pins the value. An all-`?` answer is never
+  returned as a description.
+- **Determinism.** Local VLM calls send `temperature: 0` and `seed: 42`
+  (Ollama options; llama.cpp top-level fields). So does the local
+  structured parse (`llm_dispatch._parse_local`). That parse also serves
+  the USDA candidate pick (`nutrition_db.store.pick_candidate`). Chat
+  generation is unchanged.
+
+Live check (this machine, real Food recipe photos, 2026-11-07):
+`20261015_202131.jpg` → "a wooden cutting board with five bell peppers of
+different colors…"; `20261015_204151.jpg` → "a hand holding a knife and
+cutting a red onion…"; `20261001_150959.jpg` → reads the chicken-burger label
+(1 burger 112 g, 170 kcal, 9 g fat, 19 g protein, organic chicken + white
+cheddar).
+
+Tests: `core/tests/test_real_file_fixes.py`.
+
 ## Tests
 
 `core/tests/test_perception.py`, `core/tests/test_backend_tflite.py`

@@ -611,7 +611,9 @@ def compose_file_meta_line(meta: dict) -> str:
         by = f" by {meta['last_modified_by']}" if meta.get("last_modified_by") else ""
         parts.append(f"modified {meta['modified'][:10]}{by}")
     loc = meta.get("location")
-    if isinstance(loc, dict) and loc.get("lat") is not None:
+    from .drop import valid_coords  # 2026-11-07: never print a NaN location
+
+    if isinstance(loc, dict) and valid_coords(loc.get("lat"), loc.get("lon")):
         parts.append(f"{float(loc['lat']):.4f}, {float(loc['lon']):.4f}")
     parts.append(f"{meta.get('filename') or 'file'} ({_human_size(int(meta.get('size') or 0))})")
     text = " · ".join(str(p).replace("\n", " ") for p in parts)

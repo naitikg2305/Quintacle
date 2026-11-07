@@ -127,6 +127,22 @@ Owner: "what if you add tests according to what I tested". There are now two lay
   - Already-covered behaviours are referenced in the module docstring, not duplicated.
 - **Golden check on his real files** lives outside the repo, in the testing folder (`.tools/golden_run.py`, how-to in that folder's README). It re-drops every real input on a temp data dir as proposals only and compares the result with the recorded `.tools/golden/*.json`. Structural fields are strict (types, pipeline, folder root, parser/USDA numbers). Model wording is shown but never fails. Cloud is blocked unless `--allow-cloud`.
 
+## Fixes from the golden check on real files (2026-11-07)
+
+- **Local vision failed on every real photo** (context overflow, then
+  `????` output on this GPU). Images are now downscaled to 1024 px and
+  EXIF-oriented, `num_ctx` is 8192, and a garbled answer is retried with
+  the output layer off the GPU. See `reference/perception-and-autojournal.md`.
+- **Empty GPS → NaN coordinates → cloud geocode.** An empty GPS block now
+  means no location, and every consumer rejects NaN or 0,0.
+- **PDFs were cloud-only.** The text layer is now read locally, a scan is
+  OCR'd locally, and cloud is used only under the image policy.
+  **Install `pypdf` (new line in `core/requirements.txt`):**
+  `core/.venv/bin/pip install -r core/requirements.txt`. Without it, PDFs
+  fall back to "Redo with cloud?".
+- **Local answers varied run to run.** Local structured parsing, the USDA
+  pick and local vision now use `temperature: 0` with a fixed seed.
+
 ## Open (carry to sprint 2)
 
 - Trip ↔ photos link (photos taken during a plan's dates/destinations attach to it).
