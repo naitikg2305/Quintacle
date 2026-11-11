@@ -61,6 +61,7 @@ UNKNOWN = "_"
 LEVELS = {1: "continent", 2: "country", 3: "city"}
 
 PLANNED_PREFIX = "fun/travel/planned"
+BUCKET_PREFIX = "fun/travel/bucket-list"
 _PLACES_FOLDER = "places"
 
 
@@ -87,6 +88,17 @@ def _title_from_slug(place_id: str) -> str:
 def is_planned_folder(folder_slug: str) -> bool:
     f = (folder_slug or "").strip("/").lower()
     return f == PLANNED_PREFIX or f.startswith(PLANNED_PREFIX + "/")
+
+
+def is_bucket_folder(folder_slug: str) -> bool:
+    f = (folder_slug or "").strip("/").lower()
+    return f == BUCKET_PREFIX or f.startswith(BUCKET_PREFIX + "/")
+
+
+def is_travel_place_folder(folder_slug: str) -> bool:
+    """The KB folders whose notes are ABOUT places (a trip plan, a someday
+    wish) and so get destinations derived from their folder + text."""
+    return is_planned_folder(folder_slug) or is_bucket_folder(folder_slug)
 
 
 # --------------------------------------------------------------- resolution
@@ -405,17 +417,121 @@ def destination_chains(ctx: _Ctx, destinations) -> list[list[_Ref]]:
     return [c for c in chains if c]
 
 
-def _note_chains(ctx: _Ctx, folder_slug: str, meta: dict) -> list[list[_Ref]]:
+# 2026-11-11: derived destinations. A plan saved straight from a drop has no
+# `fields.destinations` (the kb_entry proposal never had fields), so it used
+# to get zero place edges — "trips in Austria" couldn't find a Vienna plan
+# filed under Fun/Travel/Planned/Austria. When Destinations is empty, the
+# places come from (1) the folder segments under Planned / Bucket List
+# ("Planned/Europe/Austria" → Austria, Europe) and (2) the cities / countries
+# NAMED in the title + body (gazetteer.find_places — whole capitalised words,
+# departure points skipped). Code only; a hand-typed Destinations always wins.
+
+# Body lines that are plumbing, not prose: asset links, the 📍 place line,
+# 🗂 file-metadata lines, bare URLs.
+_NON_PROSE_RE = re.compile(r"^\s*(?:!?\[[^\]]*\]\([^)]*\)\s*|📍.*|🗂.*|https?://\S+\s*)$")
+
+
+def _prose(content: str) -> str:
+    lines = [ln for ln in (content or "").splitlines() if not _NON_PROSE_RE.match(ln)]
+    return re.sub(r"https?://\S+", " ", "\n".join(lines))
+
+
+def _folder_mentions(folder_slug: str) -> list:
+    """Folder segments under Planned / Bucket List that ARE places (a
+    continent, a country, a gazetteer city); anything else ("2027",
+    "summer-ideas") is ignored."""
+    from .gazetteer import CITIES, PlaceMention, canonical_city, canonical_country, continent_name
+    from .nodes.kb.photo_place import _CONTINENTS, continent_for
+
+    f = (folder_slug or "").strip("/").lower()
+    base = PLANNED_PREFIX if is_planned_folder(f) else BUCKET_PREFIX if is_bucket_folder(f) else None
+    if base is None:
+        return []
+    by_slug: dict = {}
+    for cont in _CONTINENTS:
+        by_slug.setdefault(place_slug(cont), PlaceMention(None, None, continent_name(cont)))
+    for names in _CONTINENTS.values():
+        for n in names:
+            c = canonical_country(n) or n
+            by_slug.setdefault(place_slug(n), PlaceMention(None, c, continent_for(c)))
+    for city in CITIES:
+        canon, country = canonical_city(city)
+        by_slug.setdefault(place_slug(city), PlaceMention(canon, country, continent_for(country)))
+    out = []
+    for seg in f[len(base):].strip("/").split("/"):
+        m = by_slug.get(seg) if seg else None
+        if m is not None:
+            out.append(m)
+    return out
+
+
+def derive_destinations(folder_slug: str, content: str) -> list:
+    """Folder segments + places named in the text → PlaceMentions, most
+    specific kept: a country is dropped when a named city already carries
+    it, a continent when a named country/city is inside it."""
+    from .gazetteer import find_places
+
+    mentions = _folder_mentions(folder_slug) + find_places(_prose(content))
+    cities = [m for m in mentions if m.city]
+    countries = [m for m in mentions if not m.city and m.country]
+    continents = [m for m in mentions if not m.city and not m.country and m.continent]
+    covered_countries = {m.country for m in cities}
+    covered_continents = {m.continent for m in cities + countries}
+    out, seen = [], set()
+    for m in (
+        cities
+        + [c for c in countries if c.country not in covered_countries]
+        + [c for c in continents if c.continent not in covered_continents]
+    ):
+        key = (m.city, m.country, m.continent)
+        if key not in seen:
+            seen.add(key)
+            out.append(m)
+    return out
+
+
+def destinations_text(mentions) -> str:
+    """PlaceMentions → a `fields.destinations` string destination_chains
+    parses back to the same places ("Vienna, Salzburg, Austria; Japan")."""
+    groups: dict[tuple, list[str]] = {}
+    for m in mentions:
+        cities = groups.setdefault((m.country or "", m.continent or ""), [])
+        if m.city:
+            cities.append(m.city)
+    parts = []
+    for (country, continent), cities in groups.items():
+        parts.append(", ".join([*cities, country] if country else cities) or continent)
+    return "; ".join(p for p in parts if p)
+
+
+def proposal_destinations(folder: str, title: str, content: str) -> str:
+    """The `fields.destinations` a drop's kb_entry proposal carries when
+    it's headed for Planned / Bucket List ("" otherwise, or when nothing is
+    named) — the same derivation Save runs, shown on the review card."""
+    from .markdown_paths import slugify
+
+    folder_slug = "/".join(slugify(s) for s in (folder or "").split("/") if s.strip())
+    if not is_travel_place_folder(folder_slug):
+        return ""
+    return destinations_text(derive_destinations(folder_slug, f"# {title}\n\n{content}"))
+
+
+def _note_chains(ctx: _Ctx, folder_slug: str, meta: dict, content: str = "", slug: str = "") -> list[list[_Ref]]:
     chains: list[list[_Ref]] = []
     place = meta.get("place")
     if isinstance(place, dict) and (place.get("city") or place.get("country")):
         chain = resolve_chain(ctx, place.get("city"), place.get("country"), place.get("continent"))
         if chain:
             chains.append(chain)
-    if is_planned_folder(folder_slug):
+    if is_travel_place_folder(folder_slug):
         fields = meta.get("fields") if isinstance(meta.get("fields"), dict) else {}
         if fields.get("destinations"):
             chains.extend(destination_chains(ctx, fields.get("destinations")))
+        elif not (slug.startswith("about-") or slug.startswith("_")):  # folder charters aren't trips
+            for m in derive_destinations(folder_slug, content):
+                chain = resolve_chain(ctx, m.city, m.country, m.continent)
+                if chain:
+                    chains.append(chain)
     return chains
 
 
@@ -446,7 +562,9 @@ def _member_kind(member_id: str) -> str:
         return "experience"
     if member_id.startswith("note:"):
         folder = member_id[5:].rsplit("/", 1)[0]
-        return "trip plan" if is_planned_folder(folder) else "photo"
+        if is_planned_folder(folder):
+            return "trip plan"
+        return "bucket-list place" if is_bucket_folder(folder) else "photo"
     return "entry"
 
 
@@ -490,7 +608,7 @@ def place_summary(ctx: _Ctx, place_id: str) -> str:
         k = _member_kind(src)
         counts[k] = counts.get(k, 0) + 1
     if counts:
-        parts.append(", ".join(_plural(counts[k], k) for k in ("photo", "experience", "trip plan", "entry") if k in counts))
+        parts.append(", ".join(_plural(counts[k], k) for k in ("photo", "experience", "trip plan", "bucket-list place", "entry") if k in counts))
     return " — ".join(parts)
 
 
@@ -538,9 +656,9 @@ def link_note_places(store, folder_slug: str, slug: str, *, dry_run: bool = Fals
             return []
         folder_slug = str(path.parent.relative_to(store.root)).replace("\\", "/")
         note_id = f"note:{folder_slug}/{path.stem}"
-        meta = frontmatter.loads(path.read_text(encoding="utf-8")).metadata
+        post = frontmatter.loads(path.read_text(encoding="utf-8"))
         ctx = _Ctx(store, gs, dry_run)
-        out = _sync_source(ctx, note_id, _note_chains(ctx, folder_slug, meta))
+        out = _sync_source(ctx, note_id, _note_chains(ctx, folder_slug, post.metadata, post.content, path.stem))
         _reindex(ctx)
     except Exception as exc:
         logger.warning("place linking failed for %s/%s: %s", folder_slug, slug, exc)
@@ -578,25 +696,30 @@ def backfill_places(store, experiences: list[dict], *, dry_run: bool = True, gra
     gs = graph_store or _graph_store()
     ctx = _Ctx(store, gs, dry_run)
     created: list[dict] = []
-    counts = {"photos": 0, "plans": 0, "experiences": 0}
+    counts = {"photos": 0, "plans": 0, "bucket_list": 0, "experiences": 0}
     exp_paths = {(e["folder"], e["slug"]) for e in experiences}
-    photo_notes, plan_notes = [], []
+    photo_notes, plan_notes, bucket_notes = [], [], []
     for folder in store.list_folders():
         for slug in store.list_entries(folder):
             if (folder, slug) in exp_paths:
                 continue
             try:
-                meta = frontmatter.loads(store.entry_path(folder, slug).read_text(encoding="utf-8")).metadata
+                post = frontmatter.loads(store.entry_path(folder, slug).read_text(encoding="utf-8"))
             except Exception:
                 continue
+            meta = post.metadata
             if isinstance(meta.get("place"), dict):
-                photo_notes.append((folder, slug, meta))
-            elif is_planned_folder(folder) and isinstance(meta.get("fields"), dict) and meta["fields"].get("destinations"):
-                plan_notes.append((folder, slug, meta))
-    for key, rows in (("photos", photo_notes), ("plans", plan_notes)):
-        for folder, slug, meta in rows:
+                photo_notes.append((folder, slug, meta, post.content))
+            elif is_planned_folder(folder):
+                # 2026-11-11: every plan, Destinations typed or not —
+                # derive_destinations covers the drop-saved ones.
+                plan_notes.append((folder, slug, meta, post.content))
+            elif is_bucket_folder(folder):
+                bucket_notes.append((folder, slug, meta, post.content))
+    for key, rows in (("photos", photo_notes), ("plans", plan_notes), ("bucket_list", bucket_notes)):
+        for folder, slug, meta, content in rows:
             try:
-                out = _sync_source(ctx, f"note:{folder}/{slug}", _note_chains(ctx, folder, meta))
+                out = _sync_source(ctx, f"note:{folder}/{slug}", _note_chains(ctx, folder, meta, content, slug))
             except Exception as exc:
                 logger.warning("place backfill failed for %s/%s: %s", folder, slug, exc)
                 continue

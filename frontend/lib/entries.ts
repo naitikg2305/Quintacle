@@ -435,6 +435,7 @@ export async function commitEntry(date: string, entry: ParsedEntry, assets: File
         links: entry.links,
         perception: entry.perception ?? null,
         private: entry.private ?? false,
+        ...(entry.fields && Object.keys(entry.fields).length > 0 ? { fields: entry.fields } : {}),
       };
       return assets.length > 0 ? pushKBEntryWithAsset(suggestion, assets) : pushKBEntry(suggestion);
     }
