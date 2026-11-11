@@ -163,6 +163,7 @@ def keep_typed_name(model_name: str, text: str) -> str:
     lead_w, model_w = words(lead), words(model_name)
     if not lead_w or not model_w or len(lead_w) > 8:
         return model_name
-    if set(model_w) <= set(lead_w) and len(lead_w) > len(model_w):
+    # At most 3 extra words (a brand, a model number) — never a whole sentence.
+    if set(model_w) <= set(lead_w) and len(model_w) < len(lead_w) <= len(model_w) + 3:
         return lead[0].upper() + lead[1:]
     return model_name
