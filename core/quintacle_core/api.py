@@ -39,9 +39,10 @@ from .nodes.drop_router import (
     strip_set_scheme,
 )
 from .nodes.journal.llm import parse_journal_dump
-from .nodes.journal.normalize import canonicalize_entries, canonicalize_name
+from .nodes.journal.normalize import canonicalize_entries, canonicalize_item_name, canonicalize_name
 from .nodes.kb.drop import describe_drop, extract_photo_date, extract_photo_location
 from .nodes.kb.photo_organizer import compute_photo_folder
+from .nodes.kb.photo_place import geocode_cache_path
 from .nodes.kb.file_meta import proposal_file_meta
 from .nodes.kb.privacy import private_manual_entry, public_notes_index
 from .nodes.kb.llm import suggest_kb_entry, suggest_kb_placement
@@ -665,14 +666,14 @@ def create_app() -> FastAPI:
                 entries = [{"type": "workout_routine", "name": rest.strip()[:60] or "New routine", "exercises": []}]
         elif entry_type == "wardrobe_item":
             known_item_names = [i["name"] for i in get_wardrobe_item_store().all()]
-            estimate = describe_wardrobe_item(photos, rest) if is_image else describe_wardrobe_item_from_text(rest)
+            estimate = describe_wardrobe_item(photos, rest) if is_image else describe_wardrobe_item_from_text(rest, provider=provider)
             fields = estimate.model_dump()
-            fields["suggested_name"] = canonicalize_name(fields["suggested_name"], known_item_names)
+            fields["suggested_name"] = canonicalize_item_name(fields["suggested_name"], known_item_names)
             entries = [{"type": "wardrobe_item", **fields}]
             experience_check_text = f"{fields['suggested_name']} {fields['description']} {rest}"
         elif entry_type == "outfit_composition":
             known_items = get_wardrobe_item_store().all()
-            suggestion = suggest_outfit(rest, known_items)
+            suggestion = suggest_outfit(rest, known_items, provider=provider)
             resolved = resolve_outfit(suggestion, known_items)
             entries = [{"type": "outfit_composition", **resolved}]
         elif entry_type == "outfit_photo":
@@ -683,14 +684,14 @@ def create_app() -> FastAPI:
             experience_check_text = f"{estimate.suggested_name} {estimate.description} {rest}"
         elif entry_type == "grooming_item":
             known_item_names = [i["name"] for i in get_grooming_item_store().all()]
-            estimate = describe_grooming_item(photos, rest) if is_image else describe_grooming_item_from_text(rest)
+            estimate = describe_grooming_item(photos, rest) if is_image else describe_grooming_item_from_text(rest, provider=provider)
             fields = estimate.model_dump()
-            fields["suggested_name"] = canonicalize_name(fields["suggested_name"], known_item_names)
+            fields["suggested_name"] = canonicalize_item_name(fields["suggested_name"], known_item_names)
             entries = [{"type": "grooming_item", **fields}]
             experience_check_text = f"{fields['suggested_name']} {fields['description']} {rest}"
         elif entry_type == "grooming_routine_composition":
             known_items = get_grooming_item_store().all()
-            suggestion = suggest_grooming_routine(rest, known_items)
+            suggestion = suggest_grooming_routine(rest, known_items, provider=provider)
             resolved = resolve_grooming_routine(suggestion, known_items)
             entries = [{"type": "grooming_routine_composition", **resolved}]
         elif entry_type == "document_entry":
@@ -823,7 +824,7 @@ def create_app() -> FastAPI:
                     {
                         "type": "kb_entry",
                         "folder": (
-                            compute_photo_folder(photo_date, photo_location, None, home_countries)
+                            compute_photo_folder(photo_date, photo_location, None, home_countries, geocode_cache_path(get_kb_store()))
                             if photo_date
                             else placement.folder
                         ),
@@ -835,7 +836,7 @@ def create_app() -> FastAPI:
             else:
                 suggestion = suggest_kb_entry(description, get_kb_store().list_folders(), existing_notes, provider=provider)
                 folder = (
-                    compute_photo_folder(photo_date, photo_location, None, home_countries)
+                    compute_photo_folder(photo_date, photo_location, None, home_countries, geocode_cache_path(get_kb_store()))
                     if photo_date
                     else suggestion.folder
                 )
@@ -896,7 +897,7 @@ def create_app() -> FastAPI:
                         photo_location = extract_photo_location(data)
                         existing_notes = public_notes_index(get_kb_store())
                         suggestion = suggest_kb_entry(get_description(), get_kb_store().list_folders(), existing_notes, provider=provider)
-                        folder = compute_photo_folder(photo_date, photo_location, None, profile_store.load().home_countries)
+                        folder = compute_photo_folder(photo_date, photo_location, None, profile_store.load().home_countries, geocode_cache_path(get_kb_store()))
                         journal_link = (
                             [photo_date.isoformat()] if get_journal_store().load(photo_date) is not None else []
                         )

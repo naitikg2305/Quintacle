@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 
 from ...graph_capture import safe_entry_graph_links, wardrobe_item_note_id
-from ..journal.normalize import canonicalize_name
+from ..journal.normalize import canonicalize_item_name
 from .llm import resolve_outfit, suggest_outfit
 from .store import OutfitStore, WardrobeItemStore
 
@@ -42,7 +42,7 @@ async def create_item(
     files: list[UploadFile] = File(default=[]),
 ) -> dict:
     known_names = [i["name"] for i in get_item_store().all()]
-    resolved_name = canonicalize_name(name, known_names)
+    resolved_name = canonicalize_item_name(name, known_names)
     asset_paths = []
     for f in files:
         data = await f.read()
@@ -84,9 +84,9 @@ async def create_outfit(
     file: UploadFile | None = File(None),
 ) -> dict:
     known_names = [o["name"] for o in get_outfit_store().all()]
-    resolved_name = canonicalize_name(name, known_names)
+    resolved_name = canonicalize_item_name(name, known_names)
     known_item_names = [i["name"] for i in get_item_store().all()]
-    resolved_items = [canonicalize_name(i, known_item_names) for i in json.loads(items)]
+    resolved_items = [canonicalize_item_name(i, known_item_names) for i in json.loads(items)]
     asset_path = None
     if file is not None:
         data = await file.read()
@@ -111,6 +111,7 @@ def get_outfit_asset(path: str) -> Response:
 
 class SuggestOutfitRequest(BaseModel):
     description: str
+    provider: str | None = None  # local|auto|cloud — None = the ingest default (local-first)
 
 
 @router.post("/outfits/suggest")
@@ -118,5 +119,5 @@ def suggest_outfit_endpoint(body: SuggestOutfitRequest) -> dict:
     """AI proposes items for an outfit from a freeform description; resolve_outfit()
     then deterministically matches each against the real item library. Never writes."""
     known = get_item_store().all()
-    suggestion = suggest_outfit(body.description, known)
+    suggestion = suggest_outfit(body.description, known, provider=body.provider)
     return resolve_outfit(suggestion, known)

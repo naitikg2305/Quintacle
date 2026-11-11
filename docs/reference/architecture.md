@@ -173,6 +173,8 @@ behind review-before-write):
   (frame sampling via OpenCV, cv2 imported lazily).
 - `nodes/kb/photo_organizer.py` — `geocode` (GPS → place names via Claude's
   own knowledge, no geocoding API).
+  (2026-11-11: local-first. The offline GeoNames gazetteer in
+  `geo_offline.py` answers first; Claude only on provider auto/cloud.)
 - `nodes/logs/nutrition_llm.py` — `estimate_nutrition`,
   `estimate_nutrition_from_image`; `nodes/logs/meal_composer.py` —
   `suggest_meal_composition`; `nodes/logs/routine_llm.py` —

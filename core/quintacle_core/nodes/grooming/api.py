@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 
 from ...graph_capture import grooming_item_note_id, safe_entry_graph_links
-from ..journal.normalize import canonicalize_name
+from ..journal.normalize import canonicalize_item_name
 from .llm import resolve_grooming_routine, suggest_grooming_routine
 from .store import GroomingItemStore, GroomingRoutineStore
 
@@ -41,7 +41,7 @@ async def create_item(
     files: list[UploadFile] = File(default=[]),
 ) -> dict:
     known_names = [i["name"] for i in get_item_store().all()]
-    resolved_name = canonicalize_name(name, known_names)
+    resolved_name = canonicalize_item_name(name, known_names)
     asset_paths = []
     for f in files:
         data = await f.read()
@@ -82,9 +82,9 @@ class RoutineCreate(BaseModel):
 @router.post("/routines")
 def create_routine(body: RoutineCreate) -> dict:
     known_names = [r["name"] for r in get_routine_store().all()]
-    name = canonicalize_name(body.name, known_names)
+    name = canonicalize_item_name(body.name, known_names)
     known_item_names = [i["name"] for i in get_item_store().all()]
-    steps = [canonicalize_name(s, known_item_names) for s in body.steps]
+    steps = [canonicalize_item_name(s, known_item_names) for s in body.steps]
     get_routine_store().write(name, steps)
     return {"name": name, "steps": steps}
 
@@ -96,6 +96,7 @@ def list_routines() -> list[dict]:
 
 class SuggestRoutineRequest(BaseModel):
     description: str
+    provider: str | None = None  # local|auto|cloud — None = the ingest default (local-first)
 
 
 @router.post("/routines/suggest")
@@ -104,5 +105,5 @@ def suggest_routine_endpoint(body: SuggestRoutineRequest) -> dict:
     resolve_grooming_routine() then deterministically matches each against
     the real product library. Never writes."""
     known = get_item_store().all()
-    suggestion = suggest_grooming_routine(body.description, known)
+    suggestion = suggest_grooming_routine(body.description, known, provider=body.provider)
     return resolve_grooming_routine(suggestion, known)
