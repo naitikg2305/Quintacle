@@ -708,7 +708,16 @@ async def create_entry_with_asset(
     links: str = Form(""),  # comma-separated — multipart forms don't carry real arrays cleanly
     perception: str = Form(""),  # optional JSON PerceptionResult dump carried through review from the drop proposal
     private: bool = Form(False),  # 2026-11-05: the review card's Private checkbox
+    fields: str = Form(""),  # 2026-11-11: optional JSON {key: value} (a plan's reviewed `destinations`)
 ) -> dict:
+    try:
+        fields_dict = json.loads(fields) if fields.strip() else None
+    except ValueError:
+        fields_dict = None
+    if not isinstance(fields_dict, dict):
+        fields_dict = None
+    else:
+        fields_dict = {str(k): str(v) for k, v in fields_dict.items()}
     file_data = [(f.filename or "asset", await f.read()) for f in files]
     link_list = [l.strip() for l in links.split(",") if l.strip()]
     # Deterministic EXIF GPS off the first photo, if present — no AI, no user input
@@ -728,7 +737,7 @@ async def create_entry_with_asset(
             md_images.extend(got)
     if md_images:
         content = content.rstrip() + "\n\n" + "\n".join(f"![]({p})" for p in md_images)
-    folder_slug, entry_slug = get_store().write(folder, title, content, link_list, location)
+    folder_slug, entry_slug = get_store().write(folder, title, content, link_list, location, fields=fields_dict)
     asset_paths = [get_store().save_asset(folder_slug, name, data) for name, data in file_data]
     # Re-write with the asset reference(s) now that we know their final
     # path(s) — write() needs to happen first so folder_slug/entry_slug are
@@ -736,7 +745,7 @@ async def create_entry_with_asset(
     # browse page both read every trailing line, not just the last.
     asset_lines = "\n".join(f"[asset]({p})" for p in asset_paths)
     linked_content = f"{content}\n\n{asset_lines}" if asset_lines else content
-    get_store().write(folder, title, linked_content, link_list, location)
+    get_store().write(folder, title, linked_content, link_list, location, fields=fields_dict)
     if private:
         get_store().set_private(folder_slug, entry_slug, True)
     # 2026-11-05: bake the photo's place (📍 city/state/country · continent ·

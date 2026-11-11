@@ -239,3 +239,55 @@ def bucket_exists(store: KBStore, place: str) -> bool:
 
 def create_bucket(store: KBStore, place: str, notes: str = "") -> tuple[str, str]:
     return store.write(BUCKET, place.strip(), notes.strip(), fields={"added": clock.today().isoformat()})
+
+
+# --- 2026-11-11: the typed "someday" wish → a Bucket List proposal ----------
+# An unprefixed typed line goes through parse_journal_dump, whose prompt never
+# sees the folder list — so "Someday I want to see the northern lights in
+# Tromsø, Norway" could never land in Fun/Travel/Bucket List. This is the
+# deterministic gate (no model call): an explicit someday/bucket-list phrase
+# AND a place the gazetteer recognises. "I want to visit Paris" alone is NOT
+# enough — that reads as a plan as easily as a wish.
+
+_BUCKET_WISH_RE = re.compile(
+    r"\b(?:some\s?day|one\s+day|bucket[\s-]?list|before\s+I\s+die|"
+    r"dream(?:s|ing)?\s+(?:of|about)\s+(?:visiting|seeing|going))\b",
+    re.IGNORECASE,
+)
+_WISH_OBJECT_RE = re.compile(
+    r"\b(?:see|visit|go\s+to|travel\s+to|explore|experience|hike|witness|"
+    r"visiting|seeing|going\s+to)\s+(.+?)\s*(?:[.!?]+\s|[.!?]*$)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def bucket_wish_proposal(text: str) -> dict | None:
+    """A kb_entry proposal for Fun/Travel/Bucket List when `text` is a
+    someday-wish naming a real place, else None. Title = what's wished for
+    ("Northern lights in Tromsø, Norway"), falling back to the places named;
+    `fields.destinations` carries the places so the place graph links it."""
+    from ...gazetteer import find_places
+    from ...place_graph import destinations_text
+
+    text = (text or "").strip()
+    if not text or not _BUCKET_WISH_RE.search(text):
+        return None
+    places = find_places(text)
+    if not places:
+        return None
+    covered = {p.country for p in places if p.city}
+    destinations = destinations_text([p for p in places if p.city or p.country not in covered])
+    m = _WISH_OBJECT_RE.search(text)
+    title = m.group(1).strip().rstrip(",;:") if m else ""
+    title = re.sub(r"^(?:the|a|an)\s+", "", title, flags=re.IGNORECASE)
+    if not title or len(title) > 80:
+        title = destinations.replace("; ", ", ")
+    title = title[0].upper() + title[1:]
+    return {
+        "type": "kb_entry",
+        "folder": BUCKET,
+        "title": title,
+        "content": text,
+        "links": [],
+        "fields": {"added": clock.today().isoformat(), "destinations": destinations},
+    }

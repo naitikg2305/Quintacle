@@ -23,7 +23,7 @@ from .day_bundle import build_day_bundle
 from .nodes.kb.chat import OllamaError
 from .graph import get_graph_store, init_graph_store, sync_frontmatter_links
 from .graph_capture import link_event, log_row_label, run_graph_capture_backfill
-from .place_graph import graph_place_nodes
+from .place_graph import graph_place_nodes, proposal_destinations
 from .nodes.drop_router import (
     IMAGE_MIME_TYPES,
     classify_image_type,
@@ -96,6 +96,7 @@ from .nodes.home.api import (
 from .nodes.home.llm import structure_home_item, structure_residence
 from .nodes.travel.api import init_store as init_travel_store, get_store as get_travel_store, router as travel_router
 from .nodes.travel.llm import maybe_structure_experience, structure_experience
+from .nodes.travel.states import bucket_wish_proposal
 from .nodes.people.api import init_store as init_people_store, get_store as get_people_store, router as people_router
 from .nodes.people.llm import maybe_structure_person_mention, structure_person
 from .nodes.finance.api import (
@@ -862,6 +863,26 @@ def create_app() -> FastAPI:
             parsed = parse_journal_dump(rest, known_meals, reference_date, known_routines=known_routines, provider=provider)
             entries = [e.model_dump() for e in parsed]
             preset_check_text = rest
+            # 2026-11-11: parse_journal_dump never sees the folder list, so a
+            # typed "someday I want to see <place>" can't reach Fun/Travel/
+            # Bucket List on its own. Deterministic gate (someday/bucket-list
+            # phrase + a gazetteer place): the wish becomes THE note proposal
+            # (replacing the model's misfiled kb_entry, other types kept), and
+            # it's not a visit, so no additive Experience check.
+            bucket = bucket_wish_proposal(rest)
+            if bucket is not None:
+                entries = [bucket] + [e for e in entries if e.get("type") != "kb_entry"]
+                experience_check_text = None
+
+        # 2026-11-11: a note proposed into Fun/Travel/Planned or Bucket List
+        # carries the places its folder + text name as `fields.destinations`
+        # (place_graph.derive_destinations — code only), so the review card
+        # can show/edit them; Save derives the same set when it's absent.
+        for e in entries:
+            if e.get("type") == "kb_entry" and not (e.get("fields") or {}).get("destinations"):
+                dest = proposal_destinations(e.get("folder") or "", e.get("title") or "", e.get("content") or "")
+                if dest:
+                    e["fields"] = {**(e.get("fields") or {}), "destinations": dest}
 
         # The branch's own proposals (before the additive extras below) are
         # the ones the image pipeline badge describes.

@@ -420,6 +420,15 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
             value={(entry.links ?? []).join(", ")}
             onChange={(e) => onUpdate(i, { links: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
           />
+          {entry.fields?.destinations !== undefined && (
+            <input
+              className="w-full border rounded px-2 py-1 text-xs opacity-80"
+              placeholder="destinations (e.g. Vienna, Salzburg, Austria)"
+              title="Read from the folder and text — links this note to these places in the graph"
+              value={entry.fields.destinations}
+              onChange={(e) => onUpdate(i, { fields: { ...(entry.fields ?? {}), destinations: e.target.value } })}
+            />
+          )}
         </div>
       )}
 

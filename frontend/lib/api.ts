@@ -478,6 +478,10 @@ export type ParsedKBEntry = {
   title: string;
   content: string;
   links?: string[];
+  // 2026-11-11: a proposal headed for Fun/Travel/Planned or Bucket List
+  // carries `destinations` derived in code from its folder + text (and a
+  // bucket wish its `added` day) — editable on the card, saved as fields.
+  fields?: Record<string, string>;
   // A photo drop proposal may carry a PerceptionResult dump (tags/scene/
   // faces) computed at propose time — passed through verbatim on commit so
   // the backend doesn't have to re-run perception on the same bytes.
@@ -1501,6 +1505,7 @@ export async function pushKBEntryWithAsset(
   // so the backend reuses it instead of re-running on the same bytes.
   if (suggestion.perception) form.append("perception", JSON.stringify(suggestion.perception));
   if (suggestion.private) form.append("private", "true");
+  if (suggestion.fields && Object.keys(suggestion.fields).length > 0) form.append("fields", JSON.stringify(suggestion.fields));
   const res = await fetch(`${API_BASE}/kb/entries/with-asset`, { method: "POST", body: form });
   if (!res.ok) throw new Error(`push failed: ${res.status} ${await res.text()}`);
   return res.json();
