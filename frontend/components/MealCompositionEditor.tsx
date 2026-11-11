@@ -41,6 +41,8 @@ function rescale(comp: MealComponent, newQuantity: number): MealComponent {
     // 2026-11-05: micros scale with the macros (they used to stay at the
     // proposal's quantity while basis_amount_g moved).
     new_ingredient_micros: comp.new_ingredient_micros?.map((m) => ({ ...m, amount: m.amount * ratio })),
+    // A saved-meal component: the quantity edit is a servings fraction.
+    ...(comp.meal_id != null ? { servings: (comp.servings ?? 1) * ratio } : {}),
   };
 }
 

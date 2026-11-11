@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, field_validator
 
 from ... import clock
@@ -123,6 +123,11 @@ class MealComponentInput(BaseModel):
     # 2026-11-05: a USDA-matched new component — numbers re-read from the db.
     fdc_id: int | None = None
     source: str = ""
+    # 2026-11-11: a component that IS a saved meal preset (meal_composer.
+    # _meal_component) — `servings` of that meal (one serving = the meal's
+    # stored numbers). Expanded at save; see create_meal_from_ingredients.
+    meal_id: int | None = None
+    servings: float | None = None
 
 
 class MealFromIngredientsCreate(BaseModel):
@@ -385,6 +390,37 @@ def suggest_composition(body: SuggestCompositionRequest) -> dict:
     return resolve_composition(suggestion, known)
 
 
+def _expand_meal_component(repo, comp: MealComponentInput) -> list[dict]:
+    """A saved meal used inside a new composed meal (2026-11-11). The
+    meal_ingredients table only references ingredients, so:
+    - a COMPOSED meal expands into its own ingredient rows, each scaled by
+      `servings` — the new meal stays self-correcting (fix an ingredient
+      once, both meals recompute) and nothing new is created;
+    - a FLAT meal (manual macros, no rows) becomes one ingredient preset
+      named exactly like the meal, carrying the meal's one-serving numbers
+      and micros over a basis of one serving's grams (the proposal's
+      quantity_g / servings). Reused by exact name if it already exists, so
+      it is created at most once — never a fresh duplicate per recipe."""
+    meal = repo.get_meal(comp.meal_id)
+    if meal is None:
+        raise HTTPException(404, f"meal {comp.meal_id} not found")
+    servings = comp.servings if comp.servings is not None else 1.0
+    rows = repo.meal_components(comp.meal_id)
+    if rows:
+        return [{"ingredient_id": r["ingredient_id"], "quantity_g": float(r["quantity_g"]) * servings} for r in rows]
+    existing = next((i for i in repo.list_ingredients() if i["name"] == meal["name"]), None)
+    if existing is not None:
+        return [{"ingredient_id": existing["id"], "quantity_g": float(existing["basis_amount_g"]) * servings}]
+    serving_g = (comp.quantity_g / servings) if servings and comp.quantity_g else 100.0
+    ingredient_id = repo.add_ingredient(
+        meal["name"], meal["protein_g"], meal["carbs_g"], meal["fat_g"], meal["kcal"], meal["fiber_g"],
+        serving_g, f"one serving of the saved meal {meal['name']!r}",
+        [dict(m) for m in repo.micros_for_meal(comp.meal_id)], source="", exact_name=True,
+    )
+    safe_index_log_row(f"ingredient:{ingredient_id}")
+    return [{"ingredient_id": ingredient_id, "quantity_g": serving_g * servings}]
+
+
 @router.post("/meals/from-ingredients")
 def create_meal_from_ingredients(body: MealFromIngredientsCreate) -> dict:
     """Commits a composed meal preset. Any component with no ingredient_id is
@@ -395,6 +431,8 @@ def create_meal_from_ingredients(body: MealFromIngredientsCreate) -> dict:
     for comp in body.components:
         if comp.ingredient_id is not None:
             resolved_components.append({"ingredient_id": comp.ingredient_id, "quantity_g": comp.quantity_g})
+        elif comp.meal_id is not None:
+            resolved_components.extend(_expand_meal_component(repo, comp))
         else:
             micros = _canonicalize_micros(comp.micros)
             # A USDA-matched component becomes a per-100 g USDA preset (the
