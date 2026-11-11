@@ -20,6 +20,13 @@ costs one call. A private note never reaches the cloud geocoder (its
 coordinates are sensitive) — it gets coords + date only, unless the cache
 already holds that spot (a cache hit sends nothing anywhere).
 
+2026-11-11 local-first: geocode() answers from the offline GeoNames
+gazetteer (geo_offline.py, data installed by `python -m
+quintacle_core.geo_offline`) and only calls Claude when the image provider
+is auto/cloud. Default provider = local, so a save outside a cloud drop
+never reaches the cloud; a private note asks the gazetteer only. A cloud
+drop's geocode lands in the shared cache, so its Save reuses it.
+
 The trailing `<!-- place -->` marker makes the line recognisable for an
 idempotent re-run (replaced, never duplicated); react-markdown drops the raw
 HTML comment so Browse shows just the 📍 line, and
@@ -161,10 +168,13 @@ def _load_cache(path: Path | None) -> dict:
 
 
 def cached_geocode(lat: float, lon: float, cache_path: Path | None, *, allow_cloud: bool = True) -> dict | None:
-    """{city, state, country} for these coords — cache first, then (only
-    when allow_cloud) the photo_organizer.geocode model call, whose result is
-    cached. None on a miss with cloud disallowed, or on ANY geocode error
-    (logged, never raised — a save must not fail over geocoding)."""
+    """{city, state, country} for these coords — cache first, then
+    photo_organizer.geocode (local-first since 2026-11-11: the offline
+    GeoNames gazetteer, the cloud only when the provider allows it), whose
+    result is cached. allow_cloud=False (a private note) skips geocode()
+    entirely and asks ONLY the offline gazetteer — nothing leaves the
+    device. None on a miss, or on ANY geocode error (logged, never raised —
+    a save or a drop must not fail over geocoding)."""
     if not valid_coords(lat, lon):  # NaN/0,0 never reaches the cache or the model (2026-11-07)
         return None
     key = _cache_key(lat, lon)
@@ -172,10 +182,16 @@ def cached_geocode(lat: float, lon: float, cache_path: Path | None, *, allow_clo
     if key in cache:
         return cache[key]
     if not allow_cloud:
-        return None
+        from ... import geo_offline
+
+        offline = geo_offline.reverse(lat, lon)
+        return {k: offline[k] for k in ("city", "state", "country")} if offline else None
     try:
         geo = photo_organizer.geocode(lat, lon)
         result = {"city": geo.city.strip(), "state": geo.state.strip(), "country": geo.country.strip()}
+    except photo_organizer.GeocodeUnavailable as exc:
+        logger.info("photo geocode %s: %s", key, exc)
+        return None
     except Exception as exc:
         logger.warning("photo geocode failed for %s: %s", key, exc)
         return None
@@ -287,7 +303,12 @@ def resolve_photo_place(
             logger.warning("photo place resolve failed: %s", exc)
             geo = None
         if geo:
-            place = {**geo, "continent": continent_for(geo.get("country"))}
+            continent = continent_for(geo.get("country"))
+            if continent is None:  # a GeoNames country name the code table lacks
+                from ... import geo_offline
+
+                continent = (geo_offline.reverse(float(location["lat"]), float(location["lon"])) or {}).get("continent")
+            place = {**geo, "continent": continent}
     return PhotoPlace(location=location, place=place, taken=taken, line=compose_place_line(place, location, taken))
 
 

@@ -4,8 +4,9 @@ import anthropic
 from pydantic import BaseModel
 
 from ...llm_config import DEFAULT_MODEL
-from ..journal.normalize import canonicalize_name
+from ..journal.normalize import canonicalize_item_name
 from ..vision import image_content_blocks
+from ...llm_dispatch import parse_structured
 from ...max_backend import cloud_client
 from ...perception.image_policy import run_image_task
 
@@ -70,21 +71,17 @@ def _describe_grooming_item_cloud(photos: list[tuple[bytes, str]], user_descript
     return response.parsed_output
 
 
-def describe_grooming_item_from_text(description: str) -> GroomingItemEstimate:
+def describe_grooming_item_from_text(description: str, provider: str | None = None) -> GroomingItemEstimate:
     """Text-only counterpart to describe_grooming_item() — for "product:
-    CeraVe foaming cleanser" typed with no photo."""
-    client = cloud_client()
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=512,
-        system=(
-            "Turn this description into a grooming item entry: a short suggested_name, category "
-            f"({_ITEM_CATEGORIES}), and a one-sentence description."
-        ),
-        messages=[{"role": "user", "content": description}],
-        output_format=GroomingItemEstimate,
+    CeraVe foaming cleanser" typed with no photo.
+
+    2026-11-11: local-first like every other text parse (llm_dispatch) —
+    cloud only on provider=cloud ("Redo with cloud") or the auto fallback."""
+    system = (
+        "Turn this description into a grooming item entry: a short suggested_name, category "
+        f"({_ITEM_CATEGORIES}), and a one-sentence description."
     )
-    return response.parsed_output
+    return parse_structured(system, description, GroomingItemEstimate, provider=provider, max_tokens=512).parsed
 
 
 _COMPOSER_SYSTEM_PROMPT = """You help assemble a grooming routine from a product library. Given \
@@ -106,22 +103,16 @@ class GroomingRoutineSuggestion(BaseModel):
     steps: list[GroomingRoutineComponent]
 
 
-def suggest_grooming_routine(description: str, known_items: list[dict]) -> GroomingRoutineSuggestion:
-    client = cloud_client()
+def suggest_grooming_routine(description: str, known_items: list[dict], provider: str | None = None) -> GroomingRoutineSuggestion:
+    """2026-11-11: local-first via llm_dispatch (was cloud-only); the
+    deterministic resolve step below matches names to the library."""
     if known_items:
         library = "Known grooming products:\n" + "\n".join(
             f"name={i['name']!r} category={i['category']!r}" for i in known_items
         )
     else:
         library = "Known grooming products: (none saved yet)"
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=2048,
-        system=_COMPOSER_SYSTEM_PROMPT + "\n\n" + library,
-        messages=[{"role": "user", "content": description}],
-        output_format=GroomingRoutineSuggestion,
-    )
-    return response.parsed_output
+    return parse_structured(_COMPOSER_SYSTEM_PROMPT + "\n\n" + library, description, GroomingRoutineSuggestion, provider=provider, max_tokens=2048).parsed
 
 
 def resolve_grooming_routine(suggestion: GroomingRoutineSuggestion, known_items: list[dict]) -> dict:
@@ -133,7 +124,7 @@ def resolve_grooming_routine(suggestion: GroomingRoutineSuggestion, known_items:
     by_name = {i["name"]: i for i in known_items}
     resolved = []
     for step in suggestion.steps:
-        matched_name = canonicalize_name(step.name, known_names)
+        matched_name = canonicalize_item_name(step.name, known_names)
         existing = by_name.get(matched_name)
         if existing is not None:
             resolved.append({"name": existing["name"], "category": existing["category"], "is_new": False})

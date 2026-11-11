@@ -256,6 +256,19 @@ plus `place: {city, state, country, continent}` frontmatter next to
   Images only. PDFs and other files are untouched.
 - `POST /kb/photos/backfill-place` (dry run by default) fixes notes saved
   before this change.
+- **2026-11-11 status: geocoding is local-first.** The "one cloud call"
+  above is no longer the default. `photo_organizer.geocode` follows the
+  image provider (`/drop`'s `provider` > `QUINTACLE_IMAGE_PROVIDER` >
+  local). In local mode it answers from the offline GeoNames gazetteer
+  (`quintacle_core/geo_offline.py`, stdlib only; data installed with
+  `python -m quintacle_core.geo_offline [--size 1000|5000|15000]` into
+  `<data>/geonames/`, never committed) or raises `GeocodeUnavailable`, and
+  never calls Claude. In auto mode it tries the gazetteer, then Claude. In
+  cloud mode it calls Claude, and the gazetteer covers a cloud failure.
+  `compute_photo_folder` now goes through `cached_geocode` with the shared
+  cache, so a cloud drop's answer is reused by its Save. It never raises:
+  with no place names the folder is the month. Private saves ask only the
+  gazetteer, so nothing leaves the device.
 
 ### 2026-11-05 — file metadata baked at drop and at save
 

@@ -40,7 +40,7 @@ from .llm import (
 )
 from .photo_organizer import compute_photo_folder
 from .file_meta import apply_file_meta, backfill_file_meta, proposal_file_meta
-from .photo_place import backfill_photo_places, bake_photo_place, insert_place_line, is_image_name
+from .photo_place import backfill_photo_places, bake_photo_place, geocode_cache_path, insert_place_line, is_image_name
 from .privacy import PRIVATE_MARKER, public_notes_index, strip_private_turns
 from ...perception.image_policy import LocalImageUnavailable
 from .spreadsheet import read_spreadsheet, write_spreadsheet
@@ -682,7 +682,11 @@ async def batch_drop(
         trip_name = manual_trip_name.strip() or file_suggestion.trip_name or None
         folder = (
             compute_photo_folder(
-                photo_date, locations_by_id.get(file_suggestion.file_id), trip_name, get_profile_store().load().home_countries
+                photo_date,
+                locations_by_id.get(file_suggestion.file_id),
+                trip_name,
+                get_profile_store().load().home_countries,
+                geocode_cache_path(get_store()),
             )
             if photo_date is not None
             else file_suggestion.folder

@@ -3,6 +3,48 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-11 — Local-first fixes from the live suites: item text drops, item-name merging, offline geocoding (worktree agent)
+
+The new live tests found three places where local mode still reached the
+cloud or got matching wrong.
+
+- **Wardrobe/grooming text drops.** `describe_wardrobe_item_from_text` and
+  `describe_grooming_item_from_text` called `cloud_client` directly. They
+  now go through `llm_dispatch.parse_structured(..., provider=provider)`,
+  and `/drop` passes its `provider` through. The outfit and routine
+  composers (`suggest_outfit`, `suggest_grooming_routine`) had the same
+  problem and were fixed the same way. Their `/suggest` endpoints take an
+  optional `provider`. The photo variants were already local-first through
+  `image_policy`, so they are unchanged.
+- **Item-name merging.** `canonicalize_name` (difflib, cutoff 0.8) merged
+  "CeraVe Hydrating Cleanser" into "CeraVe Foaming Cleanser". Saving
+  through `/grooming/items` would then have overwritten the existing
+  product. The new `normalize.canonicalize_item_name` keeps the fuzzy
+  candidate only when every word pairs up as a spelling variant (equal,
+  plural, or a typo of a word longer than 4 letters, or the same letters
+  with different spacing or hyphens). Short tokens like sizes and SPF
+  numbers must match exactly. It is used for wardrobe and grooming items,
+  outfits and routines (drop, resolvers, item and routine save endpoints).
+  Exercise, substance and meal canonicalization are unchanged.
+- **Geocoding.** Every GPS photo drop called Claude through
+  `compute_photo_folder` → `geocode`. The new `quintacle_core/geo_offline.py`
+  is a stdlib-only offline reverse geocoder over GeoNames data. The data is
+  downloaded by `python -m quintacle_core.geo_offline` into
+  `<data>/geonames/` (cities1000 is about 11 MB zipped and 5.7 MB once
+  built) and is never committed. When a photo falls inside a city's
+  population-scaled radius, that city wins over the nearest suburb's
+  centroid. `geocode` follows the image provider: local means the gazetteer
+  or `GeocodeUnavailable` and never the cloud; auto means the gazetteer,
+  then Claude; cloud means Claude, with the gazetteer as a fallback.
+  `compute_photo_folder` uses the shared cache and never raises. With no
+  place names, the folder is the month. Verified against the real
+  GeoNames data in a scratch directory: the Eiffel Tower resolves to
+  Paris / Île-de-France / France / Europe, and the Empire State Building
+  to New York City.
+
+Verified: pytest `1173 passed` (+23 in `test_local_first_live_fixes.py`).
+The live suites were not run because the GPU was busy.
+
 ## 2026-11-07 — Real-file fixes: receipt total, label names/numbers, place-graph orphans (worktree agent)
 
 Fixes for four findings from the golden run on the owner's real files (entry

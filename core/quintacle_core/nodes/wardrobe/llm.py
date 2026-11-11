@@ -4,8 +4,9 @@ import anthropic
 from pydantic import BaseModel
 
 from ...llm_config import DEFAULT_MODEL
-from ..journal.normalize import canonicalize_name
+from ..journal.normalize import canonicalize_item_name
 from ..vision import image_content_blocks
+from ...llm_dispatch import parse_structured
 from ...max_backend import cloud_client
 from ...perception.image_policy import run_image_task
 
@@ -65,21 +66,17 @@ def _describe_wardrobe_item_cloud(photos: list[tuple[bytes, str]], user_descript
     return response.parsed_output
 
 
-def describe_wardrobe_item_from_text(description: str) -> WardrobeItemEstimate:
+def describe_wardrobe_item_from_text(description: str, provider: str | None = None) -> WardrobeItemEstimate:
     """Text-only counterpart to describe_wardrobe_item() — for "item: black
-    leather bomber jacket" typed with no photo."""
-    client = cloud_client()
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=512,
-        system=(
-            "Turn this description into a wardrobe item entry: a short suggested_name, category "
-            f"({_ITEM_CATEGORIES}), and a one-sentence description."
-        ),
-        messages=[{"role": "user", "content": description}],
-        output_format=WardrobeItemEstimate,
+    leather bomber jacket" typed with no photo.
+
+    2026-11-11: local-first like every other text parse (llm_dispatch) —
+    cloud only on provider=cloud ("Redo with cloud") or the auto fallback."""
+    system = (
+        "Turn this description into a wardrobe item entry: a short suggested_name, category "
+        f"({_ITEM_CATEGORIES}), and a one-sentence description."
     )
-    return response.parsed_output
+    return parse_structured(system, description, WardrobeItemEstimate, provider=provider, max_tokens=512).parsed
 
 
 class OutfitPhotoEstimate(BaseModel):
@@ -154,22 +151,16 @@ class OutfitSuggestion(BaseModel):
     items: list[OutfitComponent]
 
 
-def suggest_outfit(description: str, known_items: list[dict]) -> OutfitSuggestion:
-    client = cloud_client()
+def suggest_outfit(description: str, known_items: list[dict], provider: str | None = None) -> OutfitSuggestion:
+    """2026-11-11: local-first via llm_dispatch (was cloud-only); the
+    deterministic resolve step below matches names to the library."""
     if known_items:
         library = "Known wardrobe items:\n" + "\n".join(
             f"name={i['name']!r} category={i['category']!r}" for i in known_items
         )
     else:
         library = "Known wardrobe items: (none saved yet)"
-    response = client.messages.parse(
-        model=DEFAULT_MODEL,
-        max_tokens=2048,
-        system=_COMPOSER_SYSTEM_PROMPT + "\n\n" + library,
-        messages=[{"role": "user", "content": description}],
-        output_format=OutfitSuggestion,
-    )
-    return response.parsed_output
+    return parse_structured(_COMPOSER_SYSTEM_PROMPT + "\n\n" + library, description, OutfitSuggestion, provider=provider, max_tokens=2048).parsed
 
 
 def resolve_outfit(suggestion: OutfitSuggestion, known_items: list[dict]) -> dict:
@@ -180,7 +171,7 @@ def resolve_outfit(suggestion: OutfitSuggestion, known_items: list[dict]) -> dic
     by_name = {i["name"]: i for i in known_items}
     resolved = []
     for item in suggestion.items:
-        matched_name = canonicalize_name(item.name, known_names)
+        matched_name = canonicalize_item_name(item.name, known_names)
         existing = by_name.get(matched_name)
         if existing is not None:
             resolved.append({"name": existing["name"], "category": existing["category"], "is_new": False})

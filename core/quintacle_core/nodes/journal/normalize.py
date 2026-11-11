@@ -20,6 +20,51 @@ def canonicalize_name(name: str, known_names: list[str], cutoff: float = 0.8) ->
     return lookup[matches[0]] if matches else name
 
 
+def _item_tokens(name: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", name.lower())
+
+
+def _same_token(a: str, b: str) -> bool:
+    """Spelling variants of ONE word: equal, plural/singular, or a typo of
+    a long word. Short tokens (sizes, SPF numbers, "XL") must match exactly."""
+    if a == b:
+        return True
+    short, long_ = sorted((a, b), key=len)
+    if len(short) > 3 and long_ in (short + "s", short + "es"):
+        return True
+    return min(len(a), len(b)) > 4 and difflib.SequenceMatcher(None, a, b).ratio() >= 0.85
+
+
+def same_item_name(a: str, b: str) -> bool:
+    """True when two product/item names differ only in spelling — never when
+    one has a distinguishing word the other lacks ("CeraVe Hydrating
+    Cleanser" vs "CeraVe Foaming Cleanser", "SPF 30" vs "SPF 50")."""
+    ta, tb = _item_tokens(a), _item_tokens(b)
+    if not ta or not tb:
+        return False
+    if "".join(ta) == "".join(tb):  # "Ray-Ban" / "RayBan", "T-Shirt" / "Tshirt"
+        return True
+    return all(any(_same_token(x, y) for y in tb) for x in ta) and all(any(_same_token(y, x) for x in ta) for y in tb)
+
+
+def canonicalize_item_name(name: str, known_names: list[str], cutoff: float = 0.8) -> str:
+    """canonicalize_name for item LIBRARIES (wardrobe items, grooming
+    products), 2026-11-11. Product names share most of their characters —
+    brand + one descriptor + noun — so the plain 0.8 character-ratio merged
+    "CeraVe Hydrating Cleanser" into the seeded "CeraVe Foaming Cleanser", a
+    different product. Here a fuzzy candidate must ALSO pass a word-by-word
+    check (same_item_name). Exercise/substance/meal canonicalization keeps
+    the looser canonicalize_name — "Pull Ups" vs "Pullups" drift is what it
+    exists for."""
+    if not known_names:
+        return name
+    lookup = {_normalize_key(n): n for n in known_names}
+    for match in difflib.get_close_matches(_normalize_key(name), list(lookup.keys()), n=5, cutoff=cutoff):
+        if same_item_name(name, lookup[match]):
+            return lookup[match]
+    return name
+
+
 def canonicalize_entries(entries: list[dict], log_store) -> None:
     """Applies canonicalize_name() to exercise/substance names in place, using
     history from the given log_store. Shared by the journal parse endpoint and
