@@ -22,7 +22,15 @@ from . import retrieval
 from .day_bundle import build_day_bundle
 from .nodes.kb.chat import OllamaError
 from .graph import get_graph_store, init_graph_store, sync_frontmatter_links
-from .graph_capture import link_event, log_row_label, run_graph_capture_backfill
+from .markdown_paths import slugify
+from .graph_capture import (
+    GROOMING_ITEMS_FOLDER,
+    grooming_item_note_id,
+    link_event,
+    log_row_label,
+    run_graph_capture_backfill,
+    wardrobe_item_note_id,
+)
 from .place_graph import graph_place_nodes, proposal_destinations
 from .nodes.drop_router import (
     IMAGE_MIME_TYPES,
@@ -129,10 +137,16 @@ logger = logging.getLogger(__name__)
 
 
 def _name_exists(name: str, known_names: list[str]) -> bool:
-    """True when `name` already matches a registry entry (case/spacing/near-
-    duplicate tolerant — the same fuzzy match canonicalize_name applies)."""
-    return bool(known_names) and canonicalize_name(name, known_names) in known_names
+    """True when `name` already matches a registry entry (case/spacing/
+    spelling tolerant). 2026-11-11: word-by-word (canonicalize_item_name) —
+    the preset upserts are keyed the same way, so "Chicken rice plate" is
+    NOT an existing "Chicken rice bowl"."""
+    return bool(known_names) and canonicalize_item_name(name, known_names) in known_names
 
+
+# Grooming routine files sit beside the items folder (grooming/store.py) —
+# /graph addresses a routine by that note id (one node, not a duplicate).
+GROOMING_ROUTINES_FOLDER = GROOMING_ITEMS_FOLDER.rsplit("/", 1)[0] + "/routines"
 
 _GENERIC_LABEL_NAMES = {"", "labeled food", "labelled food", "food", "product"}
 
@@ -539,7 +553,7 @@ def create_app() -> FastAPI:
             if kind == "ingredient_preset":
                 known_names = [i["name"] for i in get_logs_repo().list_ingredients()]
                 clause = ingredient_name_from_text(text) or re.split(r"[,\n.:;]", text.strip())[0].strip()
-                name = canonicalize_name(clause[:60] or "New ingredient", known_names)
+                name = canonicalize_item_name(clause[:60] or "New ingredient", known_names)
                 if _name_exists(name, known_names):
                     return None
                 return {"type": "ingredient_preset", "suggested_name": name, **_source_ingredient_text(text, clause, provider)}
@@ -678,7 +692,7 @@ def create_app() -> FastAPI:
                 entries = [
                     {
                         "type": "workout_routine",
-                        "name": canonicalize_name(name, known_names),
+                        "name": canonicalize_item_name(name, known_names),  # upsert key: same name only
                         "exercises": [canonicalize_name(e, known_exercises) for e in exercises],
                     }
                 ]
@@ -793,7 +807,9 @@ def create_app() -> FastAPI:
             # Same fuzzy-match safety net as exercise/substance names — a
             # second "Lamb" photo should update the existing preset, not fork
             # a near-duplicate because the model phrased the name slightly differently.
-            fields["suggested_name"] = canonicalize_name(fields["suggested_name"], known_ingredient_names)
+            # 2026-11-11: word-by-word only — this name is the save's upsert key,
+            # and a distinguishing word ("Greek" vs "Plain" yogurt) is a new preset.
+            fields["suggested_name"] = canonicalize_item_name(fields["suggested_name"], known_ingredient_names)
             entries = [{"type": "ingredient_preset", **fields}]
             experience_check_text = f"{fields.get('suggested_name', '')} {rest}"
         elif entry_type == "meal_composition":
@@ -1193,26 +1209,64 @@ def create_app() -> FastAPI:
                     nodes.append({"id": ex_id, "type": "exercise", "label": ex})
                 edges.append({"source": routine_id, "target": ex_id, "kind": "includes"})
 
-        item_ids: set[str] = set()
+        # Wardrobe/grooming items and grooming routines: ONE node each, under
+        # the KB-note id their files already have (2026-11-11). Items used to
+        # be a second `item:<name>` node carrying the outfit edges while the
+        # note id carried the mention edges (graph_capture.wardrobe_item_note_id),
+        # so an outfit never reached the person its item names. The note node
+        # emitted above is retyped/relabelled in place; a referenced item with
+        # no file yet still gets a node at that same id.
+        node_by_id = {node["id"]: node for node in nodes}
+
+        def _typed_node(node_id: str, node_type: str, label: str) -> None:
+            existing = node_by_id.get(node_id)
+            if existing is not None:
+                existing["type"], existing["label"] = node_type, label
+            else:
+                node_by_id[node_id] = {"id": node_id, "type": node_type, "label": label}
+                nodes.append(node_by_id[node_id])
+
         for item in get_wardrobe_item_store().all():
-            item_id = f"item:{item['name']}"
-            item_ids.add(item_id)
-            nodes.append({"id": item_id, "type": "wardrobe_item", "label": item["name"]})
+            _typed_node(wardrobe_item_note_id(item["name"]), "wardrobe_item", item["name"])
         for outfit in get_wardrobe_outfit_store().all():
             outfit_id = f"outfit:{outfit['name']}"
             nodes.append({"id": outfit_id, "type": "outfit", "label": outfit["name"]})
             for item_name in outfit.get("items", []):
-                item_id = f"item:{item_name}"
-                if item_id not in item_ids:
-                    item_ids.add(item_id)
-                    nodes.append({"id": item_id, "type": "wardrobe_item", "label": item_name})
+                item_id = wardrobe_item_note_id(item_name)
+                if item_id not in node_by_id:
+                    _typed_node(item_id, "wardrobe_item", item_name)
                 edges.append({"source": outfit_id, "target": item_id, "kind": "includes"})
+
+        # Grooming routine -> its products, the same structural `includes` a
+        # workout routine/outfit gets (the routine file stores names only).
+        for item in get_grooming_item_store().all():
+            _typed_node(grooming_item_note_id(item["name"]), "grooming_item", item["name"])
+        for routine in get_grooming_routine_store().all():
+            routine_id = f"note:{GROOMING_ROUTINES_FOLDER}/{slugify(routine['name'])}"
+            _typed_node(routine_id, "grooming_routine", routine["name"])
+            for step in routine.get("steps", []):
+                item_id = grooming_item_note_id(step)
+                if item_id not in node_by_id:
+                    _typed_node(item_id, "grooming_item", step)
+                edges.append({"source": routine_id, "target": item_id, "kind": "includes"})
 
         # Event nodes, lazily: an event:<hash> exists only as edge endpoints
         # (minted by /graph/event — see graph_capture.link_event), so emit a
         # node for each event id the edges table actually references, labelled
         # by its linked day when it has one, else by member count.
-        stored_edges = get_graph_store().all()
+        # Legacy `item:<name>` endpoints (event part_of edges minted before the
+        # 2026-11-11 one-id change) resolve to the item's note id.
+        stored_edges = [
+            {
+                **edge,
+                **{
+                    end: wardrobe_item_note_id(edge[end].partition(":")[2])
+                    for end in ("source_id", "target_id")
+                    if edge[end].startswith("item:")
+                },
+            }
+            for edge in get_graph_store().all()
+        ]
 
         # Holdings — the per-ticker anchor nodes thesis notes edge into
         # (nodes/stocks). Emitted for every symbol the transaction ledger

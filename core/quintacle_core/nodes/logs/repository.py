@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 from ... import clock
 from ...graph import title_mentioned
-from ..journal.normalize import canonicalize_name
+from ..journal.normalize import canonicalize_item_name, canonicalize_name
 from .log_store import IngredientPresetStore, LogFileStore, MealPresetStore, RoutineStore, summarize_sets as _summarize_sets
 from .quotas import next_period_start, period_window
 
@@ -39,7 +39,9 @@ class LogsRepository:
 
     def add_routine(self, name: str, exercises: list[str]) -> str:
         known_routines = [r["name"] for r in self.routine_store.all()] if self.routine_store else []
-        name = canonicalize_name(name, known_routines)
+        # Upsert key: only a spelling variant of the SAME routine name updates
+        # it (2026-11-11) — "Push day B" must never overwrite "Push day A".
+        name = canonicalize_item_name(name, known_routines)
         known_exercises = (
             sorted({e["exercise_name"] for e in self.log_store.all_entries("exercise")}) if self.log_store else []
         )
@@ -69,12 +71,15 @@ class LogsRepository:
         components: list[dict] | None = None,
     ) -> int:
         micros = micros or []
-        # Deterministic, local — corrects "Lamb" / "lamb" / "Ground Lamb" drift
-        # against presets that already exist, the same safety net already used
-        # for exercise/substance names, so a slightly-different AI-guessed name
-        # updates the existing preset instead of silently forking a duplicate.
+        # Deterministic, local — corrects "Lamb" / "lamb" spelling drift
+        # against presets that already exist, so a re-saved preset updates in
+        # place instead of forking a duplicate. 2026-11-11 correction: this is
+        # an UPSERT key, so it must be word-by-word (canonicalize_item_name):
+        # the old character-ratio match folded a new "Chicken rice plate" into
+        # the saved "Chicken rice bowl" and OVERWROTE its macros (data loss).
+        # A distinguishing word now makes a new meal.
         known_names = [r["name"] for r in self.conn.execute("SELECT name FROM meals")]
-        name = canonicalize_name(name, known_names)
+        name = canonicalize_item_name(name, known_names)
         if self.preset_store:
             fields = {"protein_g": protein_g, "carbs_g": carbs_g, "fat_g": fat_g, "fiber_g": fiber_g, "kcal": kcal, "notes": notes}
             if components is not None:
@@ -130,7 +135,8 @@ class LogsRepository:
         micros = micros or []
         if not exact_name:
             known_names = [r["name"] for r in self.conn.execute("SELECT name FROM ingredients")]
-            name = canonicalize_name(name, known_names)
+            # Upsert key — same-name spelling variants only (2026-11-11; see add_meal).
+            name = canonicalize_item_name(name, known_names)
         if self.ingredient_store:
             fields = {
                 "basis_amount_g": basis_amount_g, "protein_g": protein_g, "carbs_g": carbs_g,

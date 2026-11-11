@@ -495,11 +495,6 @@ def test_14_first_name_only_convo_links_the_only_alfonso(client):
     assert (f"journal:{DAY}", person_id(client, "Alfonso Rivera"), "mentions_person") in edges()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: a note filed in People/<Name>/Mentions links to its person only by text match — a retitled "
-    "mention ('Convo with Alfonso') loses the edge; kb/api._sync_note_graph_links ignores the folder",
-)
 def test_14_retitled_mention_note_still_links_by_its_folder(client):
     note = commit_note(
         client, mention_folder(client, "Alfonso Rivera"), "Convo with Alfonso", "Talked about the Minfy reorg."

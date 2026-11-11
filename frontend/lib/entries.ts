@@ -209,7 +209,9 @@ export function graphIdFor(entry: ParsedEntry, result: unknown): string | null {
     case "workout_routine":
       return has(result, "name") ? `routine:${result.name}` : null;
     case "wardrobe_item":
-      return has(result, "name") ? `item:${result.name}` : null;
+      // 2026-11-11: an item's ONE graph id is its KB note (POST /wardrobe/items
+      // returns it as graph_id) — the old `item:<name>` was a second node.
+      return has(result, "graph_id") ? String(result.graph_id) : null;
     case "outfit_composition":
     case "outfit_photo":
       return has(result, "name") ? `outfit:${result.name}` : null;

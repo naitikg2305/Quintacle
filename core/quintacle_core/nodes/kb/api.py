@@ -22,6 +22,7 @@ from ...retrieval import safe_index_note
 from ...perception import perceive_photo
 from ..journal.api import get_store as get_journal_store
 from ..journal.normalize import canonicalize_name
+from ..people.store import PersonStore
 from ..profile.api import get_store as get_profile_store
 from ..travel.api import get_store as get_travel_store
 from .auto_journal import process_photo_commit
@@ -339,7 +340,13 @@ def _sync_note_graph_links(note_id: str, title: str, content: str, link_titles: 
     journal_id_by_date = {d.isoformat(): f"journal:{d.isoformat()}" for d in get_journal_store().list_dates()}
     experience_id_by_name = {e["name"]: f"experience:{e['folder']}/{e['slug']}" for e in experiences}
     title_lookup = {**note_id_by_title, **journal_id_by_date, **experience_id_by_name}
-    link_titles = link_titles or []
+    if link_titles is None:
+        # 2026-11-11: None means "links unchanged" — the same contract as
+        # store.write(links=None), which KEEPS the note's `links:`
+        # frontmatter. Syncing [] here deleted every frontmatter_links edge
+        # as stale while the file still listed them (record_that_save,
+        # create_entry with no links). Sync what the note actually states.
+        link_titles = get_store().read_links(*note_id.removeprefix("note:").rsplit("/", 1))
     resolved_titles = [canonicalize_name(t, list(title_lookup)) for t in link_titles]
     sync_frontmatter_links(note_id, resolved_titles, title_lookup)
 
@@ -349,11 +356,27 @@ def _sync_note_graph_links(note_id: str, title: str, content: str, link_titles: 
     # place right now rather than at the next restart.
     text = f"{title}\n{content}\n{' '.join(link_titles)}"
     safe_entry_graph_links(note_id, "note", text)
+    _link_mentions_folder_person(note_id)
 
     # 2026-11-05 (place_graph.py): photo `place` → city, a Planned trip's
     # `fields.destinations` → each city, city → country → continent. Runs
     # AFTER the photo-place bake on every save path that reaches here.
     link_note_places(get_store(), *note_id.removeprefix("note:").rsplit("/", 1))
+
+
+def _link_mentions_folder_person(note_id: str) -> None:
+    """2026-11-11: a note filed under People/<Name>/Mentions IS a mention of
+    that person — structurally, from its folder, never from its title text
+    (a retitled "Convo with Alfonso" used to lose the edge because the
+    keyword linker needs the full name). Idempotent (create_edge dedupes)."""
+    folder = note_id.removeprefix("note:").rsplit("/", 1)[0]
+    parent, _, last = folder.rpartition("/")
+    if not parent or last.lower() != "mentions":
+        return
+    for person in PersonStore(get_store().root).all():
+        if person["folder"].lower() == parent.lower():
+            get_graph_store().create_edge(note_id, f"note:{person['folder']}/profile", "mentions_person", "structural")
+            return
 
 
 class EntryCreate(BaseModel):
@@ -1049,7 +1072,9 @@ def record_that_save(body: RecordSaveRequest) -> dict:
         title = body.title
         content = append
     folder_slug, entry_slug = store.write(body.folder, title, content)  # links=None → existing links kept
-    _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", title, content, None)
+    # ...so the edges must be synced from those kept links, never from []
+    # (2026-11-11: passing None used to wipe every frontmatter_links edge).
+    _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", title, content, store.read_links(folder_slug, entry_slug))
     safe_index_note(folder_slug, entry_slug, title, content)
     return {"folder": folder_slug, "slug": entry_slug, "appended": existing is not None}
 
