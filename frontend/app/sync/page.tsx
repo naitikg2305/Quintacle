@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeftRight, Download, RefreshCw } from "lucide-react";
-import { API_BASE, SyncReport, syncPull } from "@/lib/api";
+import { ArrowLeftRight, Download, RefreshCw, Trash2 } from "lucide-react";
+import { API_BASE, CleanupReport, SyncReport, maintenanceCleanup, syncPull } from "@/lib/api";
 import { Badge, PageHeader, Panel } from "@/components/ui/Panel";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
@@ -91,6 +91,8 @@ export default function SyncPage() {
 
       {report && <ReportPanel title="This device pulled" report={report} />}
       {report?.push_back && <ReportPanel title="Peer pulled back" report={report.push_back} />}
+
+      <CleanupPanel />
     </div>
   );
 }
@@ -139,5 +141,84 @@ function ReportPanel({ title, report }: { title: string; report: SyncReport }) {
         ))}
       </div>
     </Panel>
+  );
+}
+
+// Stale-reference cleanup: notes/journal days deleted in the file manager
+// leave search-index rows and graph edges behind. Preview first (dry run),
+// then confirm. Edges are moved to graph/edges-removed/, never deleted.
+function CleanupPanel() {
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<CleanupReport | null>(null);
+  const [done, setDone] = useState<CleanupReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function call(dryRun: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await maintenanceCleanup(dryRun);
+      if (dryRun) {
+        setPreview(result);
+        setDone(null);
+      } else {
+        setDone(result);
+        setPreview(null);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+    setBusy(false);
+  }
+
+  const nothing = preview && preview.stale.length === 0 && preview.edges.length === 0;
+  return (
+    <Panel title="Maintenance">
+      <div className="space-y-3 text-sm">
+        <p className="text-muted">
+          Files deleted outside the app (e.g. in the file manager) can leave search entries and graph links behind.
+          This finds them; removed links are moved to graph/edges-removed/ so they can be restored.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => call(true)} disabled={busy}>
+            <Trash2 size={16} /> Clean up deleted files
+          </Button>
+          {preview && !nothing && (
+            <Button variant="danger" onClick={() => call(false)} disabled={busy}>
+              Confirm: remove {preview.counts.stale_ids} stale · move {preview.counts.edges} links
+            </Button>
+          )}
+        </div>
+        {busy && <p className="text-muted">working...</p>}
+        {error && <p className="text-xs text-danger">failed: {error}</p>}
+        {nothing && <p className="text-muted">Nothing stale — everything indexed still exists.</p>}
+        {preview && !nothing && <CleanupList report={preview} />}
+        {done && (
+          <div className="space-y-1">
+            <Badge tone="ok">
+              cleaned: {done.counts.stale_ids} stale · {done.counts.index_rows} index rows · {done.counts.edges} links
+            </Badge>
+            {done.moved_to && <p className="font-mono text-xs text-muted">links moved to {done.moved_to}</p>}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function CleanupList({ report }: { report: CleanupReport }) {
+  return (
+    <div className="space-y-2">
+      <FileList
+        label="Stale (file or row gone)"
+        tone="warn"
+        files={report.stale.map((s) => `${s.id}  — ${s.reason}`)}
+      />
+      <FileList
+        label="Links that would move"
+        tone="accent"
+        files={report.edges.map((e) => `${e.source} → ${e.target} (${e.kind})`)}
+      />
+    </div>
   );
 }

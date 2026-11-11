@@ -1,4 +1,15 @@
+import os
+import tempfile
+
 import pytest
+
+# 2026-11-11: api.py builds its app at IMPORT time (`app = create_app()`), and
+# that startup runs real writes — the graph-capture backfill and the stale-
+# reference cleanup (maintenance.py). Without this, merely importing api in a
+# test pointed them at the owner's real ~/.quintacle. Force a throwaway data
+# dir before any test module imports quintacle_core (tests that need a store
+# still monkeypatch api.DATA_DIR / pass tmp_path as before).
+os.environ["QUINTACLE_DATA_DIR"] = tempfile.mkdtemp(prefix="quintacle-test-data-")
 
 
 @pytest.fixture(autouse=True)

@@ -1902,6 +1902,20 @@ export type SyncReport = {
 export const syncPull = (body: { peer_url: string; push_back?: boolean; self_url?: string }) =>
   request<SyncReport>("/sync/pull", { method: "POST", body: JSON.stringify(body) });
 
+// --- maintenance: stale-reference cleanup (core/quintacle_core/maintenance.py) ---
+
+export type CleanupReport = {
+  dry_run: boolean;
+  stale: { id: string; reason: string; indexed: boolean }[];
+  edges: { id: string; source: string; target: string; kind: string; source_of_edge: string }[];
+  counts: { stale_ids: number; index_rows: number; edges: number; by_type: Record<string, number> };
+  moved_to: string | null;
+  skipped: string | null;
+};
+
+export const maintenanceCleanup = (dryRun: boolean) =>
+  request<CleanupReport>(`/maintenance/cleanup?dry_run=${dryRun ? "true" : "false"}`, { method: "POST" });
+
 // --- career updaters (record from work logs, website content branch) ---
 
 export type CareerProvider = "auto" | "local" | "cloud";
