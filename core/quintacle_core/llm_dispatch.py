@@ -69,6 +69,22 @@ LOCAL_PARSE_MODEL_ENV = "QUINTACLE_LOCAL_PARSE_MODEL"
 # local entries for the same class split).
 DEFAULT_LOCAL_PARSE_MODEL = "qwen3:8b"
 
+# 2026-11-11, measured on the 12 GB GPU: qwen3:8b takes 6.4 GB at 8k and
+# 7.5 GB at 16k; qwen2.5vl takes up to 4.4 GB. At 16k the two don't fit
+# together, so a photo drop swapped models. The largest real drop measured
+# ~4.9k tokens, so parsing runs at 8k and steps up to 16k only for a request
+# that needs it. Each size change reloads the model (~3 s measured), so the
+# size is fixed per bucket, never computed exactly.
+PARSE_NUM_CTX = 8192
+PARSE_NUM_CTX_LARGE = 16384
+
+
+def parse_num_ctx(system: str, user_content: str, max_tokens: int) -> int:
+    """8k unless this request's prompt (estimated conservatively at 3 chars
+    per token) plus its output cap plus a margin won't fit."""
+    need = (len(system) + len(user_content)) // 3 + max_tokens + 512
+    return PARSE_NUM_CTX if need <= PARSE_NUM_CTX else PARSE_NUM_CTX_LARGE
+
 VALID_PROVIDERS = ("local", "cloud", "auto")
 PARSE_SEED = 42
 
@@ -167,14 +183,14 @@ def _parse_local(system: str, user_content, output_format: type[BaseModel], max_
         "stream": False,
         "format": output_format.model_json_schema(),
         # Parse payloads carry real context (meal/routine libraries, the KB
-        # notes index) — bigger than chat's 8k default so nothing silently
-        # truncates. num_predict mirrors the cloud call's max_tokens cap; a
+        # notes index) — sized per request by parse_num_ctx (8k, 16k only
+        # when this request needs it) so nothing silently truncates. num_predict mirrors the cloud call's max_tokens cap; a
         # truncated JSON tail fails validation below and (in auto) falls
         # back to cloud rather than committing a half-parsed result.
         # 2026-11-07: temperature 0 + a fixed seed — structured parsing (and
         # the USDA candidate pick, which routes through here) must give the
         # same answer for the same input; chat generation is untouched.
-        "options": {"num_ctx": 16384, "num_predict": max_tokens, "temperature": 0, "seed": PARSE_SEED},
+        "options": {"num_ctx": parse_num_ctx(system, user_content, max_tokens), "num_predict": max_tokens, "temperature": 0, "seed": PARSE_SEED},
         # Schema-constrained extraction doesn't want a thinking preamble —
         # verified live that Ollama accepts this for both thinking (qwen3)
         # and plain (qwen2.5) models.
