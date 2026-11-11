@@ -148,12 +148,18 @@ def check_day_recall(c, s):
 
 
 def check_search_index_finds_seeded_note(c, s):
-    """'Nikko' appears only in the seeded 'Tokyo spring plan' note, so FTS must return that note first."""
+    """'Nikko' appears only in the seeded 'Tokyo spring plan' note, so search must find that note.
+    2026-11-11: since the place graph links plans to their places, the Nikko
+    PLACE node (place:asia/japan/nikko, which points at this note) can rank
+    above it — correct — so the note must be the top NOTE and in the top 3."""
     want = "note:fun/travel/planned/japan/tokyo-spring-plan"
     hits = s.search_index(query="Nikko")
-    # The only record containing the word must be returned, ranked first.
-    assert hits and hits[0]["id"] == want, _ids(hits)
-    assert hits[0]["type"] == "note" and hits[0]["title"] == "Tokyo spring plan", hits[0]
+    assert want in _ids(hits)[:3], _ids(hits)
+    notes = [h for h in hits if h["type"] == "note"]
+    assert notes and notes[0]["id"] == want and notes[0]["title"] == "Tokyo spring plan", _ids(hits)
+    # Anything ranked above it must be a place node, not an unrelated record.
+    for h in hits[: _ids(hits).index(want)]:
+        assert h["id"].startswith("place:"), _ids(hits)
     # The types filter keeps it (it IS a note).
     assert want in _ids(s.search_index(query="Nikko", types=["note"]))
 

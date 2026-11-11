@@ -42,7 +42,7 @@ from .nodes.drop_router import (
     strip_set_scheme,
 )
 from .nodes.journal.llm import parse_journal_dump
-from .nodes.journal.normalize import canonicalize_entries, canonicalize_item_name, canonicalize_name
+from .nodes.journal.normalize import canonicalize_entries, keep_typed_name, canonicalize_item_name, canonicalize_name
 from .nodes.kb.drop import describe_drop, extract_photo_date, extract_photo_location
 from .nodes.kb.photo_organizer import compute_photo_folder
 from .nodes.kb.photo_place import geocode_cache_path
@@ -688,6 +688,8 @@ def create_app() -> FastAPI:
             known_item_names = [i["name"] for i in get_wardrobe_item_store().all()]
             estimate = describe_wardrobe_item(photos, rest) if is_image else describe_wardrobe_item_from_text(rest, provider=provider)
             fields = estimate.model_dump()
+            if not is_image:
+                fields["suggested_name"] = keep_typed_name(fields["suggested_name"], rest)
             fields["suggested_name"] = canonicalize_item_name(fields["suggested_name"], known_item_names)
             entries = [{"type": "wardrobe_item", **fields}]
             experience_check_text = f"{fields['suggested_name']} {fields['description']} {rest}"
@@ -706,6 +708,8 @@ def create_app() -> FastAPI:
             known_item_names = [i["name"] for i in get_grooming_item_store().all()]
             estimate = describe_grooming_item(photos, rest) if is_image else describe_grooming_item_from_text(rest, provider=provider)
             fields = estimate.model_dump()
+            if not is_image:
+                fields["suggested_name"] = keep_typed_name(fields["suggested_name"], rest)
             fields["suggested_name"] = canonicalize_item_name(fields["suggested_name"], known_item_names)
             entries = [{"type": "grooming_item", **fields}]
             experience_check_text = f"{fields['suggested_name']} {fields['description']} {rest}"

@@ -147,3 +147,22 @@ def meals_named_in(text: str, known_meals: list[dict]) -> list[dict]:
             hits[matched] = pos if pos >= 0 else len(text)
     kept = [n for n in hits if not any(o != n and n.lower() in o.lower() for o in hits)]
     return [by_name[n] for n in sorted(kept, key=lambda n: hits[n])]
+
+
+_LEAD_SPLIT = re.compile(r"\s*(?:,|;|\s-\s|\s—\s|\(|\bper\b|\bsize\b|\bbought\b|\buse\b|\bfrom\b)", re.IGNORECASE)
+
+
+def keep_typed_name(model_name: str, text: str) -> str:
+    """2026-11-11: the user's own words win for an item's name. When the
+    model's name is just a subset of what was typed up front ("Hydrating
+    Cleanser" from "CeraVe hydrating cleanser, use AM and PM") it dropped
+    a detail — usually the brand — so the typed phrase is the name. Code,
+    not a model: the leading phrase up to the first comma/qualifier."""
+    lead = _LEAD_SPLIT.split(text.strip(), maxsplit=1)[0].strip(" .:")
+    words = lambda s: re.findall(r"[a-z0-9]+", s.lower())  # noqa: E731
+    lead_w, model_w = words(lead), words(model_name)
+    if not lead_w or not model_w or len(lead_w) > 8:
+        return model_name
+    if set(model_w) <= set(lead_w) and len(lead_w) > len(model_w):
+        return lead[0].upper() + lead[1:]
+    return model_name

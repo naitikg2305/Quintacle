@@ -72,6 +72,9 @@ def _env(data: Path, cloud: bool = False) -> None:
         usda.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REAL_USDA, usda)  # copy; the real db is only read
     os.environ["QUINTACLE_USDA_DB"] = str(usda)
+    # The installed offline gazetteer is only READ (2026-11-11).
+    if (REAL_STORE / "geonames" / "cities.tsv").exists():
+        os.environ["QUINTACLE_GEONAMES_DIR"] = str(REAL_STORE / "geonames")
     PERCEPTION_MODELS.mkdir(parents=True, exist_ok=True)
     os.environ["QUINTACLE_PERCEPTION_MODELS_DIR"] = str(PERCEPTION_MODELS)
     # Side effects unrelated to the behaviour under test.
