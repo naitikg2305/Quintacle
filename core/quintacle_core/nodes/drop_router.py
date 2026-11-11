@@ -362,21 +362,51 @@ class _TextFileClassification(BaseModel):
     is_document: bool
 
 
+# 2026-11-11: since PDFs are read locally (raw text, not a cloud summary),
+# qwen3:8b called a 4-page trip plan "formal paperwork" (flights + bookings
+# read official). Plans/itineraries/tickets/bookings are never vault
+# documents — caught here in code before any model call.
+_TRIP_PLAN_RE = re.compile(
+    r"\b(itinerar(y|ies)|trip plan|travel plan|day\s*1\b|day one\b|boarding pass|e-?ticket|"
+    r"flight (number|details|itinerary)|booking (reference|confirmation|status)|"
+    r"confirmation (number|code)|check-?in\b|depart(s|ure)?\b.*\barriv(e|al|es))",
+    re.IGNORECASE,
+)
+# Real vault paperwork names itself — kept out of the trip shortcut.
+_DOCUMENT_WORD_RE = re.compile(
+    r"\b(passport|visa|driver'?s licen[cs]e|lease agreement|rental agreement|insurance policy|"
+    r"policy number|certificate of|warranty|birth certificate|green card|permanent resident)\b",
+    re.IGNORECASE,
+)
+_CLASSIFY_HEAD_CHARS = 3000
+
+_TEXT_FILE_SYSTEM = (
+    "Decide whether this text is a FORMAL PERSONAL DOCUMENT to keep in a document vault. "
+    "A document is official paperwork tied to the person, usually with an ID number and an "
+    "issue/expiry/renewal date: passport, visa, ID card, driver's license, residence permit, "
+    "lease or rental agreement, insurance policy, certificate, warranty, contract. "
+    "NOT documents (is_document=false): travel plans and itineraries, flight/train tickets and "
+    "bookings, hotel reservations, receipts, bank statements, articles, lecture notes, recipes, "
+    "research, plans, ideas, or any general note. When unsure, answer false."
+)
+
+
 def classify_text_file_type(description: str, provider: str | None = None) -> Literal["document_entry", "kb_entry"]:
     """The PDF/DOCX equivalent of classify_image_type() above — a photo gets
     a vision call to spot the "document" kind (an ID/passport/lease/etc.);
     a PDF/DOCX has no image to look at, but describe_drop() already extracted
     its real text, so this classifies THAT instead. Only reached for an
     unprefixed non-image file drop — an explicit "document:" prefix skips
-    this and goes straight to document_entry."""
+    this and goes straight to document_entry. [2026-11-11: deterministic
+    trip-plan/ticket shortcut first; the model sees only the head of the
+    text with explicit negatives, since local PDF reading now hands it raw
+    text instead of a cloud summary.]"""
+    head = description[:_CLASSIFY_HEAD_CHARS]
+    if _TRIP_PLAN_RE.search(head) and not _DOCUMENT_WORD_RE.search(head):
+        return "kb_entry"
     result = parse_structured(
-        (
-            "Decide whether this text is the content of a formal personal document — an ID, "
-            "passport, visa, lease, insurance policy, certificate, warranty, or similar official "
-            "paperwork someone would want to track with an expiry/renewal date — versus a general "
-            "note, idea, or piece of knowledge worth remembering. Set is_document accordingly."
-        ),
-        description,
+        _TEXT_FILE_SYSTEM,
+        head,
         _TextFileClassification,
         provider=provider,
         max_tokens=256,
