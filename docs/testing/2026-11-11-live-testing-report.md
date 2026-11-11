@@ -73,7 +73,7 @@ earlier. This time it landed in the **Documents vault** as a "document".
 |---|---|---|
 | Before fixes | 47 pass · 16 fail · 2 skip | 48 pass · 12 fail · 2 skip |
 | After the first 4 fix branches | 56 pass · 8 fail · 1 skip | — |
-| After all fixes | FINAL_LOCAL | FINAL_MAX |
+| After all fixes | **64 pass · 0 fail** · 1 skip (5 min) | **61 pass · 0 fail** · 1 skip (8 min) |
 
 The faked suite went from 1,150 to 1,303 tests, all passing.
 
