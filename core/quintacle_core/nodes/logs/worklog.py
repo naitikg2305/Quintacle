@@ -209,15 +209,32 @@ def parse_work_log(text: str, file_date: date) -> list[WorkSession]:
 # --- import: KB note + auto productivity rows --------------------------------
 
 
+def entity_notes(kb_store) -> list[dict]:
+    """{folder, slug, title} for every note under the Career/Projects entity
+    roots — THE entity discovery, shared by this importer and the graph's
+    write-rule candidates (graph_capture.entity_hub_candidates). Walks only
+    the entity roots' folders, not the whole KB, so it stays cheap enough to
+    run on every note save."""
+    out = []
+    for folder in kb_store.list_folders():
+        if folder.split("/", 1)[0] not in ENTITY_ROOTS:
+            continue
+        for slug in kb_store.list_entries(folder):
+            content = kb_store.read(folder, slug)
+            if not content:
+                continue
+            title = content.split("\n", 1)[0].lstrip("# ").strip() or slug
+            out.append({"folder": folder, "slug": slug, "title": title})
+    return out
+
+
 def mentioned_entity_titles(kb_store, text: str) -> list[str]:
     """Deterministic in code: every Career/* and Projects/* note whose title
     appears in the log as a whole word (graph.title_mentioned — THE one
     matcher) becomes a declared link, materialized into edges by the same
     graph-sync call the KB create path runs."""
     titles = set()
-    for n in kb_store.notes_index():
-        if n["folder"].split("/", 1)[0] not in ENTITY_ROOTS:
-            continue
+    for n in entity_notes(kb_store):
         if n["title"] and title_mentioned(n["title"], text):
             titles.add(n["title"])
     return sorted(titles)

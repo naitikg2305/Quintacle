@@ -146,12 +146,6 @@ def test_setup_note_links_frontmatter_related(env, folder, title, content):
     assert graph_has_edge(graph(env.client), note, other, "related")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: a note naming a project ('Quintacle') in its body gets no edge to the project hub — "
-    "graph_capture.mention_candidates only offers people + experiences, never projects/<slug>/<slug> hubs "
-    "(kb/api._sync_note_graph_links -> safe_entry_graph_links).",
-)
 @pytest.mark.parametrize("folder,title,content", SETUP_NOTES)
 def test_setup_note_links_named_project(env, folder, title, content):
     note = env.post_note(folder, title, content)

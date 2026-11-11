@@ -404,7 +404,11 @@ def _index_new_note(folder: str, slug: str, title: str, content: str) -> None:
     from ...retrieval import safe_index_note
     from ..kb.api import _sync_note_graph_links
 
+    from ...graph_capture import safe_backlink_new_target
+
     _sync_note_graph_links(f"note:{folder}/{slug}", title, content, None)
+    # A new hub back-links existing content that already names it (2026-11-11).
+    safe_backlink_new_target(f"note:{folder}/{slug}")
     safe_index_note(folder, slug, title, content)
 
 

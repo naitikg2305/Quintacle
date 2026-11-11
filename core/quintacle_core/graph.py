@@ -98,6 +98,35 @@ def title_mentioned(title: str, text: str) -> bool:
     return re.search(r"\b" + re.escape(title) + r"\b", text or "", re.IGNORECASE) is not None
 
 
+def proper_name_mentioned(name: str, text: str) -> bool:
+    """title_mentioned for a bare proper noun that is also an ordinary word
+    often enough to matter — a first-name alias ("Will", "Grace"), a project
+    or company hub ("Rover"), an account, a city ("Nice", "Reading"). Same
+    whole-word rule, but the text's first letter must be capitalized as a
+    proper noun is: "convo with Alfonso" links, "I will" never reaches a
+    tracked Will. The rest of the word stays case-insensitive ("QUINTACLE")."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    head, rest = name[0], name[1:]
+    if not head.isalpha():
+        return title_mentioned(name, text)
+    pattern = r"\b" + re.escape(head.upper()) + (r"(?i:" + re.escape(rest) + r")" if rest else "") + r"\b"
+    return re.search(pattern, text or "") is not None
+
+
+def candidate_mentioned(candidate: dict, text: str) -> bool:
+    """Does `text` name this link candidate? Its title by title_mentioned
+    (or proper_name_mentioned when the candidate sets "proper": True), or
+    any of its "aliases" (always proper-noun matched — an alias is a SHORTER
+    name, e.g. a person's unique first name, so it gets the stricter rule)."""
+    title = (candidate.get("title") or "").strip()
+    match = proper_name_mentioned if candidate.get("proper") else title_mentioned
+    if title and match(title, text):
+        return True
+    return any(proper_name_mentioned(a, text) for a in candidate.get("aliases") or [] if (a or "").strip())
+
+
 class GraphEdgeStore:
     """Owns both halves of Stage 1: the edges/ folder (real data) and the
     SQLite mirror (fast-query cache). Construct one per (data_dir, conn)
@@ -344,6 +373,11 @@ def link_new_entry(
             DEFAULT_EDGE_KIND ("related") when missing/unrecognized.
           - "kind": an explicit override for the edge kind, if the caller
             already knows better than the type-based default (optional).
+          - "aliases": other names that also count as a mention (optional,
+            e.g. a person's first name when only ONE tracked person has it)
+            — matched with proper_name_mentioned (see candidate_mentioned).
+          - "proper": True to match the title itself as a proper noun
+            (capitalized first letter) — hubs, accounts, known places.
         This function never queries any store itself — callers (API
         handlers, future MCP write tools) gather candidates from whichever
         stores make sense for the entry just written. Keeping it this way
@@ -368,7 +402,7 @@ def link_new_entry(
         title = (candidate.get("title") or "").strip()
         if not target_id or not title or target_id == entry_id:
             continue
-        if not title_mentioned(title, haystack):
+        if not candidate_mentioned(candidate, haystack):
             continue
         kind = candidate.get("kind") or EDGE_KIND_BY_CANDIDATE_TYPE.get(candidate.get("type"), DEFAULT_EDGE_KIND)
         created.append(store.create_edge(entry_id, target_id, kind, source_of_edge))
