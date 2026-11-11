@@ -40,7 +40,14 @@ memory/docs go stale; code is truth.
 - Heavy/optional deps (perception, desktop) get their own requirements
   files + lazy imports; `core/requirements.txt` stays phone/Termux-safe,
   and the full test suite must pass WITHOUT optional deps installed.
-- Tests: `cd core && .venv/bin/python -m pytest -q` (243+ must stay green);
+- Tests (layout 2026-11-11, owner-decided; see `docs/testing/2026-11-11-live-testing-report.md`):
+  `core/tests/claude/existing/` = code tests, models FAKED (`cd core && .venv/bin/python -m pytest -q`,
+  all must stay green); `core/tests/claude/local/` = REAL Ollama models, cloud blocked;
+  `core/tests/claude/subscription_or_api/` = REAL Claude via Max, metered API blocked;
+  `core/tests/user/` = the owner's tests, written WITH him only. Any change to drop/sorting/parsing/
+  perception/nutrition/chat must also pass the two live suites (run each in its own pytest call) —
+  faked tests can't catch a model's wrong decision. Expectations come from intent; never loosen one
+  to make a model pass;
   frontend: `npx tsc --noEmit` → 0 errors; eslint: no NEW errors
   (a few `react-hooks/set-state-in-effect` are pre-existing).
 - Run it: backend `cd core && .venv/bin/uvicorn quintacle_core.api:app

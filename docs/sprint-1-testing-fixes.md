@@ -165,6 +165,17 @@ synthetic tests (`core/tests/test_real_world_ocr_fixes.py`,
 - **Local answers varied run to run.** Local structured parsing, the USDA
   pick and local vision now use `temperature: 0` with a fixed seed.
 
+## Live model testing round (2026-11-11)
+
+Triggered by the Austria PDF landing in the Documents vault after PDFs moved local. New test layout
+(`core/tests/claude/existing|local|subscription_or_api`, `core/tests/user`), 127 live checks on real
+local models and real Claude (Max), and 21 fixes, among them: trip PDFs/tickets no longer vault documents,
+meal-plan sort no longer 5+ min, xlsx/pptx read, .md local images, plans join the place graph, bucket-list
+wishes, prefix lanes honour local/cloud, income without a prefix, recipes reuse saved meals, wardrobe/
+grooming local-first, offline geocoding, no invented home-item fields, passport dates, "yesterday",
+two meals in one log, USDA sibling fill (selenium in lamb), statement PDFs read locally.
+Full report: `docs/testing/2026-11-11-live-testing-report.md`.
+
 ## Open (carry to sprint 2)
 
 - Trip ↔ photos link (photos taken during a plan's dates/destinations attach to it).

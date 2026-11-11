@@ -3,6 +3,14 @@
 Running log of what's actually built vs. what's still just planning docs.
 Newest session at the top. Read this before picking the project back up.
 
+## 2026-11-11 — Live model test suites + 21 fixes (main session)
+
+Owner-decided test layout: `core/tests/claude/existing` (faked), `local` (real Ollama, cloud blocked),
+`subscription_or_api` (real Claude via Max, API blocked), `core/tests/user` (owner's, built with him).
+127 live checks across 11 areas; failures fixed by 7 worktree agents and merged on redone-UI.
+Report, strategy and learnings: `docs/testing/2026-11-11-live-testing-report.md`; coverage map:
+`docs/testing/model-coverage-2026-11-11.md`. CLAUDE.md test rules updated.
+
 ## 2026-11-11 — Local-first fixes from the live suites: item text drops, item-name merging, offline geocoding (worktree agent)
 
 The new live tests found three places where local mode still reached the
