@@ -44,7 +44,7 @@ from .photo_place import backfill_photo_places, bake_photo_place, insert_place_l
 from .privacy import PRIVATE_MARKER, public_notes_index, strip_private_turns
 from ...perception.image_policy import LocalImageUnavailable
 from .spreadsheet import read_spreadsheet, write_spreadsheet
-from .store import KBStore, _ASSET_LINES_RE
+from .store import KBStore, _ASSET_LINES_RE, safe_asset_name
 from .view import ViewConfig, infer_view
 
 _MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((https?://[^)\s]+)\)")
@@ -106,13 +106,38 @@ def _fetch_image(url: str, store: KBStore) -> tuple[bytes, str] | None:
     return data, (mimetypes.guess_extension(ctype) or ".jpg")
 
 
-def _attach_markdown_images(md_text: str, folder: str, store: KBStore) -> tuple[str, list[str]]:
+def _local_image_target(url: str, attached: dict[str, str]) -> str | None:
+    """A RELATIVE image link (`raft_roles.png`, `./img/raft_roles.png`,
+    `raft%20roles.png`) that names a file uploaded in the same save → the
+    on-disk name save_asset gives that file (safe_asset_name renames
+    `raft_roles.png` to `raft-roles.png`). None for anything else."""
+    if urllib.parse.urlparse(url).scheme or url.startswith(("/", "#")):
+        return None
+    base = urllib.parse.unquote(url.split("?", 1)[0].split("#", 1)[0]).rsplit("/", 1)[-1]
+    return attached.get(base) or attached.get(base.lower())
+
+
+def _attach_markdown_images(
+    md_text: str, folder: str, store: KBStore, attached: dict[str, str] | None = None
+) -> tuple[str, list[str]]:
     """Returns (rewritten markdown, [note-relative asset paths]) — failures
-    leave that link untouched rather than breaking the save."""
+    leave that link untouched rather than breaking the save.
+
+    2026-11-11 fix: `attached` maps each other uploaded file's original name
+    (and its lowercase) to its saved asset name. A relative link to one of
+    them is rewritten to that sibling name — the .md and the image both land
+    in assets/, so the stored link resolves. Before, the .md kept
+    `raft_roles.png` while the file was saved as `raft-roles.png`. Those
+    files are saved by the caller's normal asset loop, so they're not
+    returned here (the note already gets their [asset] line)."""
     saved: list[str] = []
+    attached = attached or {}
 
     def replace(match: re.Match) -> str:
         alt, url = match.group(1), match.group(2)
+        local = _local_image_target(url, attached)
+        if local is not None:
+            return f"![{alt}]({local})"
         if not (url.startswith(("http://", "https://")) or "/kb/asset?" in url):
             return match.group(0)
         got = _fetch_image(url, store)
@@ -692,7 +717,13 @@ async def create_entry_with_asset(
     md_images: list[str] = []
     for i, (name, data) in enumerate(file_data):
         if name.rsplit(".", 1)[-1].lower() in _MD_EXT:
-            text, got = _attach_markdown_images(data.decode("utf-8", errors="replace"), folder, get_store())
+            attached: dict[str, str] = {}
+            for other, _ in file_data:
+                if other != name:
+                    saved_as = safe_asset_name(other)
+                    attached.setdefault(other.lower(), saved_as)
+                    attached[other] = saved_as
+            text, got = _attach_markdown_images(data.decode("utf-8", errors="replace"), folder, get_store(), attached)
             file_data[i] = (name, text.encode("utf-8"))
             md_images.extend(got)
     if md_images:

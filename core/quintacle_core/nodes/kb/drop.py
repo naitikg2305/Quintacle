@@ -5,7 +5,9 @@ import io
 import logging
 import math
 import os
+import re
 import tempfile
+import xml.etree.ElementTree as ET
 import zipfile
 from datetime import date, datetime
 
@@ -515,6 +517,112 @@ def _cap_text(text: str, total_bytes: int) -> str:
     return text
 
 
+# Office spreadsheets/decks are READ, not described (2026-11-11 fix): a
+# dropped budget_2027.xlsx or q3_review.pptx reached the sorter as "Dropped
+# file: … (no description given)" — no branch handled them, the same bug .md
+# and .docx had. Deterministic extraction, capped like _read_text:
+#   xlsx → openpyxl (already a core requirement, pure Python, phone-safe) via
+#          spreadsheet.read_spreadsheet: "Sheet: <name>" + one " | "-joined row per line
+#   pptx → stdlib zipfile + ElementTree over ppt/slides/slideN.xml (no
+#          python-pptx dependency): "Slide N: <title>" + that slide's other text
+#   xls / ppt (legacy binary OLE) → if it's really OOXML renamed, the readers
+#          above; otherwise best-effort printable-string recovery, labelled so.
+_SHEET_EXT = {"xlsx", "xlsm", "xls"}
+_DECK_EXT = {"pptx", "pptm", "ppt"}
+_DML_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_PML_NS = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+_OLE_NOISE = {
+    "root entry", "workbook", "book", "summaryinformation", "documentsummaryinformation",
+    "powerpoint document", "current user", "pictures", "compobj", "calibri", "arial",
+    "times new roman", "microsoft excel", "microsoft powerpoint", "office theme", "sheet1",
+    "general", "default design",
+}
+
+
+def _is_zip(data: bytes) -> bool:
+    return data[:4] == b"PK\x03\x04"
+
+
+def _extract_xlsx_text(data: bytes) -> str:
+    from .spreadsheet import read_spreadsheet
+
+    out: list[str] = []
+    for sheet in read_spreadsheet(data)["sheets"]:
+        rows = [" | ".join(c.strip() for c in row).strip(" |") for row in sheet["rows"]]
+        rows = [r for r in rows if r]
+        if not rows:
+            continue
+        out += [f"Sheet: {sheet['name']}", *rows, ""]
+    return "\n".join(out).strip()
+
+
+def _slide_number(name: str) -> int:
+    digits = "".join(ch for ch in name.rsplit("/", 1)[-1] if ch.isdigit())
+    return int(digits) if digits else 0
+
+
+def _extract_pptx_text(data: bytes) -> str:
+    out: list[str] = []
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        slides = sorted(
+            (n for n in z.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)),
+            key=_slide_number,
+        )
+        for name in slides:
+            root = ET.fromstring(z.read(name))
+            title, texts = "", []
+            for sp in root.iter(f"{_PML_NS}sp"):
+                ph = sp.find(f"{_PML_NS}nvSpPr/{_PML_NS}nvPr/{_PML_NS}ph")
+                is_title = ph is not None and ph.get("type") in ("title", "ctrTitle")
+                paras = []
+                for para in sp.iter(f"{_DML_NS}p"):
+                    line = "".join(t.text or "" for t in para.iter(f"{_DML_NS}t")).strip()
+                    if line:
+                        paras.append(line)
+                if is_title and not title:
+                    title = " ".join(paras)
+                else:
+                    texts.extend(paras)
+            if not (title or texts):
+                continue
+            n = _slide_number(name)
+            out += [f"Slide {n}: {title}" if title else f"Slide {n}", *texts, ""]
+    return "\n".join(out).strip()
+
+
+def _legacy_office_strings(data: bytes) -> str:
+    """Printable runs out of an old binary .xls/.ppt (UTF-16LE and 8-bit) —
+    no parser dependency; noisy but deterministic, and far better than the
+    filename alone. OLE stream names / font names are dropped, dupes folded."""
+    found = [r.decode("utf-16-le", errors="ignore") for r in re.findall(rb"(?:[\x20-\x7e]\x00){3,}", data)]
+    found += [r.decode("latin-1") for r in re.findall(rb"[\x20-\x7e]{4,}", data)]
+    seen: set[str] = set()
+    keep: list[str] = []
+    for s in found:
+        s = s.strip()
+        key = s.lower()
+        if len(s) < 3 or key in seen or key in _OLE_NOISE or not re.search(r"[A-Za-z]{2}", s):
+            continue
+        seen.add(key)
+        keep.append(s)
+    return "\n".join(keep)
+
+
+def _describe_office(ext: str, data: bytes) -> str:
+    """xlsx/pptx (and legacy xls/ppt) → capped plain text; never raises."""
+    try:
+        if _is_zip(data):
+            text = _extract_xlsx_text(data) if ext in _SHEET_EXT else _extract_pptx_text(data)
+        else:
+            text = _legacy_office_strings(data)
+            if text:
+                text = f"Text recovered from a legacy .{ext} file (best effort):\n{text}"
+    except Exception as exc:  # corrupt file → no extraction (filename fallback), not a 500
+        logger.warning("office extraction failed for .%s: %s", ext, exc)
+        return ""
+    return _cap_text(text, len(data))
+
+
 def describe_drop(
     filename: str,
     data: bytes,
@@ -541,6 +649,8 @@ def describe_drop(
         extracted = _describe_pdf(data)
     elif ext == "docx":
         extracted = _describe_docx(data)
+    elif ext in _SHEET_EXT or ext in _DECK_EXT:
+        extracted = _describe_office(ext, data)
     elif ext in _VIDEO_EXT:
         extracted = _describe_video(data)
     elif ext in _TEXT_EXT:

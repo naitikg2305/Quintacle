@@ -147,11 +147,69 @@ def make_xlsx(rows: list[tuple[str, int]]) -> bytes:
     return buf.getvalue()
 
 
+def _pptx_by_hand(slides: list[tuple[str, str]]) -> bytes:
+    """Minimal PresentationML package — title + body placeholder per slide,
+    the same XML shape python-pptx writes (used only if python-pptx is absent;
+    core reads .pptx with stdlib zipfile/ElementTree, so it isn't a dependency)."""
+    from xml.sax.saxutils import escape
+
+    ns = (
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
+    )
+
+    def shape(i: int, ph: str, text: str) -> str:
+        return (
+            f'<p:sp><p:nvSpPr><p:cNvPr id="{i}" name="s{i}"/><p:cNvSpPr/><p:nvPr><p:ph {ph}/></p:nvPr></p:nvSpPr>'
+            f'<p:spPr/><p:txBody><a:bodyPr/><a:p><a:r><a:t>{escape(text)}</a:t></a:r></a:p></p:txBody></p:sp>'
+        )
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        overrides = "".join(
+            f'<Override PartName="/ppt/slides/slide{n}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
+            for n in range(1, len(slides) + 1)
+        )
+        z.writestr(
+            "[Content_Types].xml",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>'
+            f"{overrides}</Types>",
+        )
+        z.writestr(
+            "_rels/.rels",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>'
+            "</Relationships>",
+        )
+        ids = "".join(f'<p:sldId id="{255 + n}" r:id="rId{n}"/>' for n in range(1, len(slides) + 1))
+        z.writestr("ppt/presentation.xml", f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation {ns}><p:sldIdLst>{ids}</p:sldIdLst></p:presentation>')
+        rels = "".join(
+            f'<Relationship Id="rId{n}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide{n}.xml"/>'
+            for n in range(1, len(slides) + 1)
+        )
+        z.writestr("ppt/_rels/presentation.xml.rels", f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{rels}</Relationships>')
+        for n, (title, body) in enumerate(slides, start=1):
+            z.writestr(
+                f"ppt/slides/slide{n}.xml",
+                f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld {ns}><p:cSld><p:spTree>'
+                '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>'
+                + shape(2, 'type="title"', title) + shape(3, 'idx="1"', body) +
+                "</p:spTree></p:cSld></p:sld>",
+            )
+    return buf.getvalue()
+
+
 def make_pptx(slides: list[tuple[str, str]]) -> bytes:
     try:
         from pptx import Presentation
     except ImportError:
-        pytest.skip("python-pptx isn't installed in core/.venv — can't build the .pptx deck")
+        return _pptx_by_hand(slides)
     prs = Presentation()
     for title, body in slides:
         s = prs.slides.add_slide(prs.slide_layouts[1])
