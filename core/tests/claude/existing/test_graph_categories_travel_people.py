@@ -286,12 +286,6 @@ def test_02_journal_links_a_place_once_it_has_emerged(client):
     assert any(is_dc(t) for t in targets), targets
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: a journal naming a city the graph already knows (place node from an experience/residence) "
-    "gets no place edge until the city reaches PLACE_EMERGENCE_THRESHOLD=3 sources "
-    "(graph_capture.entry_graph_links only keyword-links people/experiences + runs emergence)",
-)
 def test_02_journal_links_a_known_city_named_once(client):
     # Vienna is known from exactly one experience (its city field): one source,
     # so with this journal it's 2 < PLACE_EMERGENCE_THRESHOLD.
@@ -302,11 +296,6 @@ def test_02_journal_links_a_known_city_named_once(client):
     assert any(t.endswith("/vienna") for t in targets), targets
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: first-name-only mention ('coffee with Arjun') makes no mentions_person edge to Arjun Mehta — "
-    "graph.title_mentioned matches the full title only (graph.py link_new_entry)",
-)
 def test_02_journal_first_name_only_mention_links_the_person(client):
     save_journal(client, DAY, "Grabbed coffee with Arjun before work.")
     assert (f"journal:{DAY}", person_id(client, "Arjun Mehta"), "mentions_person") in edges()
@@ -375,12 +364,6 @@ def test_11_dc_experience_invents_no_city_or_person(client):
     no_vault_edges()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: an experience saved alone (no journal toggle/second entry, so no event) never links to its "
-    "visited_date's journal day — travel/api.py create_experience has no on_day edge; only link_event's "
-    "event→day edge reaches the day",
-)
 def test_11_experience_saved_alone_still_reaches_its_existing_day(client):
     save_journal(client, DAY, "Quiet day.")  # the day exists
     exp = commit_experience(client, name="Le Diplomate", city="Washington DC", visited_date=DAY, rating="9/10")
@@ -485,20 +468,29 @@ def test_14_mention_note_links_alfonsos_profile(client):
     no_vault_edges()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: first-name-only mention ('convo with Alfonso') makes no mentions_person edge even when he is the "
-    "only Alfonso — graph.title_mentioned needs the full title 'Alfonso Rivera' (graph.py link_new_entry)",
-)
 def test_14_first_name_only_convo_links_the_only_alfonso(client):
     save_journal(client, DAY, "Long convo with Alfonso about the Minfy reorg.")
     assert (f"journal:{DAY}", person_id(client, "Alfonso Rivera"), "mentions_person") in edges()
 
 
 def test_14_retitled_mention_note_still_links_by_its_folder(client):
+    # 2026-11-11: passes via the unique-first-name alias ("Alfonso" in the
+    # title), NOT via the folder — the folder rule itself is still the gap
+    # pinned by the test below.
     note = commit_note(
         client, mention_folder(client, "Alfonso Rivera"), "Convo with Alfonso", "Talked about the Minfy reorg."
     )
+    assert (note, person_id(client, "Alfonso Rivera"), "mentions_person") in edges()
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="GAP: a note filed in People/<Name>/Mentions links to its person only by text match — a mention "
+    "whose title and body never name him ('Minfy reorg chat') gets no edge; kb/api._sync_note_graph_links "
+    "ignores the folder",
+)
+def test_14_mention_note_naming_nobody_still_links_by_its_folder(client):
+    note = commit_note(client, mention_folder(client, "Alfonso Rivera"), "Minfy reorg chat", "Talked about the reorg.")
     assert (note, person_id(client, "Alfonso Rivera"), "mentions_person") in edges()
 
 
@@ -524,12 +516,6 @@ def test_22_journal_and_lore_note_link_people_and_places_named(client):
     no_vault_edges()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: a lore note naming a city the graph knows (Vienna, place node from a trip plan) gets no place "
-    "edge — non-travel KB notes only reach places via emergence threshold (graph_capture.entry_graph_links; "
-    "place_graph._note_chains only derives places for Planned/Bucket List folders)",
-)
 def test_22_lore_note_links_a_known_city_named(client):
     _save_trip_plan(client)  # Vienna is now a place node
     lore = commit_note(client, LORE_FOLDER, "Grandpa's Vienna story", "Grandpa lived in Vienna for a year in 1971.")
@@ -568,11 +554,6 @@ def test_35_new_person_backlinks_existing_content_after_backfill(tmp_path, monke
     assert {f"journal:{DAY}", note, exp} <= sources
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: creating a person links only FROM the profile's own text; existing notes/journal/experiences "
-    "naming them are back-linked only at the next startup backfill (people/api.create_person doesn't scan)",
-)
 def test_35_new_person_backlinks_existing_content_immediately(client):
     save_journal(client, DAY, "Met Neha Kapoor at the climbing gym.")
     note = commit_note(client, "Personal/Notes", "Climbing partners", "Neha Kapoor belays on Thursdays.")

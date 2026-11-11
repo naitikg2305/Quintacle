@@ -171,7 +171,6 @@ def test_4_week_goals_link_people_named(c):
     assert not mentions(nid, "Priya Shah")
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_PROJECT_MENTION)
 def test_4_week_goals_link_projects_named(c):
     nid = note(c, "Personal Development/Goals", "Week goals 2026-11-09", WEEK_GOALS)
     assert linked(nid, QUINTACLE_HUB)
@@ -195,7 +194,6 @@ def test_6_swe_knowledge_links_frontmatter_related(c):
     assert linked(nid, "note:knowledge/tech-notes/raft-consensus", "related")
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_PROJECT_MENTION)
 def test_6_swe_knowledge_links_project_it_names(c):
     nid = note(c, "Knowledge/Tech Notes", "SQLite WAL mode", SWE_NOTE, links=["Raft consensus"])
     assert linked(nid, QUINTACLE_HUB)
@@ -213,7 +211,6 @@ def test_16_project_hub_backlinks_work_logs_that_name_it(c):
     assert [w["slug"] for w in detail["worklogs"]] == ["work-log-2026-11-10"]
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_PROJECT_MENTION)
 def test_16_project_hub_backlinks_knowledge_notes_that_name_it(c):
     nid = note(c, "Knowledge/Tech Notes", "SQLite WAL mode", SWE_NOTE)
     from quintacle_core.graph import reverse_lookup, get_graph_store
@@ -224,7 +221,6 @@ def test_16_project_hub_backlinks_knowledge_notes_that_name_it(c):
     assert nid in back
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_HUB_BACKFILL)
 def test_16_new_project_hub_backlinks_older_notes_naming_it(c):
     # A knowledge note links to the project via `links:` even before the hub
     # exists (the title is stated, just unresolvable yet) — then the hub is created.
@@ -333,7 +329,6 @@ def test_ledger_entry_links_people_named(c, folder, label, title, body):
     assert not mentions(nid, other)  # ✗ someone the entry never names
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_FOLDER_HUB)
 @pytest.mark.parametrize("folder,label,title,body", LEDGERS, ids=LEDGER_IDS)
 def test_ledger_entry_links_its_folder_hub(c, folder, label, title, body):
     hub = _hub(c, folder, label)
@@ -355,7 +350,6 @@ def test_32_social_post_links_people_named(c):
     assert not mentions(nid, "Priya Shah")
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_PROJECT_MENTION)
 def test_32_social_post_links_projects_named(c):
     nid = note(c, "Me/Social/LinkedIn", "LinkedIn post - Quintacle on phone", LINKEDIN)
     assert linked(nid, QUINTACLE_HUB)
@@ -379,7 +373,6 @@ def test_36_business_plan_links_people_named(c):
     assert not mentions(nid, "Arjun Mehta")
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_PROJECT_MENTION)
 def test_36_business_plan_links_projects_named(c):
     assert c.post("/business/ideas", json=IDEA).status_code == 200
     assert linked("note:business-ideas/meal-prep-delivery/meal-prep-delivery", QUINTACLE_HUB)
@@ -402,20 +395,17 @@ def test_37_contract_plan_links_people_named(c):
     assert mentions(nid, "Arjun Mehta")
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_PROJECT_MENTION)
 def test_37_contract_plan_links_company_named(c):
     nid = _contract_hub(c)
     assert linked(nid, MINFY_HUB)
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_PROJECT_MENTION)
 def test_37_contract_plan_note_links_company_named(c):
     nid = note(c, "Side Hustles", "Minfy contract plan", CONTRACT_SUMMARY)
     assert mentions(nid, "Arjun Mehta")
     assert linked(nid, MINFY_HUB)
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_PROJECT_MENTION + " — so the work logs (linked to the Minfy hub) are unreachable")
 def test_37_contract_plan_reaches_work_logs_that_name_the_company(c):
     out = import_log(c)
     wl = f"note:{out['folder']}/{out['slug']}"
@@ -494,7 +484,6 @@ def test_worklog_reimport_keeps_hub_links(c):
     assert linked(wl, QUINTACLE_HUB, "related") and linked(wl, MINFY_HUB, "related")
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_FOLDER_HUB)
 def test_worklog_links_the_work_logs_folder_hub(c):
     hub = _hub(c, "Daily Log/Work Logs", "Work Logs")
     out = import_log(c)
@@ -538,13 +527,11 @@ def test_6_mcp_knowledge_links_frontmatter_and_people(mcp):
     assert linked(nid, "note:people/arjun-mehta/profile", "mentions_person")
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_PROJECT_MENTION)
 def test_6_mcp_knowledge_links_project_it_names(mcp):
     out = mcp.kb_create_entry(folder="Knowledge/Tech Notes", title="SQLite WAL mode", content=SWE_NOTE)
     assert linked(f"note:{out['folder']}/{out['slug']}", QUINTACLE_HUB)
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_PROJECT_MENTION)
 def test_37_mcp_contract_plan_links_company_named(mcp):
     out = mcp.kb_create_entry(folder="Side Hustles", title="Minfy contract plan", content=CONTRACT_SUMMARY)
     assert linked(f"note:{out['folder']}/{out['slug']}", MINFY_HUB)

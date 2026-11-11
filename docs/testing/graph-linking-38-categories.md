@@ -80,3 +80,29 @@ The list is the owner's handwritten list of what he will actually use Quintacle 
 
 The tests are being written (see `core/tests/claude/existing/test_graph_categories_*.py` and
 `core/tests/user/`). Add dated results here.
+
+### 2026-11-11 (later): gap fixes, deterministic code only
+
+Status note added after the fact; the gap list above is left as written.
+
+- **First names.** A person's first name now links when exactly one tracked person has it. The rule is the drop
+  detector's: `people/store.unique_first_names`, which moved out of `people/llm.py`. The name only counts when it
+  is capitalized, so "I will" never links a tracked Will. Code: `graph.candidate_mentioned` and
+  `graph.proper_name_mentioned`.
+- **Hubs and accounts as candidates.** Career/Projects hub notes and finance accounts are now link candidates, with
+  edge kind `related`.
+  - Hubs are found the way the work-log importer finds them (`logs/worklog.entity_notes`).
+  - Only folder-hub notes count. Deeper notes such as "Design" do not.
+  - Code: `graph_capture.entity_hub_candidates` and `graph_capture.account_candidates`.
+- **Back-links on create.** Creating a person (`people/api.create_person`) or a hub (`projects/api._index_new_note`,
+  `career/api` hub create) now runs the backfill's scan for that one target right away
+  (`graph_capture.backlink_new_target`, provenance `backlink`).
+- **Known places.** A city that is already a place node links on mention (`at_location`, provenance `known_place`).
+  - Place nodes include `place:…/<city>` nodes and `note:places/<slug>`.
+  - The 3-source threshold now only decides when a new place is created.
+  - Code: `graph_capture.known_place_links`.
+- **Experience → day.** An experience gets `on_day` to `journal:<visited_date>` when that day exists. This works
+  in either save order. Code: `graph_capture.visited_day_link` and `visited_day_links_for_day`.
+- **Folder charter hubs.** Each note in a folder is `part_of` that folder's `about-<folder>` note (provenance
+  `folder_hub`). This happens when the note is saved, when the hub is saved (it links the existing notes), and in
+  the backfill. Code: `graph_capture.folder_hub_links`.

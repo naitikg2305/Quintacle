@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ...graph import get_graph_store, link_new_entry, sync_frontmatter_links
-from ...graph_capture import emerge_places_for_text, mention_candidates
+from ...graph_capture import emerge_places_for_text, mention_candidates, visited_day_link
 from ...markdown_paths import resolve_nested, slugify
 from ...place_graph import link_experience_places, link_note_places
 from ...trip_photos import backfill_trip_photos, photos_for_plan
@@ -72,6 +72,12 @@ def create_experience(body: ExperienceCreate) -> dict:
     candidates = mention_candidates(get_people_store().all(), get_store().all())
     text = f"{name}\n{body.notes}\n{' '.join(body.links)}"
     link_new_entry(exp_id, "experience", text, candidates, source_of_edge="structural")
+    # 2026-11-11: an experience saved on its own still reaches its day —
+    # on_day to journal:<visited_date> when that day exists (graph_capture).
+    try:
+        visited_day_link(exp_id, body.visited_date)
+    except Exception:
+        pass
 
     # This experience's city just joined (or reinforced) the place lexicon
     # (graph_capture) — and the experience itself counts as a mention of its

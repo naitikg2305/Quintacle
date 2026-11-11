@@ -9,6 +9,22 @@ from ...markdown_paths import resolve_nested, safe_metadata, slugify
 _HOME = "People"
 
 
+def unique_first_names(known_names: list[str]) -> dict[str, str]:
+    """lowercased first name -> full name, for multi-word names whose first
+    name (3+ letters) belongs to exactly ONE tracked person. "coffee with
+    Arjun" must reach the tracked Arjun Mehta; with two tracked Arjuns the
+    first name alone is ambiguous, so neither gets it (2026-11-11). Lives
+    here (not people/llm.py) so the deterministic graph matcher
+    (graph_capture.mention_candidates) shares the exact rule the drop's
+    person detector uses without importing the model layer."""
+    seen: dict[str, list[str]] = {}
+    for n in known_names:
+        parts = n.split()
+        if len(parts) >= 2 and len(parts[0]) >= 3:
+            seen.setdefault(parts[0].lower(), []).append(n)
+    return {first: names[0] for first, names in seen.items() if len(names) == 1}
+
+
 class PersonStore:
     """One folder per person (People/<Name>/), with their profile at
     <folder>/profile.md — deliberately NOT a flat People/<Name>.md file,

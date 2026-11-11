@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ...graph import link_new_entry, reverse_lookup
-from ...graph_capture import mention_candidates
+from ...graph_capture import mention_candidates, safe_backlink_new_target
 from ...retrieval import safe_index_person
 from ..journal.normalize import canonicalize_name
 from ..travel.store import ExperienceStore
@@ -51,6 +51,10 @@ def create_person(body: PersonCreate) -> dict:
     candidates = mention_candidates(get_store().all(), ExperienceStore(get_store().kb_root).all())
     text = f"{resolved_name}\n{body.notes}\n{' '.join(body.links)}"
     link_new_entry(person_id, "person", text, candidates, source_of_edge="structural")
+    # The other direction, immediately (2026-11-11): existing journal days /
+    # notes / experiences that already name this person link to them now,
+    # not only at the next startup's run_graph_capture_backfill.
+    safe_backlink_new_target(person_id)
 
     # Retrieval index (retrieval.py) — failure-isolated, never fails the save.
     safe_index_person(resolved_name, folder, body.category, body.how_met, body.notes)

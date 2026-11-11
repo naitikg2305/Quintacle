@@ -590,8 +590,12 @@ def create_hub(body: HubCreate) -> dict:
     content = fields.get("summary", "")
     from ..kb.api import _sync_note_graph_links
 
+    from ...graph_capture import safe_backlink_new_target
+
     folder_slug, slug = kb.write(folder, name, content, [], fields=fields)
     _sync_note_graph_links(f"note:{folder_slug}/{slug}", name, content, [])
+    # A new hub back-links existing content that already names it (2026-11-11).
+    safe_backlink_new_target(f"note:{folder_slug}/{slug}")
     safe_index_note(folder_slug, slug, name, content)
     return _hub_view(kb, folder_slug)
 

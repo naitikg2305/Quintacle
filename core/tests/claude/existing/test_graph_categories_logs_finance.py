@@ -328,11 +328,6 @@ def test_5_financial_goals_note_links_the_named_person(client):
     assert any(t.endswith("/profile") and "priya" in t for t in targets), targets
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: accounts aren't link candidates — graph_capture.mention_candidates() only offers people + "
-    "experiences, so naming 'Ally Savings' (finance/accounts.py, Organisation/Finance/Accounts) makes no edge",
-)
 def test_5_financial_goals_note_links_the_named_account(client):
     """#5: a finance-goals note → the account it names (Ally Savings)."""
     note = _goals_note(client)
