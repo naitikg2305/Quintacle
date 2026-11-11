@@ -11,6 +11,7 @@ from uuid import uuid4
 from mcp.server.fastmcp import FastMCP
 
 from .. import db
+from .. import maintenance
 from .. import retrieval
 from ..day_bundle import build_day_bundle, entry_assets
 from ..graph_capture import link_event as capture_link_event
@@ -812,6 +813,13 @@ def undo_write(ledger_id: str) -> dict:
 
 
 def main() -> None:
+    # Same stale-reference cleanup the backend runs at startup — the MCP
+    # process is often the only one running (Claude Code sessions) and serves
+    # search_index/day_recall from the same index. Here in main(), NOT in
+    # init(): init() also runs at plain import time (every test importing
+    # this module), and a cleanup must never write to a store just because
+    # something imported the module. Never raises.
+    maintenance.run_startup_cleanup(DATA_DIR, db_conn)
     mcp.run(transport="stdio")
 
 

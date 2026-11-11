@@ -18,6 +18,7 @@ load_dotenv()
 from . import clock
 from . import db
 from . import llm_dispatch
+from . import maintenance
 from . import retrieval
 from .day_bundle import build_day_bundle
 from .nodes.kb.chat import OllamaError
@@ -415,6 +416,12 @@ def create_app() -> FastAPI:
     # since a pull rebuilds those stores' SQLite indexes when it finishes.
     init_sync(DATA_DIR)
     app.include_router(sync_router)
+
+    # Stale-reference cleanup (maintenance.py): notes/journal days the owner
+    # deleted OUTSIDE the app leave index rows + edges pointing at nothing.
+    # Runs before the catch-up below so nothing re-links to them; edge files
+    # are MOVED (graph/edges-removed/<ts>/), never deleted. Never raises.
+    maintenance.run_startup_cleanup(DATA_DIR, conn)
 
     # One-time per-process catch-up: materializes every pre-existing note's
     # and experience's frontmatter `links` into the edges table (see
@@ -1086,6 +1093,13 @@ def create_app() -> FastAPI:
         the vector lane silently drops out when sqlite-vec/Ollama are absent."""
         type_list = [t for t in (types.split(",") if types else []) if t.strip()]
         return {"query": q, "results": retrieval.retrieve(q, k=k, types=type_list or None)}
+
+    @app.post("/maintenance/cleanup")
+    def maintenance_cleanup(dry_run: bool = True) -> dict:
+        """Stale-reference cleanup on demand (maintenance.clean_stale):
+        dry_run=true (default) only reports; false moves stale edges to
+        graph/edges-removed/<ts>/ and drops their index rows."""
+        return maintenance.clean_stale(DATA_DIR, get_graph_store().conn, dry_run=dry_run)
 
     @app.post("/graph/event")
     def graph_event(body: EventLinkRequest) -> dict:
