@@ -29,7 +29,7 @@ def _deterministic_prose_summaries(monkeypatch):
     monkeypatch.setenv("QUINTACLE_WEB_SEARCH", "off")
     # USDA nutrition db (nutrition_db/): never the owner's real installed
     # db, and the candidate picker never calls a model. Tests that need a
-    # db build one from tests/fixtures/usda and point QUINTACLE_USDA_DB at it.
+    # db build one from tests/claude/existing/fixtures/usda and point QUINTACLE_USDA_DB at it.
     monkeypatch.setenv("QUINTACLE_USDA_DB", "/nonexistent/quintacle-test/usda.db")
     monkeypatch.setenv("QUINTACLE_USDA_PICK_PROVIDER", "off")
     # Local-first image pipeline (2026-11-06, perception/image_policy.py):
