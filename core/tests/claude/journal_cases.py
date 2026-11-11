@@ -22,6 +22,8 @@ the suite modules can assert WHO answered (provider_used local vs cloud).
 """
 from __future__ import annotations
 
+import re
+
 import json
 
 from quintacle_core import clock
@@ -91,8 +93,11 @@ def check_full_day_sleep(c, provider):
     """'7h sleep' happened and is trackable: it must become an activity (or a
     body_stat) about sleep carrying ~7 hours, not be silently dropped."""
     r = full_day(c, provider)
-    hits = [e for e in _of(r, "activity") if "sleep" in _text(e) and abs(float(e.get("hours") or 0) - 7) <= 0.5]
-    hits += [e for e in _of(r, "body_stat") if "sleep" in _text(e) and abs(float(e.get("value") or 0) - 7) <= 0.5]
+    # "sleep"/"slept"/"sleeping" — the word, any tense (fixed 2026-11-11:
+    # Claude wrote "Slept 7h" and the old substring check missed it).
+    is_sleep = lambda e: re.search(r"\bsle(e)?p", _text(e)) is not None  # noqa: E731
+    hits = [e for e in _of(r, "activity") if is_sleep(e) and abs(float(e.get("hours") or 0) - 7) <= 0.5]
+    hits += [e for e in _of(r, "body_stat") if is_sleep(e) and abs(float(e.get("value") or 0) - 7) <= 0.5]
     assert hits, f"no ~7h sleep entry; got {types(r)}: {_dump(r)}"
     return [r]
 
