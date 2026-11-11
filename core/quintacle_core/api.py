@@ -807,8 +807,10 @@ def create_app() -> FastAPI:
             # The §2b statement lane. CSV/OFX/QFX: deterministic parse (the
             # same parse_statement_text /finance/statement/parse exposes, so
             # the review UI can re-parse with a corrected column mapping).
-            # PDF/photo: the existing cloud vision lane transcribes rows (see
-            # finance/llm.py), then identical code-side validation + dedup.
+            # PDF/photo (2026-11-11 local-first): text layer / local OCR, rows
+            # parsed in code, local model only for leftovers, cloud only on
+            # provider=cloud (see finance/llm.py; the request's image provider
+            # pins it), then identical code-side validation + dedup.
             # Either way NOTHING is written here — the proposal carries every
             # transaction into the statement review gate.
             if data is not None and ext in STATEMENT_EXTENSIONS:

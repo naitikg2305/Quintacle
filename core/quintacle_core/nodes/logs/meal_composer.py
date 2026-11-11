@@ -174,6 +174,9 @@ def resolve_composition(
                         "source": "usda",
                         "fdc_id": usda["fdc_id"],
                         "usda_description": usda["usda_description"],
+                        # 2026-11-11: micros the match lacked, filled from the same food's
+                        # other USDA entry (each such micro carries from_fdc_id).
+                        "usda_fill": usda.get("usda_fill") or [],
                         "usda_candidates": usda["usda_candidates"],
                     }
                 )

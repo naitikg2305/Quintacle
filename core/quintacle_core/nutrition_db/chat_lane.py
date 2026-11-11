@@ -48,6 +48,47 @@ _TAIL_STOP = re.compile(r"\b(for|today|tonight|yesterday|this|that|which|how|wha
 _LEAD_JUNK = re.compile(r"^(?:a|an|the|my|some|of|about|roughly|around)\s+", re.I)
 
 
+# 2026-11-11: which nutrient(s) the question is about, so the block answers
+# THAT nutrient first and says which USDA entry its number came from.
+_GROUP_WORDS = {
+    r"omega[- ]?3s?": ("ALA (omega-3)", "EPA (omega-3)", "DPA (omega-3)", "DHA (omega-3)"),
+    r"omega[- ]?6s?": ("Linoleic acid (omega-6)",),
+    r"flavonoids?": tuple(n.name for n in NUTRIENTS if n.group == "Flavonoids"),
+    r"carotenoids?": tuple(n.name for n in NUTRIENTS if n.group == "Carotenoids"),
+    r"calories|kcal|energy": ("Energy",),
+    r"carbs?|carbohydrates?": ("Carbohydrates",),
+    r"sugars?": ("Total Sugars",),
+    r"saturated fats?": ("Saturated Fat",),
+    r"b1": ("Thiamin (B1)",), r"b2": ("Riboflavin (B2)",), r"b3": ("Niacin (B3)",), r"b5": ("Pantothenic Acid (B5)",),
+}
+# Total-fat etc. are only asked for when the bare word isn't part of a longer name.
+_BARE = {"Fat": r"(?<!saturated )(?<!unsaturated )(?<!trans )\bfat\b", "Protein": r"\bprotein\b", "Fiber": r"\bfib(?:er|re)\b"}
+
+
+def _nutrient_patterns() -> list[tuple[re.Pattern, tuple[str, ...]]]:
+    pats = [(re.compile(rf"\b(?:{k})\b", re.I), v) for k, v in _GROUP_WORDS.items()]
+    pats += [(re.compile(v, re.I), (k,)) for k, v in _BARE.items()]
+    for n in NUTRIENTS:
+        if n.name in _BARE or n.name in ("Energy", "Carbohydrates", "Total Sugars", "Saturated Fat"):
+            continue
+        base = re.sub(r"\s*\(.*\)", "", n.name).strip().lower()
+        alts = [re.escape(base)]
+        if base.startswith("vitamin "):
+            alts.append(r"vit\.?\s*" + re.escape(base.split(" ", 1)[1]))
+        pats.append((re.compile(rf"\b(?:{'|'.join(alts)})\b", re.I), (n.name,)))
+    return pats
+
+
+_NUTRIENT_PATS = _nutrient_patterns()
+
+
+def asked_nutrients(text: str) -> list[str]:
+    """Nutrient names (NUTRIENTS spelling) the message asks about, in
+    canonical order. Deterministic word match; empty = a general question."""
+    hit = {name for pat, names in _NUTRIENT_PATS if pat.search(text or "") for name in names}
+    return [n.name for n in NUTRIENTS if n.name in hit]
+
+
 def is_food_message(text: str) -> bool:
     text = text or ""
     return bool(_CUES.search(text) or _QTY_FOOD.search(text) or _COUNT_FOOD.search(text))
@@ -115,6 +156,50 @@ def _panel_lines(panel: dict, with_targets: bool) -> list[str]:
     return lines
 
 
+_SOURCE_LABEL = {"foundation": "Foundation", "sr_legacy": "SR Legacy"}
+
+
+def _release(fdc_id: int) -> str:
+    src = (usda.food(fdc_id) or {}).get("source", "")
+    return f", {_SOURCE_LABEL.get(src, src)}" if src else ""
+
+
+def _same_food(a: str, b: str) -> bool:
+    return re.findall(r"[a-z]+", a.lower()) == re.findall(r"[a-z]+", b.lower())
+
+
+def _asked_lines(comp: dict, asked: list[str], grams: float) -> list[str]:
+    """The asked-about nutrient(s), answered first with the USDA entry each
+    number came from. Order: the matched entry → a sibling entry of the same
+    food (store.profile_filled) → the next ranked candidate with identical
+    description words that has it → "USDA has no value". Pure arithmetic."""
+    if not asked:
+        return []
+    got = usda.profile_filled(comp["fdc_id"])
+    prof = got[0] if got else {}
+    out = [f"Asked about, for {grams:g} g:"]
+    for name in asked:
+        v, fdc = prof.get(name), None
+        if v is not None:
+            fdc = v.get("from_fdc_id") or comp["fdc_id"]
+        else:
+            for cand in comp.get("_candidates") or []:
+                if cand["fdc_id"] == comp["fdc_id"] or not _same_food(cand["description"], comp["usda_description"]):
+                    continue
+                v = (usda.profile_per_100g(cand["fdc_id"]) or {}).get(name)
+                if v is not None:
+                    fdc = cand["fdc_id"]
+                    break
+        if v is None:
+            out.append(f"- {name}: USDA publishes no value for this food in any entry — unknown, not zero.")
+            continue
+        desc = (usda.food(fdc) or {}).get("description", "")
+        approx = " (≈)" if v.get("approx") else ""
+        out.append(f"- {name}: {_fmt(v['amount'] * grams / 100.0, v['unit'])}{approx} "
+                   f"(from \"{desc}\", FDC {fdc}{_release(fdc)})")
+    return out
+
+
 def chat_nutrition_block(user_text: str, chat_provider: str | None = None) -> str | None:
     if os.environ.get("QUINTACLE_CHAT_NUTRITION", "").strip().lower() in ("off", "0", "false", "no"):
         return None
@@ -135,27 +220,37 @@ def _block(user_text: str, chat_provider: str | None) -> str | None:
     pick_provider = "local" if chat_provider == "local" and os.environ.get(usda.PICK_PROVIDER_ENV, "") != "off" else None
     comps, unmatched = [], []
     for item in parse_items(user_text)[:8]:
-        pick, _ = usda.match_and_pick(item["food"], pick_provider)
+        pick, candidates = usda.match_and_pick(item["food"], pick_provider)
         if pick is None:
             unmatched.append(item["food"])
             continue
         comp = component_from_fdc(pick["fdc_id"], item["grams"], item["food"])
         if comp:
-            comps.append({**comp, "_item": item})
+            comps.append({**comp, "_item": item, "_candidates": candidates})
     if not comps:
         return None
+    asked = asked_nutrients(user_text)
     targets = current_targets()
     lines = [
         "## Nutrition facts (USDA FoodData Central, per stated amounts)",
         "Computed by code from the offline USDA database. Use THESE numbers for any nutrient listed; do not estimate "
         "nutrients that aren't listed (say USDA has no value for them). Say which USDA entry was assumed for each food "
-        "(the owner can correct it), and suggest logging the meal or composing it as a meal preset to track it.",
+        "(the owner can correct it) and, for a number taken from another USDA entry of the same food, name that entry; "
+        "then suggest logging the meal or composing it as a meal preset to track it.",
     ]
     for c in comps:
         item = c["_item"]
         how = f" — {item['note']}" if item.get("note") else ""
         lines.append(f"\n### {item['food']}: {item['grams']:g} g{how}")
-        lines.append(f"USDA match: \"{c['usda_description']}\" (FDC {c['fdc_id']})")
+        lines.append(f"USDA match: \"{c['usda_description']}\" (FDC {c['fdc_id']}{_release(c['fdc_id'])})")
+        for f in c.get("usda_fill") or []:
+            named = [n for n in f["nutrients"] if n in asked] or f["nutrients"][:6]
+            more = len(f["nutrients"]) - len(named)
+            lines.append(
+                f"That entry publishes no value for {', '.join(named)}{f' (+{more} more)' if more > 0 else ''}; those "
+                f"numbers come from the same food's other USDA entry \"{f['description']}\" (FDC {f['fdc_id']}"
+                f"{_release(f['fdc_id'])}).")
+        lines += _asked_lines(c, asked, item["grams"])
         if len(comps) > 1:
             lines += _panel_lines(build_panel([c], {}, REFERENCE_TARGETS), with_targets=False)
     total = build_panel(comps, targets, REFERENCE_TARGETS)

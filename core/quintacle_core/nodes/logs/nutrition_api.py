@@ -76,6 +76,7 @@ def component_from_fdc(fdc_id: int, grams: float, name: str | None = None) -> di
         "usda_description": fields["usda_description"],
         "macros": {k: fields[k] for k in _MACROS},
         "micros": fields["micros"],
+        "usda_fill": fields.get("usda_fill") or [],
     }
 
 

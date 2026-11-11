@@ -330,13 +330,74 @@ def profile_per_100g(fdc_id: int) -> dict[str, dict] | None:
     return {r["name"]: {"amount": r["amount"], "unit": r["unit"], "approx": bool(r["approx"])} for r in rows}
 
 
-def preset_from_usda(fdc_id: int, grams: float = 100) -> dict | None:
-    """An ingredient-preset-shaped dict for `grams` of this food: macro
-    columns + every other tracked nutrient as a micro tagged source=usda.
-    Pure scaling of db values."""
+def siblings(fdc_id: int) -> list[dict]:
+    """The SAME food published in another USDA release (2026-11-11). USDA
+    re-analysed some SR Legacy foods for Foundation Foods and kept the SR
+    NDB number, but the Foundation row often carries only ~15 nutrients
+    (no selenium, omega-3s, ...) where the SR Legacy row has ~46. Same food
+    = same NDB number, or (when a row has none) the identical description.
+    Pure lookup; ordered by how many nutrients each row publishes."""
+    conn = _connect()
+    if conn is None:
+        return []
+    with _lock:
+        # An older/hand-built db may lack the ndb column → description only.
+        has_ndb = any(r[1] == "ndb" for r in conn.execute("PRAGMA table_info(foods)"))
+        ndb_sel = "ndb" if has_ndb else "'' AS ndb"
+        me = conn.execute(f"SELECT {ndb_sel}, description FROM foods WHERE fdc_id=?", (fdc_id,)).fetchone()
+        if me is None:
+            return []
+        norm = " ".join(_words(me["description"]))
+        rows = conn.execute(
+            f"""SELECT f.fdc_id, f.description, f.source, {'f.ndb' if has_ndb else "''"} AS ndb,
+                       COUNT(fn.nutrient_id) AS n
+               FROM foods f LEFT JOIN food_nutrient fn ON fn.fdc_id = f.fdc_id
+               WHERE f.fdc_id != ? AND ((? != '' AND {'f.ndb' if has_ndb else "''"} = ?) OR lower(f.description) LIKE ?)
+               GROUP BY f.fdc_id""",
+            (fdc_id, me["ndb"], me["ndb"], f"%{(_words(me['description']) or [''])[0]}%"),
+        ).fetchall()
+    out = [dict(r) for r in rows
+           if (me["ndb"] and r["ndb"] == me["ndb"]) or " ".join(_words(r["description"])) == norm]
+    out.sort(key=lambda r: (-r["n"], r["fdc_id"]))
+    return [{k: r[k] for k in ("fdc_id", "description", "source")} for r in out]
+
+
+def profile_filled(fdc_id: int) -> tuple[dict[str, dict], list[dict]] | None:
+    """profile_per_100g, with every nutrient the row doesn't publish filled
+    from a sibling row of the same food (siblings()). Filled entries carry
+    `from_fdc_id`; the second value lists each sibling used:
+    [{fdc_id, description, source, nutrients}]. Unknown stays absent."""
     prof = profile_per_100g(fdc_id)
     if prof is None:
         return None
+    prof = {k: dict(v) for k, v in prof.items()}
+    fills: list[dict] = []
+    for sib in siblings(fdc_id):
+        extra = {k: v for k, v in (profile_per_100g(sib["fdc_id"]) or {}).items() if k not in prof}
+        if not extra:
+            continue
+        for k, v in extra.items():
+            prof[k] = {**v, "from_fdc_id": sib["fdc_id"]}
+        fills.append({**sib, "nutrients": sorted(extra)})
+    return prof, fills
+
+
+def preset_from_usda(fdc_id: int, grams: float = 100, fill_from_siblings: bool = True) -> dict | None:
+    """An ingredient-preset-shaped dict for `grams` of this food: macro
+    columns + every other tracked nutrient as a micro tagged source=usda.
+    Pure scaling of db values. 2026-11-11: nutrients the matched row lacks
+    are filled from the same food's other USDA release (profile_filled);
+    such a micro carries `from_fdc_id`, and `usda_fill` lists which sibling
+    supplied which nutrients (re-derivable from fdc_id, so not stored)."""
+    if fill_from_siblings:
+        got = profile_filled(fdc_id)
+        if got is None:
+            return None
+        prof, fills = got
+    else:
+        prof, fills = profile_per_100g(fdc_id), []
+        if prof is None:
+            return None
     meta = food(fdc_id) or {}
     ratio = grams / 100.0
     out = {field: round(prof.get(name, {}).get("amount", 0.0) * ratio, 4) for field, name in MACRO_FIELDS.items()}
@@ -347,6 +408,8 @@ def preset_from_usda(fdc_id: int, grams: float = 100) -> dict | None:
         micro = {"nutrient": name, "amount": round(v["amount"] * ratio, 6), "unit": v["unit"], "source": "usda"}
         if v["approx"]:
             micro["approx"] = True
+        if v.get("from_fdc_id"):
+            micro["from_fdc_id"] = v["from_fdc_id"]
         micros.append(micro)
     micros.sort(key=lambda m: m["nutrient"])
     return {
@@ -356,6 +419,7 @@ def preset_from_usda(fdc_id: int, grams: float = 100) -> dict | None:
         "source": "usda",
         "fdc_id": fdc_id,
         "usda_description": meta.get("description", ""),
+        "usda_fill": fills,
     }
 
 
