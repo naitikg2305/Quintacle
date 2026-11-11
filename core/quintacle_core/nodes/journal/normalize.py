@@ -109,3 +109,41 @@ def expand_routine_mentions(entries: list[dict], raw_text: str, known_routines: 
                     "entry_date": None,
                 }
             )
+
+
+_MEAL_SPLIT = re.compile(r"\s*(?:,|\+|&|/|\bplus\b|\band\b|\bwith\b|\balso\b|\bthen\b)\s*", re.IGNORECASE)
+_MEAL_LEAD = re.compile(r"^(?:(?:a|an|the|my|some|one|two|half|another|\d+(?:\.\d+)?)\s+)+", re.IGNORECASE)
+
+
+def meals_named_in(text: str, known_meals: list[dict]) -> list[dict]:
+    """Saved meal presets that `text` names, in order of first appearance
+    (2026-11-11). Two deterministic signals, either is enough:
+      - the preset's name appears as a whole word (graph.title_mentioned —
+        the app's one definition of "mentioned"), or
+      - a piece of the text, cut at list separators (",", "plus", "and",
+        "with", "+", "&"), leading articles/counts stripped, matches the
+        name under canonicalize_name — the same fuzzy match meal_composer
+        uses to resolve a component to a saved meal.
+    A preset whose name sits inside a longer matched preset's name is
+    dropped ("Rice bowl" and "Chicken rice bowl" both hitting one mention)."""
+    from ...graph import title_mentioned
+
+    by_name = {m["name"]: m for m in known_meals or [] if (m.get("name") or "").strip()}
+    if not by_name or not (text or "").strip():
+        return []
+    names = list(by_name)
+    lowered = text.lower()
+    hits: dict[str, int] = {}
+    for name in names:
+        if title_mentioned(name, text):
+            hits[name] = lowered.find(name.lower())
+    for piece in _MEAL_SPLIT.split(text):
+        candidate = _MEAL_LEAD.sub("", piece.strip()).strip()
+        if not candidate:
+            continue
+        matched = canonicalize_name(candidate, names)
+        if matched in by_name and matched not in hits:
+            pos = lowered.find(piece.strip().lower())
+            hits[matched] = pos if pos >= 0 else len(text)
+    kept = [n for n in hits if not any(o != n and n.lower() in o.lower() for o in hits)]
+    return [by_name[n] for n in sorted(kept, key=lambda n: hits[n])]
