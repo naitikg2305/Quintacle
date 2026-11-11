@@ -25,6 +25,8 @@ import re
 
 import pytest
 
+from quintacle_core.graph_capture import wardrobe_item_note_id
+
 from tests.claude.harness import drop, first, make_client, make_pdf, missing_requirements, types
 
 pytestmark = pytest.mark.skipif(os.environ.get("QUINTACLE_USER_DRAFTS") != "1", reason="draft: owner hasn't confirmed")
@@ -92,7 +94,7 @@ def _commit(c, e: dict) -> str | None:
         return f"expense:{r['id']}"
     if t == "wardrobe_item":
         r = _ok(c.post("/wardrobe/items", data={"name": e["suggested_name"], "category": e["category"], "description": e.get("description") or ""}))
-        return f"item:{r['name']}"
+        return r.get("graph_id") or wardrobe_item_note_id(r["name"])
     if t == "outfit_composition":
         for it in e["items"]:
             if it.get("is_new"):
@@ -272,8 +274,8 @@ def test_outfit_reuses_items(client):
     assert {"White Oxford Shirt", "Uniqlo Navy Chinos"} <= names, e
     save(client, r)
     outfit = f"outfit:{e['outfit_name']}"
-    assert linked(client, outfit, "item:White Oxford Shirt", "includes")
-    assert linked(client, outfit, "item:Uniqlo Navy Chinos", "includes")
+    assert linked(client, outfit, wardrobe_item_note_id("White Oxford Shirt"), "includes")
+    assert linked(client, outfit, wardrobe_item_note_id("Uniqlo Navy Chinos"), "includes")
 
 
 # --- #10 / #30 vault documents -------------------------------------------------------
