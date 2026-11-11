@@ -280,7 +280,6 @@ def test_18_record_that_lands_facts_in_the_ledger_and_links_people(c, monkeypatc
     assert mentions(ledger, "Priya Shah")
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_RECORD_THAT_WIPES_LINKS)
 def test_18_record_that_keeps_the_ledger_existing_links(c, monkeypatch):
     ledger = _seed_show_ledgers(c)
     assert linked(ledger, "note:fun/shows/lost", "related")  # before

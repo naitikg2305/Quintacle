@@ -52,11 +52,14 @@ async def create_item(
     # jacket Laura got me in Lisbon") — keyword-link it to known people/
     # experiences from the item's KB-note identity, which /graph already
     # renders. The outfit->item `includes` edges stay structural (synthesized
-    # per request in /graph), so nothing numeric is keyword-matched here.
+    # per request in /graph, targeting this same note id since 2026-11-11),
+    # so nothing numeric is keyword-matched here.
     safe_entry_graph_links(wardrobe_item_note_id(resolved_name), "note", f"{resolved_name}\n{description}")
     return {
         "name": resolved_name,
         "slug": slug,
+        # The item's ONE graph id (its KB note) — what /graph and every edge use.
+        "graph_id": wardrobe_item_note_id(resolved_name),
         "category": category,
         "description": description,
         "assets": asset_paths,

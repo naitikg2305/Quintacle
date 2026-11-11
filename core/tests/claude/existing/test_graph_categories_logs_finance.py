@@ -401,11 +401,6 @@ def test_17_plan_a_meal_references_existing_ingredients_and_saved_meals(client, 
     assert len(client.get("/logs/ingredients").json()) == n_ing
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: LogsRepository.add_meal (nodes/logs/repository.py ~L77) canonicalize_name-upserts the new "
-    "plan's name, so 'Chicken rice plate' folds into the saved 'Chicken rice bowl' and OVERWRITES its macros",
-)
 def test_17_new_plan_never_overwrites_a_similarly_named_saved_meal(client):
     """#17: planning a NEW meal ("Chicken rice plate") saves a new preset;
     the different saved meal "Chicken rice bowl" keeps its own numbers."""

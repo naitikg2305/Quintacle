@@ -197,12 +197,6 @@ def test_grooming_routine_references_items_by_name_not_copies(env):
     assert "must not be copied" not in text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: a grooming routine's step references are not graph edges — /graph (api.py graph()) synthesizes "
-    "routine->exercise and outfit->item `includes` edges but nothing for grooming routines -> grooming items, "
-    "so 'the routine references its items' is invisible to graph traversal.",
-)
 def test_grooming_routine_items_reachable_in_graph(env):
     item = _post_grooming_item(env.client, "CeraVe Foaming Cleanser", "skincare", "")
     env.client.post("/grooming/routines", json={"name": "PM routine", "steps": [item["name"]]})
@@ -297,15 +291,10 @@ def test_outfit_items_saved_once_and_included(env):
     assert r.status_code == 200, r.text
     assert r.json()["items"][0] == "Navy Blazer"  # canonicalized to the existing item, not a copy
     g = graph(env.client)
-    assert graph_has_edge(g, "outfit:Dinner look", "item:Navy Blazer", "includes")
+    # One node per item: the outfit includes the item's own KB-note id (2026-11-11).
+    assert graph_has_edge(g, "outfit:Dinner look", wardrobe_item_note_id("Navy Blazer"), "includes")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: one wardrobe item is TWO /graph nodes — `item:<name>` (outfit includes edges, api.py graph()) and "
-    "`note:personal-development/physical/style-dressing/items/<slug>` (mention edges, wardrobe/api.py via "
-    "graph_capture.wardrobe_item_note_id) — so an outfit never reaches the person/experience its item names.",
-)
 def test_outfit_reaches_person_named_by_its_item(env):
     _post_wardrobe_item(env.client, "Navy Blazer", f"{PERSON} picked it out.")
     env.client.post("/wardrobe/outfits", data={"name": "Dinner look", "items": '["Navy Blazer"]'})
