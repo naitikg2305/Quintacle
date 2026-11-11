@@ -743,7 +743,7 @@ def create_app() -> FastAPI:
         elif entry_type == "experience_entry":
             # Explicit "experience:"/"visit:" prefix — intent already stated,
             # so no relevance gate, always extract fields.
-            estimate = structure_experience(get_description(), provider=provider)
+            estimate = structure_experience(get_description(), provider=provider, reference_date=reference_date)
             entries = [{"type": "experience_entry", **estimate.model_dump(exclude={"is_experience"})}]
             experience_check_text = None  # already is one, don't also run the additive check on itself
         elif entry_type == "person_entry":
@@ -940,7 +940,7 @@ def create_app() -> FastAPI:
         # didn't (experience_check_text falsy, or not experience-worthy).
         exp_estimate = None
         if experience_check_text:
-            exp_estimate = maybe_structure_experience(experience_check_text, provider=provider)
+            exp_estimate = maybe_structure_experience(experience_check_text, provider=provider, reference_date=reference_date)
             if exp_estimate is not None:
                 exp_links: list[str] = []
                 if is_image and entry_type == "kb_entry":

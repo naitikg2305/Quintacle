@@ -79,6 +79,11 @@ def check_person_known_full_name(c, provider):
     _seed_person(c)
     r = drop(c, text=KNOWN_FULL, provider=provider)
     _assert_links_arjun(r)
+    # The text names no city and no date: any experience proposal must not invent either.
+    for e in r.get("entries", []):
+        if e.get("type") == "experience_entry":
+            assert not (e.get("city") or "").strip(), f"invented city: {e.get('city')!r}"
+            assert not e.get("visited_date"), f"invented visit date: {e.get('visited_date')!r}"
     return r
 
 

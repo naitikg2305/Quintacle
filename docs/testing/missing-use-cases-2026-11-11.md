@@ -152,3 +152,13 @@ Final: local **16 pass, 0 fail, 3 skip**; Max **17 pass, 0 fail, 2 skip**. Faked
 Seen but not asserted: on the local model, the experience proposal for "dinner at Compass" invented a
 city (San Francisco) and a visit date (2023-10-15). That's the same "local model invents facts" pattern
 the home-item guard fixed; worth a code guard (keep only what the text states).
+
+### 2026-11-11 follow-up: no invented city or date on experiences
+
+`guard_experience` (travel/llm.py) keeps a city only when its words are in the text, and a visit date only
+when the text states one (a date, or one relative phrase resolved in code). The live full-name people check
+now asserts no city/date is invented for "dinner … at Compass".
+
+Full live suites after this: local **80 pass, 0 fail, 4 skip**; Max **78 pass, 0 fail, 3 skip**.
+Faked suite 1,331 pass. Skips: outfit photo, faces, food photo (all → `tests/user`), web search locally
+(no Brave key).

@@ -94,7 +94,7 @@ def _additive_checks(entries: list[dict], content: str, for_date: date, provider
     # A journal dump is exactly where "dinner with Laura, she's got a big
     # trip coming up" naturally gets written, so this can't be dropped just
     # because Journal is its own page again.
-    exp_estimate = maybe_structure_experience(content, provider=provider)
+    exp_estimate = maybe_structure_experience(content, provider=provider, reference_date=for_date)
     exp_links: list[str] = []
     if exp_estimate is not None:
         entries.append({"type": "experience_entry", **exp_estimate.model_dump(exclude={"is_experience"}), "links": exp_links})

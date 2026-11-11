@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel
 
+from ... import clock
 from ...llm_dispatch import parse_structured
 
 EXPERIENCE_KINDS = ("restaurant", "bar", "club", "activity", "historic", "other")
@@ -65,7 +67,30 @@ def _call_experience_model(description: str, provider: str | None = None) -> Exp
     return parse_structured(_SYSTEM_PROMPT, description, ExperienceEstimate, provider=provider, max_tokens=512).parsed
 
 
-def maybe_structure_experience(description: str, provider: str | None = None) -> ExperienceEstimate | None:
+def guard_experience(est: ExperienceEstimate, text: str, reference_date: date | None = None) -> ExperienceEstimate:
+    """Keep only the facts the text actually states (2026-11-11: the local
+    model turned "dinner at Compass" into "San Francisco, 2023-10-15").
+    Pure code, the same rules as the home-item guard: a city only when its
+    words are in the text; a visit date only when the text states it, either
+    as a date or as one relative phrase ("yesterday", "last Friday")
+    resolved against the reference date."""
+    from ..home.llm import _location_supported, _supported_date
+    from ..journal.relative_dates import find_relative_dates
+
+    if (est.city or "").strip() and not _location_supported(est.city, text):
+        est.city = ""
+    if est.visited_date:
+        stated = _supported_date(est.visited_date, text)
+        if stated is None:
+            rel = find_relative_dates(text, reference_date or clock.today())
+            stated = rel[0][2].isoformat() if len(rel) == 1 else None
+        est.visited_date = stated
+    return est
+
+
+def maybe_structure_experience(
+    description: str, provider: str | None = None, reference_date: date | None = None
+) -> ExperienceEstimate | None:
     """Two-tier gate: a free regex pre-filter first, then — only if that
     matches — one cheap AI call that both decides relevance AND extracts
     fields in a single pass (cheaper than a separate gate-then-extract pair
@@ -76,13 +101,15 @@ def maybe_structure_experience(description: str, provider: str | None = None) ->
     if not _EXPERIENCE_SIGNAL_RE.search(description):
         return None
     result = _call_experience_model(description, provider=provider)
-    return result if result.is_experience else None
+    return guard_experience(result, description, reference_date) if result.is_experience else None
 
 
-def structure_experience(description: str, provider: str | None = None) -> ExperienceEstimate:
+def structure_experience(
+    description: str, provider: str | None = None, reference_date: date | None = None
+) -> ExperienceEstimate:
     """For the explicit "experience:"/"visit:" prefix — intent is already
     stated deterministically, so no gate, no regex pre-filter: always
     extracts fields."""
     result = _call_experience_model(description, provider=provider)
     result.is_experience = True
-    return result
+    return guard_experience(result, description, reference_date)
