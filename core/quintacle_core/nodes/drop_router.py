@@ -142,6 +142,80 @@ def parse_income_text(text: str) -> dict:
     }
 
 
+# 2026-11-11: unprefixed income ("got paid $3,200 from Minfy today"). The
+# journal union has no income type (and must not grow one — schema-size
+# limit, see _ReceiptExtraction), so a model could only answer "expense".
+# Same pattern as the stock gate below: a deterministic, CONSERVATIVE regex
+# gate, then the income: prefix's own deterministic parse. Every phrase is
+# unambiguously money IN; bare "salary"/"paycheck" mentions ("spent $200 of
+# my salary") are NOT enough — they need a receiving verb next to them.
+_INCOME_PHRASE_RE = re.compile(
+    r"\b(?:got|been|just got|finally got) paid\b"
+    r"|\b(?:got|received|deposited|cashed)\s+(?:my|the|a|this\s+\w+'?s?)?\s*(?:pay\s*check|salary|paycheque|wages|bonus)\b"
+    r"|\b(?:pay\s*check|salary|paycheque|wages|bonus)\s+(?:came in|came through|hit|landed|arrived|cleared|(?:was |got )?deposited)\b"
+    r"|\bpayday\b|\bdirect deposit\b"
+    r"|\b(?:received|got|earned|made)\s+\$\s?\d[\d,]*(?:\.\d{1,2})?(?:k\b)?\s+(?:\w+\s+)?from\b"
+    r"|\binvoice\s+(?:\w+\s+)?(?:was|got|has been)\s+paid\b",
+    re.IGNORECASE,
+)
+_INCOME_AMOUNT_RE = re.compile(r"\$\s?\d|\b\d[\d,]*(?:\.\d{1,2})?\s*(?:dollars|usd|bucks)\b|\b\d{1,3}(?:,\d{3})+\b|\b\d{3,}\b", re.IGNORECASE)
+_INCOME_SOURCE_RE = re.compile(
+    r"\bfrom\s+(.+?)(?=\s+(?:today|yesterday|tonight|this\s+\w+|last\s+\w+|on|for|via|into|to|and|but)\b|[,.;!\n]|$)",
+    re.IGNORECASE,
+)
+_INCOME_YESTERDAY_RE = re.compile(r"\byesterday\b", re.IGNORECASE)
+
+
+def looks_like_income(text: str) -> bool:
+    """True only when unprefixed text unambiguously reports money received
+    (a receiving phrase AND an amount). /drop's plain-text fall-through then
+    proposes the same entry the income: prefix would."""
+    return bool(text and _INCOME_PHRASE_RE.search(text) and _INCOME_AMOUNT_RE.search(text))
+
+
+def parse_income_natural(text: str, reference_date=None) -> dict:
+    """parse_income_text (the income: prefix's parse: amount, kind, ISO
+    date) plus a cleaner source for prose: "from <payer>" when present, and
+    "yesterday" resolved against the drop's reference date. "today" stays
+    None (= the day picked in the UI), exactly like the prefix lane."""
+    entry = parse_income_text(text)
+    match = _INCOME_SOURCE_RE.search(text)
+    if match and match.group(1).strip(" -–—,.$"):
+        entry["source"] = match.group(1).strip(" -–—,.")
+    else:
+        entry["source"] = re.sub(r"\b(?:just |finally )?(?:got|been) paid\b|\b(?:today|yesterday)\b", "", entry["source"], flags=re.IGNORECASE)
+        entry["source"] = re.sub(r"\s+", " ", entry["source"]).strip(" -–—,.")
+    if entry["entry_date"] is None and reference_date is not None and _INCOME_YESTERDAY_RE.search(text):
+        from datetime import timedelta
+
+        entry["entry_date"] = (reference_date - timedelta(days=1)).isoformat()
+    return entry
+
+
+# 2026-11-11: the ingredient: prefix's NAME is the food, not the label text.
+# "Fage 0% greek yogurt, per 170g: 90 kcal, 18g protein" -> "Fage 0% greek
+# yogurt". Deterministic: cut at the earliest label marker — "per ..."
+# wording, "macros"/"nutrition facts"/"serving size", a colon, or the first
+# nutrient-number ("90 kcal", "18g protein", "protein 18g", "170g"). A "0%"
+# or "2%" stays (percent is part of the product name).
+_INGREDIENT_NAME_CUT_RE = re.compile(
+    r"[,;(]?\s*\b(?:per|macros?|nutrition(?:al)?|serving size|contains)\b"
+    r"|:"
+    r"|[,;(]?\s*\b\d+(?:\.\d+)?\s*(?:g|grams?|kg|oz|ml|kcal|cal|calories)\b"
+    r"|[,;(]?\s*\b(?:calories|kcal|protein|carbs?|fat|fib(?:er|re))\s*[:=-]?\s*\d",
+    re.IGNORECASE,
+)
+
+
+def ingredient_name_from_text(text: str) -> str:
+    """The food name in typed ingredient/label text, or "" when the text
+    starts straight with label wording (caller falls back)."""
+    first_line = (text or "").strip().split("\n", 1)[0]
+    match = _INGREDIENT_NAME_CUT_RE.search(first_line)
+    name = first_line[: match.start()] if match else first_line
+    return re.sub(r"\s+", " ", name).strip(" -–—,.;:(")[:60].strip()
+
+
 # §8's "cheap natural parse" gate for unprefixed stock text: deterministic,
 # local, no API call — same philosophy as the prefix table above. CONSERVATIVE
 # on purpose: a missed match just falls through to parse_journal_dump (where

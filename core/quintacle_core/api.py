@@ -31,8 +31,11 @@ from .nodes.drop_router import (
     entry_type_for_image_kind,
     extension,
     extract_finance_from_receipt,
+    ingredient_name_from_text,
+    looks_like_income,
     looks_like_preset,
     looks_like_stock_transaction,
+    parse_income_natural,
     parse_income_text,
     parse_prefix,
     parse_routine_definition,
@@ -487,6 +490,24 @@ def create_app() -> FastAPI:
             conversations_root=DATA_DIR / "conversations",  # owner-facing: chats listed (topic + first line)
         )
 
+    def _compose_meal(text: str, provider: str | None) -> dict:
+        """recipe:/dish: lane + the additive meal-preset suggestion. Both the
+        model call and the resolve pass (USDA tie-break, micro estimate for
+        an unmatched component) honour the request's provider — "Redo with
+        cloud" must reach the cloud. Saved meal presets ride along so a dish
+        made FROM saved meals reuses them (one serving each; `serving_g` =
+        a composed meal's real ingredient weight) instead of forking
+        duplicate new ingredients."""
+        repo = get_logs_repo()
+        known_ingredients = [dict(row) for row in repo.list_ingredients()]
+        known_meals = []
+        for row in repo.list_meals():
+            meal = dict(row)
+            meal["serving_g"] = sum(float(c["quantity_g"]) for c in repo.meal_components(meal["id"]))
+            known_meals.append(meal)
+        suggestion = suggest_meal_composition(text, known_ingredients, provider=provider, known_meals=known_meals)
+        return resolve_composition(suggestion, known_ingredients, provider=provider, known_meals=known_meals)
+
     def _propose_preset_entry(text: str, provider: str | None) -> dict | None:
         """Gate -> existing extractor -> dedupe against the registries. Any
         failure is logged and swallowed: an extra suggestion must never
@@ -515,14 +536,12 @@ def create_app() -> FastAPI:
                 return {"type": "workout_routine", **resolved}
             if kind == "ingredient_preset":
                 known_names = [i["name"] for i in get_logs_repo().list_ingredients()]
-                clause = re.split(r"[,\n.:;]", text.strip())[0].strip()
+                clause = ingredient_name_from_text(text) or re.split(r"[,\n.:;]", text.strip())[0].strip()
                 name = canonicalize_name(clause[:60] or "New ingredient", known_names)
                 if _name_exists(name, known_names):
                     return None
                 return {"type": "ingredient_preset", "suggested_name": name, **_source_ingredient_text(text, clause, provider)}
-            known_ingredients = [dict(row) for row in get_logs_repo().list_ingredients()]
-            suggestion = suggest_meal_composition(text, known_ingredients, provider=provider)
-            resolved = resolve_composition(suggestion, known_ingredients)
+            resolved = _compose_meal(text, provider)
             if not resolved["components"] or _name_exists(resolved["meal_name"], [m["name"] for m in get_logs_repo().list_meals()]):
                 return None
             return {"type": "meal_composition", **resolved}
@@ -760,8 +779,11 @@ def create_app() -> FastAPI:
                 estimate = estimate_nutrition_from_image(photos, rest)
                 fields = _source_ingredient_image(estimate.model_dump())
             else:
-                clause = re.split(r"[,\n.:;]", rest.strip())[0].strip() or rest.strip()
-                fields = {"suggested_name": rest.strip()[:60] or "New ingredient", **_source_ingredient_text(rest, clause, None)}
+                # 2026-11-11: the name is the FOOD ("Fage 0% greek yogurt"),
+                # never the raw label text — cut deterministically at the
+                # first per/colon/nutrient-number marker (drop_router).
+                clause = ingredient_name_from_text(rest) or re.split(r"[,\n.:;]", rest.strip())[0].strip() or rest.strip()
+                fields = {"suggested_name": clause[:60] or "New ingredient", **_source_ingredient_text(rest, clause, provider)}
             # Same fuzzy-match safety net as exercise/substance names — a
             # second "Lamb" photo should update the existing preset, not fork
             # a near-duplicate because the model phrased the name slightly differently.
@@ -769,10 +791,7 @@ def create_app() -> FastAPI:
             entries = [{"type": "ingredient_preset", **fields}]
             experience_check_text = f"{fields.get('suggested_name', '')} {rest}"
         elif entry_type == "meal_composition":
-            known_ingredients = [dict(row) for row in get_logs_repo().list_ingredients()]
-            suggestion = suggest_meal_composition(rest, known_ingredients)
-            resolved = resolve_composition(suggestion, known_ingredients)
-            entries = [{"type": "meal_composition", **resolved}]
+            entries = [{"type": "meal_composition", **_compose_meal(rest, provider)}]
         elif entry_type == "finance" and is_image:
             entries = [extract_finance_from_receipt(photos, rest).model_dump()]
             experience_check_text = f"{entries[0].get('merchant', '')} {entries[0].get('category', '')} {rest}"
@@ -862,6 +881,20 @@ def create_app() -> FastAPI:
             parsed = parse_journal_dump(rest, known_meals, reference_date, known_routines=known_routines, provider=provider)
             entries = [e.model_dump() for e in parsed]
             preset_check_text = rest
+            # 2026-11-11: unprefixed income ("got paid $3,200 from Minfy
+            # today"). The journal union has no income type, so the model can
+            # only call it an expense — a regex gate (drop_router.
+            # looks_like_income) proposes the income: prefix's own entry, and
+            # a finance entry for the SAME amount is that misread, dropped.
+            # Other content in the same text (a real $12 lunch) stays.
+            if looks_like_income(rest):
+                income = parse_income_natural(rest, reference_date)
+                entries = [
+                    e for e in entries
+                    if not (e.get("type") == "finance" and abs(float(e.get("amount") or 0) - income["amount"]) < 0.005)
+                ]
+                entries.insert(0, income)
+                experience_check_text = None
 
         # The branch's own proposals (before the additive extras below) are
         # the ones the image pipeline badge describes.

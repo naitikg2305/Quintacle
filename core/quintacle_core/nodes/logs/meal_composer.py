@@ -54,10 +54,21 @@ def _format_ingredient_library(known_ingredients: list[dict]) -> str:
     return "Known ingredient library:\n" + "\n".join(lines)
 
 
+def _format_meal_library(known_meals: list[dict]) -> str:
+    lines = [f"name={m['name']!r} (one serving: {m['kcal']}kcal)" for m in known_meals]
+    return (
+        "Saved meal presets (each is one serving; a dish can include a whole saved meal as ONE "
+        "component — use its exact name, don't break it into ingredients):\n" + "\n".join(lines)
+    )
+
+
 def suggest_meal_composition(
-    description: str, known_ingredients: list[dict], provider: str | None = None
+    description: str, known_ingredients: list[dict], provider: str | None = None,
+    known_meals: list[dict] | None = None,
 ) -> MealCompositionSuggestion:
     system = _SYSTEM_PROMPT + "\n\n" + _format_ingredient_library(known_ingredients)
+    if known_meals:
+        system += "\n\n" + _format_meal_library(known_meals)
     return parse_structured(system, description, MealCompositionSuggestion, provider=provider, max_tokens=1024).parsed
 
 
@@ -74,23 +85,58 @@ def _estimate_micros(name: str, quantity_g: float, provider: str | None) -> list
     return [{"nutrient": m.nutrient, "amount": m.amount * ratio, "unit": m.unit} for m in est.micros]
 
 
+def _meal_component(meal: dict, comp: ComposedComponent) -> dict:
+    """2026-11-11: a component that IS a saved meal preset. A meals row has
+    no gram weight — its stored macros are ONE SERVING — so the component is
+    one serving of that meal at the meal's own numbers (the model's gram and
+    macro guess is discarded, exactly like a library-ingredient match).
+    quantity_g is for display/scaling only: the composed meal's real
+    ingredient weight when the caller knows it (`serving_g`), else the
+    model's gram guess. basis_amount_g == quantity_g, so the review editor's
+    rescale turns a quantity edit into a servings fraction (it scales
+    `servings` along with the macros). Save sends {meal_id, servings}; the
+    backend expands it (logs/api.py create_meal_from_ingredients) — it never
+    becomes a duplicate new ingredient preset."""
+    grams = float(meal.get("serving_g") or 0) or float(comp.quantity_g or 0) or 100.0
+    return {
+        "name": meal["name"],
+        "ingredient_id": None,
+        "meal_id": meal["id"],
+        "servings": 1.0,
+        "quantity_g": grams,
+        "basis_amount_g": grams,
+        "is_new": False,
+        **{k: float(meal.get(k) or 0) for k in ("protein_g", "carbs_g", "fat_g", "fiber_g", "kcal")},
+        "source": "meal",
+    }
+
+
 def resolve_composition(
     suggestion: MealCompositionSuggestion, known_ingredients: list[dict], provider: str | None = None,
-    use_usda: bool = True,
+    use_usda: bool = True, known_meals: list[dict] | None = None,
 ) -> dict:
     """Deterministic pass, not AI: matches each proposed component's name
     against the real ingredient library via the same fuzzy-match used for
     exercise/substance names. A match means the component uses that
     ingredient's REAL stored macros (scaled to the proposed quantity) instead
     of the model's fallback guess — only genuinely new components keep the
-    AI's estimate, staged for review as a new ingredient preset."""
+    AI's estimate, staged for review as a new ingredient preset.
+
+    2026-11-11: a component matching no ingredient but a SAVED MEAL preset
+    (`known_meals`: meals-table rows, optionally with `serving_g`) is that
+    meal, one serving — see _meal_component. Ingredients match first."""
     known_names = [i["name"] for i in known_ingredients]
     by_name = {i["name"]: i for i in known_ingredients}
+    meal_names = [m["name"] for m in known_meals or []]
+    meals_by_name = {m["name"]: m for m in known_meals or []}
     resolved = []
     for comp in suggestion.components:
         matched_name = canonicalize_name(comp.name, known_names)
         ingredient = by_name.get(matched_name)
-        if ingredient is not None:
+        meal = None if ingredient is not None else meals_by_name.get(canonicalize_name(comp.name, meal_names))
+        if meal is not None:
+            resolved.append(_meal_component(meal, comp))
+        elif ingredient is not None:
             ratio = comp.quantity_g / ingredient["basis_amount_g"] if ingredient["basis_amount_g"] else 0
             resolved.append(
                 {

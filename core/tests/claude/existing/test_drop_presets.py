@@ -98,7 +98,7 @@ def _comp(name):
 
 
 def _stub_extractors(monkeypatch, calls, meal_name="Power Bowl", routine_name="Upper Day"):
-    def meal(description, known, provider=None):
+    def meal(description, known, provider=None, known_meals=None):
         calls.append(("meal", provider))
         return MealCompositionSuggestion(meal_name=meal_name, components=[_comp("rice"), _comp("chicken")])
 
@@ -156,7 +156,8 @@ def test_label_shaped_text_adds_ingredient_preset(client, monkeypatch):
     resp = client.post("/drop", data={"text": "Greek yogurt macros per 100g: 59 kcal, 10g protein"})
     assert _types(resp) == ["food", "ingredient_preset"]
     preset = resp.json()["entries"][1]
-    assert preset["suggested_name"] == "Greek yogurt macros per 100g"[:60]
+    # 2026-11-11: named for the food, not the label wording (ingredient_name_from_text)
+    assert preset["suggested_name"] == "Greek yogurt"
     assert preset["basis_amount_g"] == 100 and preset["kcal"] == 120
     assert calls == [("nutrition", None)]
 
@@ -190,9 +191,9 @@ def test_duplicate_routine_name_is_skipped(client, monkeypatch):
 def test_duplicate_ingredient_name_is_skipped(client, monkeypatch):
     calls = []
     _stub_extractors(monkeypatch, calls)
-    name = "Greek yogurt macros per 100g"
+    name = "Greek yogurt"  # 2026-11-11: the food name the label text resolves to
     assert client.post("/logs/ingredients", json={"name": name, "kcal": 59}).status_code == 200
-    resp = client.post("/drop", data={"text": f"{name}: 59 kcal, 10g protein"})
+    resp = client.post("/drop", data={"text": f"{name} macros per 100g: 59 kcal, 10g protein"})
     assert _types(resp) == ["food"]
 
 

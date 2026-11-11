@@ -224,6 +224,10 @@ export type MealComponent = {
   fdc_id?: number | null;
   usda_description?: string;
   usda_candidates?: UsdaCandidate[];
+  // 2026-11-11: a component that IS a saved meal preset (one serving = the
+  // meal's own numbers). Saved as {meal_id, servings}; the backend expands it.
+  meal_id?: number | null;
+  servings?: number;
 };
 
 export type MealCompositionResult = {
@@ -244,6 +248,8 @@ export const createMealFromIngredients = (name: string, components: MealComponen
       components: components.map((c) =>
         c.ingredient_id != null
           ? { ingredient_id: c.ingredient_id, quantity_g: c.quantity_g }
+          : c.meal_id != null
+          ? { meal_id: c.meal_id, servings: c.servings ?? 1, quantity_g: c.quantity_g }
           : {
               name: c.name,
               quantity_g: c.quantity_g,
