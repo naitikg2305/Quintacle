@@ -498,6 +498,26 @@ def deterministic_prose_summary(body: str, title: str = "") -> str:
     return (title or "").strip()[:PROSE_SUMMARY_CHARS]
 
 
+PROSE_SUMMARY_WORDS = 19
+
+
+def _clip_summary(text: str) -> str:
+    """Enforce the one-liner in code: models overrun "under 20 words", and a
+    raw character cut ends mid-word ("…, cost"). Keep whole words only —
+    at most PROSE_SUMMARY_WORDS and PROSE_SUMMARY_CHARS — and drop a
+    dangling separator left at the cut."""
+    words = " ".join((text or "").split()).strip().strip('"').split()
+    out: list[str] = []
+    for w in words[:PROSE_SUMMARY_WORDS]:
+        if len(" ".join(out + [w])) > PROSE_SUMMARY_CHARS:
+            break
+        out.append(w)
+    line = " ".join(out)
+    if len(out) < len(words):
+        line = line.rstrip(",;:—–-").rstrip()
+    return line
+
+
 class ProseSummary(BaseModel):
     summary: str
 
@@ -519,15 +539,15 @@ def prose_summary(title: str, body: str) -> str:
         from . import llm_dispatch
 
         result = llm_dispatch.parse_structured(
-            "Write ONE plain, specific line (under 20 words) summarizing this note for a search index. "
+            "Write ONE plain, specific line (at most 15 words) summarizing this note for a search index. "
             "No preamble, no markdown, no quotes — just the line.",
             f"Title: {title}\n\n{(body or '')[:4000]}",
             ProseSummary,
             provider="local",
             max_tokens=200,
         )
-        line = " ".join(result.parsed.summary.split()).strip()
-        return line[:PROSE_SUMMARY_CHARS] if line else fallback
+        line = _clip_summary(result.parsed.summary)
+        return line or fallback
     except Exception:
         return fallback
 

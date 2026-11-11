@@ -60,11 +60,43 @@ _NEW_PERSON_SIGNAL_RE = re.compile(
 )
 
 
+def _unique_first_names(known_names: list[str]) -> dict[str, str]:
+    """lowercased first name -> full name, for multi-word names whose first
+    name (3+ letters) belongs to exactly ONE tracked person. "coffee with
+    Arjun" must reach the tracked Arjun Mehta; with two tracked Arjuns the
+    first name alone is ambiguous, so neither gets it (2026-11-11)."""
+    seen: dict[str, list[str]] = {}
+    for n in known_names:
+        parts = n.split()
+        if len(parts) >= 2 and len(parts[0]) >= 3:
+            seen.setdefault(parts[0].lower(), []).append(n)
+    return {first: names[0] for first, names in seen.items() if len(names) == 1}
+
+
 def _known_name_re(known_names: list[str]) -> re.Pattern | None:
-    escaped = [re.escape(n) for n in known_names if n.strip()]
+    alternatives = [n for n in known_names if n.strip()] + list(_unique_first_names(known_names))
+    escaped = sorted({re.escape(n) for n in alternatives}, key=len, reverse=True)
     if not escaped:
         return None
     return re.compile(r"\b(" + "|".join(escaped) + r")\b", re.IGNORECASE)
+
+
+def resolve_known_person(name: str, known_names: list[str]) -> str | None:
+    """The tracked person a model-returned name refers to, decided in code:
+    the exact/fuzzy full name, else a lone first name that only one tracked
+    person has. None when it's nobody tracked."""
+    from ..journal.normalize import canonicalize_name
+
+    name = (name or "").strip()
+    if not name or not known_names:
+        return None
+    full = canonicalize_name(name, known_names)
+    if full in known_names:
+        return full
+    parts = name.split()
+    if len(parts) == 1:
+        return _unique_first_names(known_names).get(parts[0].lower())
+    return None
 
 
 class PersonMentionEstimate(BaseModel):
@@ -116,4 +148,14 @@ def maybe_structure_person_mention(
         max_tokens=1024,
     )
     estimate = result.parsed
-    return estimate if estimate.is_person_mention else None
+    if not estimate.is_person_mention:
+        return None
+    # Who it is gets decided in code, not trusted to the model: a small
+    # model may return "Arjun" or call a tracked first name "new". Only an
+    # explicit new-person signal ("met a new guy named Arjun") keeps a
+    # first-name match new.
+    known = resolve_known_person(estimate.person_name, known_names)
+    if known is not None and not (estimate.is_new_person and _NEW_PERSON_SIGNAL_RE.search(description) and known != estimate.person_name):
+        estimate.is_new_person = False
+        estimate.person_name = known
+    return estimate

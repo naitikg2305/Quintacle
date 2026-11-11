@@ -128,3 +128,27 @@ in `core/.env`, or a SearXNG instance. DuckDuckGo blocks automated searches.
 
 Add dated results here once the new tests run, as pass/fail per case, and which are moved to
 `tests/user`.
+
+### 2026-11-11 run (local and Claude via Max)
+
+First run: 4 failures on each model, the same 4 on both, so they were code or test bugs, not model
+bugs.
+
+| Case | Result | What was wrong → fix |
+|---|---|---|
+| 1. People: full name | **Pass** | Test bug: it looked for the folder `people/arjun mehta` but the folder uses the slug `people/arjun-mehta`. The app was right. |
+| 1. People: first name only ("coffee with Arjun") | **Pass** after fix | Code bug: the free pre-check matched full names only, so the model was never asked. Now a first name that only one tracked person has also triggers, and code (not the model) maps "Arjun" → Arjun Mehta. "met a new guy named Arjun" still proposes a new person. |
+| 1. People: new person | Pass | — |
+| 1. People: journal page | **Pass** after the slug test fix | — |
+| 2. Photo object tags | Pass | Face matching skipped: needs real faces → `tests/user`. |
+| 3. Food photo | Skipped | Needs your photos → `tests/user`. |
+| 4. Note summaries | **Pass** after fix | Code bug: the model overran "under 20 words" and code cut at 120 characters mid-word ("…, cost"). Now code keeps whole words, at most 19, and the prompt asks for 15. |
+| 5. Embeddings | Pass | — |
+| 6. Chat fact extraction | Pass | — |
+| 7. Web search | Skipped locally (no Brave key); Max pass | — |
+
+Final: local **16 pass, 0 fail, 3 skip**; Max **17 pass, 0 fail, 2 skip**. Faked suite 1,328 pass.
+
+Seen but not asserted: on the local model, the experience proposal for "dinner at Compass" invented a
+city (San Francisco) and a visit date (2023-10-15). That's the same "local model invents facts" pattern
+the home-item guard fixed; worth a code guard (keep only what the text states).

@@ -55,7 +55,8 @@ def _seed_person(c) -> None:
 
 
 def _mentions(r: dict, who: str) -> list[dict]:
-    """kb_entry proposals filed under a tracked person's People/<Name>/Mentions folder."""
+    """kb_entry proposals filed under a tracked person's People/<slug>/Mentions folder
+    (the folder uses the person's slug, e.g. people/arjun-mehta/Mentions)."""
     return [e for e in r.get("entries", []) if e.get("type") == "kb_entry"
             and folder_of(e).startswith("people/") and folder_of(e).endswith("/mentions") and who in folder_of(e)]
 
@@ -66,7 +67,7 @@ def _new_people(r: dict, who: str) -> list[dict]:
 
 
 def _assert_links_arjun(r: dict) -> None:
-    m = _mentions(r, "arjun mehta")
+    m = _mentions(r, "arjun-mehta")
     assert m, f"no People/Arjun Mehta/Mentions proposal; got {types(r)}: {r.get('entries')}"
     assert not _new_people(r, "arjun"), f"a tracked person was proposed as NEW: {_new_people(r, 'arjun')}"
     content = (m[0].get("content") or "").lower()
@@ -109,7 +110,7 @@ def check_person_known_journal(c, provider):
                   content=JOURNAL_KNOWN.encode(), headers={"Content-Type": "text/plain"})
     assert resp.status_code == 200, f"/journal/parse {resp.status_code}: {resp.text[:400]}"
     r = resp.json()
-    m = _mentions(r, "arjun mehta")
+    m = _mentions(r, "arjun-mehta")
     assert m, f"no Mentions proposal from the journal parse; got {types(r)}: {r.get('entries')}"
     assert JOURNAL_DATE in (m[0].get("title") or ""), f"mention title should carry the journal date: {m[0].get('title')!r}"
     assert "austin" in (m[0].get("content") or "").lower(), f"mention note lost the fact: {m[0].get('content')!r}"
