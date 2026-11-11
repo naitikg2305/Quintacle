@@ -483,12 +483,6 @@ def test_14_retitled_mention_note_still_links_by_its_folder(client):
     assert (note, person_id(client, "Alfonso Rivera"), "mentions_person") in edges()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: a note filed in People/<Name>/Mentions links to its person only by text match — a mention "
-    "whose title and body never name him ('Minfy reorg chat') gets no edge; kb/api._sync_note_graph_links "
-    "ignores the folder",
-)
 def test_14_mention_note_naming_nobody_still_links_by_its_folder(client):
     note = commit_note(client, mention_folder(client, "Alfonso Rivera"), "Minfy reorg chat", "Talked about the reorg.")
     assert (note, person_id(client, "Alfonso Rivera"), "mentions_person") in edges()
