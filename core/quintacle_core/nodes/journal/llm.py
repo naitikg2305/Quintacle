@@ -9,7 +9,8 @@ from pydantic.json_schema import SkipJsonSchema
 
 from ... import clock
 from ...llm_dispatch import parse_structured
-from .normalize import expand_routine_mentions
+from .normalize import expand_routine_mentions, meals_named_in
+from .relative_dates import apply_relative_dates
 
 ACTIVITY_CATEGORIES = ("productivity", "social", "leisure", "yourself", "emotional")
 
@@ -301,6 +302,58 @@ def _resolve_finance_kinds(entries: list, provider: str | None = None) -> None:
             entry.kind = by_index[i]
 
 
+def _link_meal_presets(entries: list, known_meals: list[dict], raw_text: str, forced_type: str | None) -> None:
+    """Deterministic post-pass over food entries, in place (2026-11-11).
+    Live tests: "meal: chicken rice bowl plus a greek yogurt bowl" with both
+    saved came back as ONE food entry (local: meal_id of the first only;
+    Claude: meal_id None). Whether text names a saved meal is string
+    matching (normalize.meals_named_in), not judgment, so code decides:
+      - a food entry naming 2+ saved meals is split into one food entry per
+        meal, each with its meal_id and estimated_kcal 0 (the preset's real
+        macros are used — the prompt's own contract), keeping meal_type and
+        entry_date; a meal another food entry already links is not repeated.
+      - a food entry naming exactly one saved meal gets that meal_id when
+        the model left it None (and no other entry already links it).
+    What is matched is the entry's description — except on the forced
+    "food" lane (a "meal:"/"food:" prefix) with one food entry, where the
+    whole text IS that one food log, so the raw text is matched instead
+    (the model may shorten the description to just the first meal)."""
+    if not known_meals:
+        return
+    foods = [e for e in entries if isinstance(e, FoodEntry)]
+    if not foods:
+        return
+    whole_text = forced_type == "food" and len(foods) == 1
+    claimed = {e.meal_id for e in foods if e.meal_id is not None}
+    out: list = []
+    for e in entries:
+        if not isinstance(e, FoodEntry):
+            out.append(e)
+            continue
+        named = meals_named_in(raw_text if whole_text else e.description, known_meals)
+        if len(named) >= 2:
+            splits = [m for m in named if m["id"] == e.meal_id or m["id"] not in claimed]
+            if splits:
+                for m in splits:
+                    claimed.add(m["id"])
+                    out.append(
+                        FoodEntry(
+                            type="food",
+                            meal_type=e.meal_type,
+                            description=m["name"],
+                            meal_id=m["id"],
+                            estimated_kcal=0,
+                            entry_date=e.entry_date,
+                        )
+                    )
+                continue
+        elif len(named) == 1 and e.meal_id is None and named[0]["id"] not in claimed:
+            e.meal_id = named[0]["id"]
+            claimed.add(e.meal_id)
+        out.append(e)
+    entries[:] = out
+
+
 def parse_journal_dump(
     raw_text: str,
     known_meals: list[dict] | None = None,
@@ -337,8 +390,16 @@ def parse_journal_dump(
         )
     result = parse_structured(system, raw_text, ParsedJournal, provider=provider, max_tokens=16000)
     entries = result.parsed.entries
+    # Deterministic meal-preset linking (2026-11-11) — before the date
+    # passes so split-off entries get dated like any other.
+    _link_meal_presets(entries, known_meals or [], raw_text, forced_type)
     if _DATE_SIGNAL_RE.search(raw_text):
         _resolve_entry_dates(raw_text, entries, ref, provider=provider)
+    # Deterministic relative dates (2026-11-11): "yesterday" against a known
+    # reference day is arithmetic, so code decides it AFTER the model pass
+    # and overrides it — live tests caught both providers leaving
+    # "yesterday I spent $15" undated. Rule documented in relative_dates.py.
+    apply_relative_dates(entries, raw_text, ref)
     _resolve_finance_kinds(entries, provider=provider)
     # Deterministic routine expansion — the prompt asks the model to expand a
     # mentioned routine into its preset exercises; cloud obeys, small local
