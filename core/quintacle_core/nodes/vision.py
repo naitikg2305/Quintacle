@@ -25,9 +25,20 @@ def vision_prompt(n_photos: int, question: str | None = None) -> str:
             f"Answer this question about the attached photo{'s' if n_photos > 1 else ''}, "
             f"based only on what's actually visible: {question.strip()}"
         )
+    # 2026-11-11 live finding: a cloud caption of a passport data page
+    # summarised it ("a US passport for Jane Doe") and lost the printed
+    # dates, so the Document Vault entry had no expiry. Anything printed
+    # must survive the description step verbatim.
+    transcribe = (
+        " If it shows a document, ID, card, certificate, receipt, label or other printed text, "
+        "also transcribe the key printed text verbatim — every date WITH its label (e.g. "
+        "'Date of issue: 02 JAN 2020', 'Date of expiration: 01 JAN 2030'), ID/document numbers, "
+        "names and amounts."
+    )
     if n_photos > 1:
         return (
             "These are two photos of the same thing (e.g. front and back, or a closer detail shot) "
             "— describe them together in a few sentences, for filing into a personal knowledge base."
+            + transcribe
         )
-    return "Describe what's in this image in a few sentences, for filing into a personal knowledge base."
+    return "Describe what's in this image in a few sentences, for filing into a personal knowledge base." + transcribe
