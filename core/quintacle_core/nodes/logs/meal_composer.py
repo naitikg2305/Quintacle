@@ -1,22 +1,25 @@
 from __future__ import annotations
 
 from pydantic import BaseModel
+from pydantic.json_schema import SkipJsonSchema
 
 from ...llm_dispatch import parse_structured
 from ..journal.normalize import canonicalize_name
 from .nutrition_targets import NUTRIENT_UNITS
 from .usda_sourcing import usda_proposal
 
+# 2026-11-11: the model no longer guesses 30 micronutrients per component —
+# that was ~4,000 output tokens (a 5-minute local call) thrown away whenever
+# the component matched the library or USDA, i.e. almost always. It names
+# components + grams + macros; micros come from USDA, and only an unmatched
+# component gets a separate micro estimate (resolve_composition).
 _SYSTEM_PROMPT = (
     "You help assemble a meal preset out of ingredients. Given a description of a dish being "
     "put together and a library of known ingredient presets, list every component: its name "
-    "(match the library's naming if it's clearly the same thing), and the quantity used in "
-    "grams. Also give your own best-guess nutrition estimate for that quantity of each "
-    "component (protein/carbs/fat/fiber/kcal, plus every one of these micronutrients in the "
-    "exact unit given, 0 if truly negligible) — this is only used as a fallback for anything "
-    "not actually in the library, so it's fine if it's approximate for library items:\n"
-    + "\n".join(f"- {nutrient}: {unit}" for nutrient, unit in NUTRIENT_UNITS.items())
-    + "\n\nAlso propose meal_name, a short name for the finished dish."
+    "(match the library's naming if it's clearly the same thing; otherwise a plain food name "
+    "like 'basmati rice, cooked'), and the quantity used in grams. Also give a rough macro "
+    "estimate for that quantity (protein/carbs/fat/fiber/kcal) — only a fallback, approximate "
+    "is fine. Also propose meal_name, a short name for the finished dish."
 )
 
 
@@ -34,7 +37,9 @@ class ComposedComponent(BaseModel):
     fat_g: float
     fiber_g: float
     kcal: float
-    micros: list[MicroEstimate]
+    # Never asked of the model (see _SYSTEM_PROMPT note); filled for an
+    # unmatched component by resolve_composition.
+    micros: SkipJsonSchema[list[MicroEstimate]] = []
 
 
 class MealCompositionSuggestion(BaseModel):
@@ -53,7 +58,20 @@ def suggest_meal_composition(
     description: str, known_ingredients: list[dict], provider: str | None = None
 ) -> MealCompositionSuggestion:
     system = _SYSTEM_PROMPT + "\n\n" + _format_ingredient_library(known_ingredients)
-    return parse_structured(system, description, MealCompositionSuggestion, provider=provider, max_tokens=4096).parsed
+    return parse_structured(system, description, MealCompositionSuggestion, provider=provider, max_tokens=1024).parsed
+
+
+def _estimate_micros(name: str, quantity_g: float, provider: str | None) -> list[dict]:
+    """Micros for a component neither the library nor USDA knows — one
+    small estimate call for just that food, scaled to the quantity used."""
+    from .nutrition_llm import estimate_nutrition
+
+    try:
+        est = estimate_nutrition(f"{quantity_g:g} g {name}", provider=provider)
+    except Exception:
+        return []
+    ratio = quantity_g / est.basis_amount_g if est.basis_amount_g else 1.0
+    return [{"nutrient": m.nutrient, "amount": m.amount * ratio, "unit": m.unit} for m in est.micros]
 
 
 def resolve_composition(
@@ -126,7 +144,10 @@ def resolve_composition(
                     "fat_g": comp.fat_g,
                     "fiber_g": comp.fiber_g,
                     "kcal": comp.kcal,
-                    "new_ingredient_micros": [{**m.model_dump(), "source": "estimated"} for m in comp.micros],
+                    "new_ingredient_micros": [
+                        {**m, "source": "estimated"}
+                        for m in ([mm.model_dump() for mm in comp.micros] or _estimate_micros(comp.name, comp.quantity_g, provider))
+                    ],
                     "source": "estimated",
                     "usda_candidates": (usda or {}).get("usda_candidates", []),
                 }

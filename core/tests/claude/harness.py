@@ -120,6 +120,13 @@ def _max_only() -> None:
 
     max_backend.run = counted
     max_backend.CloudClient._api = no_api
+    # Chat's Max path falls back through its own direct Anthropic call.
+    import quintacle_core.nodes.kb.chat as kb_chat
+
+    def no_chat_api(*a, **k):
+        raise CloudBlocked("chat's metered-API fallback is blocked in tests")
+
+    kb_chat._run_anthropic = no_chat_api
 
 
 def make_client(tmp: Path, seed_store: Path | None = None, cloud: bool = False):

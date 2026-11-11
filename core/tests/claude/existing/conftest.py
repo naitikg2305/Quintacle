@@ -42,3 +42,22 @@ def _deterministic_prose_summaries(monkeypatch):
     from quintacle_core.perception import ocr as _ocr
 
     _ocr.clear_cache()
+
+
+@pytest.fixture(autouse=True)
+def _never_a_real_local_model(monkeypatch):
+    """2026-11-11: a faked test must never reach the real Ollama — an
+    unstubbed call used to queue behind the GPU and hang the suite. Blocks
+    the network hop to the Ollama port only; tests that stub urlopen or
+    _parse_local themselves (after this fixture) still win."""
+    import urllib.request
+
+    real = urllib.request.urlopen
+
+    def guarded(req, *a, **k):
+        url = getattr(req, "full_url", req)
+        if ":11434" in str(url):
+            raise OSError("real local-model call in a faked test — stub it")
+        return real(req, *a, **k)
+
+    monkeypatch.setattr(urllib.request, "urlopen", guarded)
