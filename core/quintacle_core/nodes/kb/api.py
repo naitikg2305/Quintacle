@@ -404,6 +404,11 @@ def describe_asset(body: AssetDescribeRequest) -> dict:
     BILLED: every call here costs real Anthropic API budget (one vision
     call on DEFAULT_MODEL) — this is the deliberate, on-demand counterpart
     to the free drop-time description already stored in the note's body.
+    [2026-11-11 correction: no longer true by default. describe_images
+    follows the image policy (perception/image_policy.py,
+    QUINTACLE_IMAGE_PROVIDER, default local): the local VLM + local OCR
+    answer with no API spend; the cloud is called only when the provider is
+    auto (as a fallback) or cloud. A private note's asset is pinned local.]
 
     Bytes are read through the store's clamped read_asset — a path that
     escapes the KB root reads as a plain 404, never a traversal into the

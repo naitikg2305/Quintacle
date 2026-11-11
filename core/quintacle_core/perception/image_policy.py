@@ -31,6 +31,14 @@ Redo-with-cloud UI sees image calls too.
 
 Legacy QUINTACLE_VISION (describe_images' old local/auto/cloud switch) is
 still honored when explicitly set — see nodes/kb/drop.describe_images.
+[2026-11-11 correction: describe_images no longer reads QUINTACLE_VISION
+itself — it was a second source of truth, and QUINTACLE_VISION=cloud left on
+a machine silently made image description default to cloud. image_provider()
+below is now the ONLY place the legacy var is read: when set (and
+QUINTACLE_IMAGE_PROVIDER isn't), it logs a one-time deprecation warning and
+maps local->local, auto->auto, cloud->auto. cloud deliberately maps to auto
+(local first, cloud only as fallback) so local stays the default; forcing
+cloud now takes QUINTACLE_IMAGE_PROVIDER=cloud or a per-request Redo.]
 """
 
 from __future__ import annotations
@@ -43,6 +51,10 @@ from typing import Callable, TypeVar
 logger = logging.getLogger(__name__)
 
 IMAGE_PROVIDER_ENV = "QUINTACLE_IMAGE_PROVIDER"
+LEGACY_VISION_ENV = "QUINTACLE_VISION"
+# Legacy QUINTACLE_VISION value -> image provider. cloud -> auto on purpose:
+# a stale legacy setting may widen to a cloud FALLBACK, never to cloud-first.
+_LEGACY_VISION_MAP = {"local": "local", "auto": "auto", "cloud": "auto"}
 VALID_IMAGE_PROVIDERS = ("local", "auto", "cloud")
 DEFAULT_IMAGE_PROVIDER = "local"
 
@@ -75,12 +87,43 @@ def request_override() -> str | None:
     return _request_provider.get()
 
 
+_legacy_warned = False
+
+
+def _legacy_vision_mode() -> str | None:
+    """The mapped legacy QUINTACLE_VISION value, or None when unset. Warns
+    once per process (deprecation); an unknown value is ignored (local)."""
+    global _legacy_warned
+    raw = (os.environ.get(LEGACY_VISION_ENV) or "").strip().lower()
+    if not raw:
+        return None
+    mapped = _LEGACY_VISION_MAP.get(raw)
+    if not _legacy_warned:
+        _legacy_warned = True
+        logger.warning(
+            "%s=%r is deprecated — use %s (local|auto|cloud). Mapped to %r%s.",
+            LEGACY_VISION_ENV,
+            raw,
+            IMAGE_PROVIDER_ENV,
+            mapped or DEFAULT_IMAGE_PROVIDER,
+            " (cloud is now only a fallback; set QUINTACLE_IMAGE_PROVIDER=cloud to force it)" if raw == "cloud" else "",
+        )
+    return mapped
+
+
 def image_provider(provider: str | None = None, *, private: bool = False) -> str:
-    """explicit arg > request override > QUINTACLE_IMAGE_PROVIDER > local.
+    """explicit arg > request override > QUINTACLE_IMAGE_PROVIDER > legacy
+    QUINTACLE_VISION (mapped, deprecated; 2026-11-11) > local.
     `private` pins local no matter what."""
     if private:
         return "local"
-    mode = (provider or _request_provider.get() or os.environ.get(IMAGE_PROVIDER_ENV) or DEFAULT_IMAGE_PROVIDER).strip().lower()
+    mode = (
+        provider
+        or _request_provider.get()
+        or os.environ.get(IMAGE_PROVIDER_ENV)
+        or _legacy_vision_mode()
+        or DEFAULT_IMAGE_PROVIDER
+    ).strip().lower()
     if mode not in VALID_IMAGE_PROVIDERS:
         raise ValueError(f"unknown image provider {mode!r} — use one of {', '.join(VALID_IMAGE_PROVIDERS)}")
     return mode

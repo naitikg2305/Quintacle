@@ -121,6 +121,14 @@ The owner uses drops, chat, photos and journal daily.
   - The `/kb/asset/describe` docstring says "BILLED: every call here costs real Anthropic API budget".
   - `describe_images` still honors the legacy `QUINTACLE_VISION` env. If that's set to `cloud` on a machine, image description silently defaults to cloud.
 
+**Status 2026-11-11 (later the same day):** fixed in code, the findings above are kept as written.
+`maybe_polish` (#44) now goes through `llm_dispatch.parse_structured` pinned to `provider="local"`, so cloud
+only runs if the user sets `QUINTACLE_AUTOJOURNAL_POLISH_PROVIDER=auto|cloud`. `QUINTACLE_VISION` is read
+only by `image_policy.image_provider()`, as a deprecated alias that logs a warning once and maps `cloud` to
+`auto`. The three stale docstrings have dated correction notes. The Max-to-metered fallback is unchanged
+because it's an owner decision. Faked tests are in
+`core/tests/claude/existing/test_local_first_polish_and_vision_1111.py`.
+
 ## Suggested one-line live checks for each gap
 
 These are descriptions only; none of these tests were written.

@@ -84,15 +84,17 @@ def describe_images(
     when set) > "local". The local path also folds in local OCR text (a
     document/sign/whiteboard reads better as text than as a caption) and, if
     the VLM is down, still answers from OCR text + YOLO tags. `private`
-    pins local regardless (a private note's asset never reaches cloud)."""
+    pins local regardless (a private note's asset never reaches cloud).
+
+    2026-11-11 — image_policy.image_provider() is now the single source of
+    truth: this function no longer reads QUINTACLE_VISION directly (the
+    "Provider switch" list above is history). The legacy var is still
+    honored there, with a one-time deprecation warning, but legacy `cloud`
+    maps to `auto` — so a stale QUINTACLE_VISION=cloud can no longer make
+    image description cloud-first. Local stays the default."""
     from ...perception import image_policy
 
-    if private:
-        mode = "local"
-    elif provider or image_policy.request_override() or os.environ.get(image_policy.IMAGE_PROVIDER_ENV):
-        mode = image_policy.image_provider(provider)
-    else:
-        mode = (os.environ.get("QUINTACLE_VISION") or image_policy.DEFAULT_IMAGE_PROVIDER).strip().lower()
+    mode = image_policy.image_provider(provider, private=private)
     if mode in ("local", "auto"):
         local = _describe_images_local(photos, question)
         if local is not None:

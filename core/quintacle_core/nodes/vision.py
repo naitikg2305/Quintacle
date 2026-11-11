@@ -19,7 +19,8 @@ def vision_prompt(n_photos: int, question: str | None = None) -> str:
     """The one photo-description prompt every vision backend uses — the cloud
     path (describe_images) and the local path (describe_images_local) share
     it, so flipping QUINTACLE_VISION changes WHO answers, never what is
-    being asked."""
+    being asked. [2026-11-11: the switch is QUINTACLE_IMAGE_PROVIDER now
+    (perception/image_policy.py); QUINTACLE_VISION is a deprecated alias.]"""
     if question and question.strip():
         return (
             f"Answer this question about the attached photo{'s' if n_photos > 1 else ''}, "

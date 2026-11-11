@@ -681,7 +681,9 @@ def day_recall(for_date: str) -> dict:
     never have to re-infer which rows belong together. Deterministic and
     read-only: no AI call, no ledger entry — YOU do the narrating. Same
     assembly the app's own GET /day/{date} uses. Pair with describe_photo
-    for a fresh (billed) look at any listed photo."""
+    for a fresh (billed) look at any listed photo. [2026-11-11: describe_photo
+    is local by default now — billed only when the image provider is
+    auto/cloud.]"""
     bundle = build_day_bundle(
         date.fromisoformat(for_date),
         journal_store=journal_store,
@@ -714,7 +716,12 @@ def describe_photo(folder: str, slug_or_path: str, question: str | None = None) 
     `question` makes the call answer that question about the photo instead
     of generically describing it. Image bytes never cross MCP — they're
     read and sent to vision server-side; only text comes back. It's a
-    read: no ledger entry, nothing to undo."""
+    read: no ledger entry, nothing to undo.
+
+    [2026-11-11 correction: "billed" / "metered Anthropic key" is stale —
+    this runs drop.describe_images under the image policy (default local:
+    local VLM + OCR, no API spend; cloud only when QUINTACLE_IMAGE_PROVIDER
+    is auto/cloud).]"""
     if slug_or_path.startswith("assets/"):
         asset_path = slug_or_path
         if _asset_owned_by_private_note(folder, asset_path):

@@ -32,6 +32,8 @@ import os
 import re
 from datetime import date, datetime
 
+from pydantic import BaseModel
+
 from ...graph import create_edge
 from ..journal.api import get_store as get_journal_store
 from ..journal.normalize import canonicalize_name
@@ -39,7 +41,6 @@ from ..people.api import get_store as get_people_store
 from ..travel.api import get_store as get_travel_store
 from .drop import _IMAGE_MIME, extract_photo_date, extract_photo_datetime, is_image
 from .store import _ASSET_LINES_RE
-from ...max_backend import cloud_client
 
 # Below this similarity score a "match" is treated as unknown — it goes to
 # the tag flow instead of being guessed into the journal/graph.
@@ -247,34 +248,45 @@ def place_from_photo_folder(folder: str) -> str | None:
     return " ".join(w.capitalize() for w in segment.replace("-", " ").split()) or None
 
 
+POLISH_ENV = "QUINTACLE_AUTOJOURNAL_POLISH"
+POLISH_PROVIDER_ENV = "QUINTACLE_AUTOJOURNAL_POLISH_PROVIDER"
+
+
+class PolishedLine(BaseModel):
+    sentence: str
+
+
 def maybe_polish(line: str) -> str:
     """Optional, OFF by default: QUINTACLE_AUTOJOURNAL_POLISH=1 routes the
-    already-composed FACTS through one small DEFAULT_MODEL call to phrase a
+    already-composed FACTS through one small model call to phrase a
     nicer sentence. BILLED — one metered API call per photo commit. Facts
     in, sentence out only; any failure falls back to the deterministic
-    line, which is always the source of those facts."""
-    if os.environ.get("QUINTACLE_AUTOJOURNAL_POLISH") != "1":
+    line, which is always the source of those facts.
+
+    2026-11-11 correction: the "BILLED" note above described the original
+    cloud-only implementation (a direct DEFAULT_MODEL call — flagged as a
+    local-first violation in docs/testing/model-coverage-2026-11-11.md
+    #44). Prose polish is a named local-default task (CLAUDE.md), so it now
+    goes through llm_dispatch.parse_structured pinned to provider="local"
+    (the same pattern as retrieval.prose_summary): no tokens billed, and a
+    down daemon / bad output just keeps the deterministic line — never a
+    silent cloud call. Cloud is a user choice only:
+    QUINTACLE_AUTOJOURNAL_POLISH_PROVIDER=auto|cloud opts in."""
+    if os.environ.get(POLISH_ENV) != "1":
         return line
+    provider = (os.environ.get(POLISH_PROVIDER_ENV) or "local").strip().lower() or "local"
     try:
-        import anthropic
+        from ... import llm_dispatch
 
-        from ...llm_config import DEFAULT_MODEL
-
-        client = cloud_client()
-        response = client.messages.create(
-            model=DEFAULT_MODEL,
+        result = llm_dispatch.parse_structured(
+            "Rewrite this photo journal line as one natural sentence. Keep every fact, "
+            "add none, keep the leading 📷. Reply with only the sentence.",
+            line,
+            PolishedLine,
+            provider=provider,
             max_tokens=200,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Rewrite this photo journal line as one natural sentence. Keep every fact, "
-                        f"add none, keep the leading 📷. Reply with only the sentence.\n\n{line}"
-                    ),
-                }
-            ],
         )
-        polished = next((b.text for b in response.content if b.type == "text"), "").strip()
+        polished = " ".join(result.parsed.sentence.split()).strip()
         return polished or line
     except Exception:
         return line

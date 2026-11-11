@@ -60,11 +60,15 @@ def test_private_pins_local_even_when_cloud_is_configured(monkeypatch):
 
 
 def test_explicit_cloud_same_as_default(monkeypatch):
+    # 2026-11-11: legacy QUINTACLE_VISION=cloud no longer forces cloud-first —
+    # image_policy maps it to auto (local first, cloud fallback). Was:
+    # local must not run, cloud answers. Name kept for history.
     monkeypatch.setenv("QUINTACLE_VISION", "cloud")
+    monkeypatch.delenv("QUINTACLE_IMAGE_PROVIDER", raising=False)
     monkeypatch.setattr(drop, "_describe_images_cloud", lambda photos, question=None: "cloud says")
-    monkeypatch.setattr(local_vlm, "describe_images_local", _local_must_not_run)
+    monkeypatch.setattr(local_vlm, "describe_images_local", lambda photos, question=None: "local says")
 
-    assert drop.describe_images(PHOTOS) == "cloud says"
+    assert drop.describe_images(PHOTOS) == "local says"
 
 
 def test_local_mode_uses_local_backend(monkeypatch):

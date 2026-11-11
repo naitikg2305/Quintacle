@@ -27,6 +27,11 @@ QUINTACLE_VISION_BACKEND:
 
 The selection lives here, inside the entry function, so the
 QUINTACLE_VISION dispatch in nodes/kb/drop.py stays backend-agnostic.
+
+[2026-11-11 correction: QUINTACLE_VISION=cloud is no longer the default —
+local has been the default since 2026-11-06, and the dispatch is now
+perception/image_policy.image_provider() (QUINTACLE_IMAGE_PROVIDER), where
+QUINTACLE_VISION survives only as a deprecated alias (cloud maps to auto).]
 """
 
 from __future__ import annotations

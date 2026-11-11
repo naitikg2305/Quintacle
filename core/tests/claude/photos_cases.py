@@ -253,7 +253,15 @@ def check_gps_photo_place(c, provider):
     So in local mode only the deterministic part of the line (coords +
     taken) is required, and the drop itself must not need the cloud — a
     local drop that dies with "cloud call blocked" here is a finding
-    (compute_photo_folder geocodes every GPS photo, home or abroad)."""
+    (compute_photo_folder geocodes every GPS photo, home or abroad).
+
+    2026-11-11 correction: the "no local geocoder" note above is stale —
+    geocode() is local-first now (offline GeoNames gazetteer, geo_offline.py;
+    Claude only when the image provider is auto/cloud). The local-mode
+    assertions below still require only coords + taken, so a machine without
+    the gazetteer data installed keeps passing; the offline place names are
+    not asserted (a coverage gap, see docs/testing/model-coverage-2026-11-11.md
+    #42)."""
     jpg = gps_photo_jpg()
     r = drop(c, data=jpg, filename="IMG_20260614_153210.jpg", provider=provider)
     e = first(r, "kb_entry")

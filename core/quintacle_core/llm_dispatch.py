@@ -30,6 +30,13 @@ parse over the OCR text, then the local VLM. The note above is kept as the
 decision history.] Geocoding
 also deliberately stays cloud: resolving place names is world knowledge, a
 poor fit for a small local model (documented exception).
+[2026-11-11 correction: geocoding no longer stays cloud. It is local-first
+now — photo_organizer.geocode answers from the offline GeoNames gazetteer
+(geo_offline.py) under the image policy, and calls Claude only when the
+provider is auto/cloud. The legacy QUINTACLE_VISION switch named in the
+first line is likewise retired as a source of truth: describe_images goes
+through image_policy.image_provider(), which maps the legacy var with a
+deprecation warning. Text above kept as decision history.]
 """
 
 from __future__ import annotations
