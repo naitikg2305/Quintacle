@@ -774,6 +774,13 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
             value={entry.notes}
             onChange={(e) => onUpdate(i, { notes: e.target.value })}
           />
+          <label
+            className="flex items-center gap-1.5 text-xs"
+            title="Documents are visible to AI by default. A private one never reaches a cloud model or the MCP server — only local chat can use it, and you always see it."
+          >
+            <input type="checkbox" checked={entry.private ?? false} onChange={(e) => onUpdate(i, { private: e.target.checked })} />
+            Private (no cloud AI)
+          </label>
         </div>
       )}
 

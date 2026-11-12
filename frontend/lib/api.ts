@@ -541,6 +541,9 @@ export type ParsedDocumentEntry = {
   issued_date: string | null;
   expiry_date: string | null;
   notes: string;
+  // The review card's "Private (no cloud AI)" toggle (2026-11-12) — same
+  // flag as kb_entry's: Save writes `private: true` into the document.
+  private?: boolean;
 };
 
 export type ParsedHomeItem = {
@@ -757,14 +760,25 @@ export type Document = {
   status: string;
   notes: string;
   assets: string[];
+  // 2026-11-12: `private: true` in the document's frontmatter — the owner
+  // marked it at upload; it never reaches a cloud model or the MCP server.
+  private?: boolean;
 };
 
 export const listDocuments = () => request<Document[]>("/documents");
 
 export async function createDocument(
-  fields: { name: string; doc_type?: string; issued_date?: string | null; expiry_date?: string | null; status?: string; notes?: string },
+  fields: {
+    name: string;
+    doc_type?: string;
+    issued_date?: string | null;
+    expiry_date?: string | null;
+    status?: string;
+    notes?: string;
+    private?: boolean;
+  },
   files: File[] = []
-): Promise<{ name: string; slug: string; assets: string[]; todo_created: boolean }> {
+): Promise<{ name: string; slug: string; assets: string[]; todo_created: boolean; private: boolean }> {
   const form = new FormData();
   form.append("name", fields.name);
   form.append("doc_type", fields.doc_type ?? "");
@@ -772,6 +786,7 @@ export async function createDocument(
   form.append("expiry_date", fields.expiry_date ?? "");
   form.append("status", fields.status ?? "active");
   form.append("notes", fields.notes ?? "");
+  if (fields.private) form.append("private", "true");
   for (const f of files) form.append("files", f);
   const res = await fetch(`${API_BASE}/documents`, { method: "POST", body: form });
   if (!res.ok) throw new Error(`create document failed: ${res.status} ${await res.text()}`);

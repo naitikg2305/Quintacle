@@ -5,6 +5,7 @@ from pathlib import Path
 import frontmatter
 
 from ...markdown_paths import resolve_nested, slugify
+from ..kb.privacy import PRIVATE_KEY
 
 # A fixed home, like Wardrobe/Grooming/logs — not AI-decided (this is a
 # structured store with real fields, not a free-form KB note).
@@ -36,7 +37,13 @@ class DocumentStore:
         status: str = "active",
         notes: str = "",
         assets: list[str] | None = None,
+        private: bool = False,
     ) -> str:
+        """`private` (owner decision 2026-11-12): the same AI-visibility flag
+        KB notes carry (nodes/kb/privacy.py) — written as `private: true` in
+        the frontmatter, so every privacy helper (KBStore.is_private reads
+        this very file, the document being a note under kb/) keeps it from
+        cloud models / MCP. Unmarked documents stay model-visible."""
         slug = slugify(name)
         post = frontmatter.Post(notes)
         post["name"] = name
@@ -46,6 +53,8 @@ class DocumentStore:
         post["status"] = status
         if assets:
             post["assets"] = assets
+        if private:
+            post[PRIVATE_KEY] = True
         (self._dir() / f"{slug}.md").write_text(frontmatter.dumps(post), encoding="utf-8")
         return slug
 

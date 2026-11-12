@@ -25,6 +25,9 @@ memory/docs go stale; code is truth.
   `frontend/lib/date.ts`; never `datetime.now()` / `new Date()` date math.
 - **Vault stays invisible** to every model-facing surface (search, graph,
   MCP, chat, drop). It lives OUTSIDE `kb/` on purpose; keep it that way.
+  This is the SECRETS vault (`nodes/vault`). The Document Vault
+  (`nodes/documents`, inside `kb/`) is model-visible unless a document is
+  marked private at upload (2026-11-12).
 - **Docs are decision logs**: never rewrite/delete historical reasoning —
   add dated status/correction notes. Deep how-it-works lives in
   `docs/reference/` (code-derived; restamp if regenerated).

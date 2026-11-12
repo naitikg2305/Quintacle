@@ -61,12 +61,39 @@ def test_resave_of_same_batch_never_double_mints(graph_env):
     assert len(edge_files) == 2  # still just the first call's two edges
 
 
-def test_fewer_than_two_members_is_a_noop(graph_env):
+def test_no_valid_members_is_a_noop(graph_env):
     assert link_event([]) == {"event_id": None, "edges_created": 0, "skipped": []}
-    assert link_event(["expense:12"])["event_id"] is None
-    # Duplicates collapse BEFORE the guard — one real member is not a grouping.
-    assert link_event(["expense:12", "expense:12"])["event_id"] is None
+    assert link_event(["no-colon"]) == {"event_id": None, "edges_created": 0, "skipped": ["no-colon"]}
     assert not (graph_env / "graph" / "edges").exists() or not list((graph_env / "graph" / "edges").glob("*.md"))
+
+
+def test_a_lone_member_gets_its_own_event(graph_env):
+    """Owner decision 2026-11-12 ("expenses are its own ofc"): a capture that
+    saved ONE record is still one event. (Until then <2 members was a no-op.)"""
+    result = link_event(["expense:12"])
+    assert result["event_id"] == event_id_for(["expense:12"], None)
+    assert result["edges_created"] == 1
+    # Duplicates collapse first — still the same one-member event, no new edge.
+    again = link_event(["expense:12", "expense:12"])
+    assert again["event_id"] == result["event_id"] and again["edges_created"] == 0
+
+
+def test_lone_member_event_reaches_its_existing_journal_day(graph_env):
+    """The lone expense ties to its day through the event: event -on_day->
+    journal:<date> when that journal day exists — and never invents one."""
+    JournalStore(graph_env / "journal").save(date(2026, 10, 15), "quiet day")
+    result = link_event(["expense:12"], date(2026, 10, 15))
+    conn = connect(graph_env / "test.db")
+    rows = {(r["source_id"], r["target_id"], r["kind"]) for r in conn.execute("SELECT * FROM edges")}
+    assert rows == {
+        ("expense:12", result["event_id"], "part_of"),
+        (result["event_id"], "journal:2026-10-15", "on_day"),
+    }
+
+    no_day = link_event(["expense:13"], date(2026, 10, 16))  # no journal for that day
+    rows = {(r["source_id"], r["target_id"], r["kind"]) for r in conn.execute("SELECT * FROM edges WHERE source_id = ?", (no_day["event_id"],))}
+    assert rows == set()
+    assert not (graph_env / "journal" / "2026-10-16.md").exists()
 
 
 def test_malformed_ids_are_skipped_with_a_warning_list(graph_env):
@@ -293,8 +320,17 @@ def test_mcp_link_event_round_trip_and_undo_removes_the_events_edges(mcp_stores)
     assert event_files == []
 
 
-def test_mcp_link_event_noop_under_two_members_writes_nothing(mcp_stores):
+def test_mcp_link_event_noop_without_valid_members_writes_nothing(mcp_stores):
     before = s.ledger.recent(50)
-    result = s.link_event(members=["expense:1"])
-    assert result == {"event_id": None, "edges_created": 0, "skipped": []}
+    result = s.link_event(members=["bad"])
+    assert result == {"event_id": None, "edges_created": 0, "skipped": ["bad"]}
     assert len(s.ledger.recent(50)) == len(before)
+
+
+def test_mcp_link_event_lone_member_is_its_own_event(mcp_stores):
+    """2026-11-12: the MCP door follows the same rule — one record is one
+    event, written as one undoable ledger entry."""
+    result = s.link_event(members=["expense:1"])
+    assert result["event_id"].startswith("event:")
+    assert result["edges_created"] == 1
+    assert "ledger_id" in result

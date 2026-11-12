@@ -17,6 +17,7 @@ export default function DocumentsPage() {
   const [expiryDate, setExpiryDate] = useState("");
   const [notes, setNotes] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [isPrivate, setIsPrivate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -33,7 +34,7 @@ export default function DocumentsPage() {
     setBusy(true);
     setStatus("saving...");
     const result = await createDocument(
-      { name, doc_type: docType, issued_date: issuedDate || null, expiry_date: expiryDate || null, notes },
+      { name, doc_type: docType, issued_date: issuedDate || null, expiry_date: expiryDate || null, notes, private: isPrivate },
       files
     );
     setStatus(result.todo_created ? `saved — "Renew: ${name}" added to your todos` : "saved");
@@ -42,6 +43,7 @@ export default function DocumentsPage() {
     setExpiryDate("");
     setNotes("");
     setFiles([]);
+    setIsPrivate(false);
     await refresh();
     setBusy(false);
   }
@@ -113,6 +115,13 @@ export default function DocumentsPage() {
         {files.length > 0 && (
           <p className="text-xs opacity-60">{files.length} page{files.length === 1 ? "" : "s"}/scan{files.length === 1 ? "" : "s"} selected</p>
         )}
+        <label
+          className="flex items-center gap-1.5 text-xs"
+          title="Documents are visible to AI by default. A private one never reaches a cloud model or the MCP server — only local chat can use it, and you always see it."
+        >
+          <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
+          Private (no cloud AI)
+        </label>
         <button
           onClick={submit}
           disabled={busy || !name.trim()}
@@ -134,6 +143,7 @@ export default function DocumentsPage() {
                   <span className="font-medium text-sm">{d.name}</span>
                   <span className="text-xs opacity-50">{d.doc_type}</span>
                   <span className="text-xs px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10">{d.status}</span>
+                  {d.private && <span className="text-xs opacity-60" title="Never reaches a cloud model or the MCP server">private</span>}
                 </div>
                 {d.notes && <p className="text-xs opacity-70 mt-1">{d.notes}</p>}
                 <div className="text-xs opacity-50 mt-1 flex gap-3">

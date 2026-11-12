@@ -59,12 +59,6 @@ GAP_RECORD_THAT_WIPES_LINKS = (
     "(store.write links=None) but calls _sync_note_graph_links(..., None) -> sync_frontmatter_links with [] "
     "-> every existing frontmatter_links edge of the ledger note is deleted as 'stale'"
 )
-GAP_SOFT_FACTS = (
-    "GAP (by design, next-wave-plan §12): soft facts extracted from an archived chat live in "
-    "conversations/soft_record.db, outside kb/ and the graph — nothing ties a fact to the show's ledger note "
-    "unless the owner runs Record that"
-)
-
 
 # --- sandbox app + seed --------------------------------------------------------
 
@@ -284,25 +278,44 @@ def test_18_record_that_keeps_the_ledger_existing_links(c, monkeypatch):
     assert linked(ledger, "note:fun/shows/lost", "related")  # ...and so must the edge
 
 
-@pytest.mark.xfail(strict=True, reason=GAP_SOFT_FACTS)
-def test_18_extracted_soft_facts_reach_the_show_ledger(c, monkeypatch):
+def test_18_extracted_soft_facts_stay_with_the_chat_not_the_ledger(c, monkeypatch):
+    """Owner decision 2026-11-12: "Chat thing obv in scratchpad, dummy chats
+    are the transcript." Facts extracted from a chat about a show live in the
+    soft record, pointing at the archived transcript — they are NOT
+    auto-written into the show's ledger note (only Record that writes a
+    note). Replaces the draft-spec xfail that wanted them in the ledger."""
     ledger = _seed_show_ledgers(c)
+    before_body = kb_store().read("fun/shows", "severance")
+    before_links = kb_store().read_links("fun/shows", "severance")
+    from quintacle_core.graph import get_graph_store
+
+    store = get_graph_store()
+    before_edges = {e["id"] for e in store.reverse_edges(ledger) + store.edges_from(ledger)}
     import quintacle_core.nodes.kb.soft_record as soft_record
 
     monkeypatch.setattr(soft_record, "extract_facts", lambda text: ["Finished Severance season 2 with Priya Shah"])
     r = c.post("/transcripts/archive", json={"messages": SHOW_CHAT, "subject": "Severance season 2", "final": True})
-    assert r.status_code == 200 and r.json()["soft_facts_pending"]
-    facts = c.get("/soft-record").json()
-    assert any("Severance" in (f.get("text") or "") for f in facts)  # the fact was extracted (background task ran)
-    from quintacle_core.graph import get_graph_store
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["archived"] and j["soft_facts_pending"]
+    transcript = f"transcript:{j['topic']}/{j['stamp']}"
 
-    store = get_graph_store()
-    fact_edges = [
-        e for e in store.reverse_edges(ledger) + store.edges_from(ledger) if not e["source_id"].startswith("transcript:")
-        and e["kind"] != "related" and e["kind"] != "mentions_person"
-    ]
-    in_ledger = "season 2" in (kb_store().read("fun/shows", "severance") or "")
-    assert fact_edges or in_ledger
+    # The fact exists, in the soft record, tied to the archived transcript.
+    facts = c.get("/soft-record").json()
+    [fact] = [f for f in facts if "Severance" in (f.get("text") or "")]
+    assert fact["transcript"] == j["path"]
+
+    # The ledger note is untouched: same body, same links.
+    assert kb_store().read("fun/shows", "severance") == before_body
+    assert kb_store().read_links("fun/shows", "severance") == before_links
+    assert "season 2" not in before_body
+
+    # The only new graph edge at the ledger is the transcript's topic link —
+    # no fact edge, no new person mention from the chat.
+    after = store.reverse_edges(ledger) + store.edges_from(ledger)
+    new = [e for e in after if e["id"] not in before_edges]
+    assert [(e["source_id"], e["kind"]) for e in new] == [(transcript, "transcript_of")]
+    assert not mentions(ledger, "Priya Shah")
 
 
 # --- #19 / #20 / #21 Show, Book, Game ledgers -------------------------------------

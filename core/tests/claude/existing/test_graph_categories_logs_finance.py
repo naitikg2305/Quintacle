@@ -176,10 +176,11 @@ def _commit_entry(c, day: str, entry: dict) -> dict:
 
 def save_all(c, day: str, entries: list[dict]) -> list[str | None]:
     """commitDropEntries: every proposal committed, then ONE /graph/event for
-    the batch when it has 2+ graph-addressable members (linkBatchAsEvent)."""
+    the batch when it has any graph-addressable member (linkBatchAsEvent —
+    a lone record is its own event since 2026-11-12)."""
     members = [_graph_id_for(e, _commit_entry(c, day, e)) for e in entries]
     real = [m for m in members if m is not None]
-    if len(real) >= 2:
+    if real:
         _ok(c.post("/graph/event", json={"members": real, "date": day}))
     return members
 
@@ -484,11 +485,6 @@ def test_25_income_in_a_mixed_drop_is_part_of_that_drops_event(client, models):
     _assert_one_shared_event(members)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: a lone record never gets an event — graph_capture.link_event no-ops below 2 members and "
-    "frontend/lib/entries.ts linkBatchAsEvent skips <2; the spec says every record saved from one Save is part_of an event",
-)
 @pytest.mark.parametrize("category,text,parsed,kind", [
     ("25-income", "got paid $3,200 from Minfy", FinanceEntry(type="finance", amount=3200, merchant="Minfy"), "regular"),
     ("26-subscription", "netflix $15.49 monthly", FinanceEntry(type="finance", amount=15.49, merchant="Netflix"), "subscription"),
@@ -503,6 +499,38 @@ def test_lone_money_record_is_part_of_its_event(client, models, category, text, 
     answers["_DateResolutions"] = _DateResolutions(resolutions=[])
     [member] = save_all(client, D, drop(client, text))
     assert len(_events_of(member)) == 1
+
+
+def _drop_parking(answers) -> None:
+    answers["ParsedJournal"] = _parsed(FinanceEntry(type="finance", amount=8, merchant="parking"))
+    answers["_FinanceKindResolutions"] = _kinds((0, "regular"))
+    answers["_DateResolutions"] = _DateResolutions(resolutions=[])
+
+
+def test_lone_expense_reaches_its_journal_day_through_its_event(client, models):
+    """Owner 2026-11-12: "I'm assuming it appends to the same day journal".
+    With the day's journal already written, the lone expense's event gets
+    on_day -> journal:<date>, and the day record lists it as that day's
+    event."""
+    answers, _ = models
+    _drop_parking(answers)
+    _ok(client.post(f"/journal/{D}", content="errands downtown", headers={"content-type": "text/plain"}))
+    [member] = save_all(client, D, drop(client, "parking $8"))
+    [event] = _events_of(member)
+    assert {(e["source_id"], e["target_id"]) for e in _edges("on_day")} == {(event, f"journal:{D}")}
+    [day_event] = _ok(client.get(f"/day/{D}"))["events"]
+    assert [m["id"] for m in day_event["members"]] == [member]
+
+
+def test_lone_expense_without_a_journal_day_invents_none(client, models):
+    """No journal for the day -> the event still exists, but no on_day edge
+    and no journal day is created out of thin air."""
+    answers, _ = models
+    _drop_parking(answers)
+    [member] = save_all(client, D, drop(client, "parking $8"))
+    assert len(_events_of(member)) == 1
+    assert _edges("on_day") == []
+    assert _ok(client.get(f"/journal/{D}"))["content"] is None
 
 
 # =========================================================================== #26
