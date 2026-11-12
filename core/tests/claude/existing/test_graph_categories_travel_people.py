@@ -31,7 +31,9 @@ from quintacle_core.graph_capture import DOCUMENTS_FOLDER, PLACE_EMERGENCE_THRES
 from quintacle_core.place_graph import proposal_destinations
 
 DAY = "2026-11-10"
-VAULT_PREFIX = f"note:{DOCUMENTS_FOLDER}/"
+# The Document Vault's KB folder — model-VISIBLE by default (owner decision
+# 2026-11-12: "Documents can be visible to AI unless deemed private").
+DOC_VAULT_PREFIX = f"note:{DOCUMENTS_FOLDER}/"
 
 
 @pytest.fixture(autouse=True)
@@ -103,8 +105,20 @@ def is_dc(node_id: str) -> bool:
     return node_id.endswith("/washington-dc")
 
 
+def _is_secrets_vault(node_id: str) -> bool:
+    """The SECRETS vault (nodes/vault, <data>/vault, outside kb/) — the one
+    thing that must never be a graph node. Same definition retrieval's hard
+    exclusion uses: a `vault:` id, or any id whose path is vault/… . The
+    Document Vault (`note:organisation/document-vault/…`) is NOT this."""
+    kind, _, rest = node_id.partition(":")
+    rest = rest.lower()
+    return kind == "vault" or rest == "vault" or rest.startswith("vault/")
+
+
 def no_vault_edges() -> None:
-    touching = {e for e in edges() if e[0].startswith(VAULT_PREFIX) or e[1].startswith(VAULT_PREFIX)}
+    """No edge touches the secrets vault. Document Vault edges are allowed
+    (2026-11-12): a document is keyword-linked like any note unless private."""
+    touching = {e for e in edges() if _is_secrets_vault(e[0]) or _is_secrets_vault(e[1])}
     assert touching == set(), touching
 
 
@@ -160,7 +174,7 @@ def mention_folder(c: TestClient, name: str) -> str:
 def create_vault_document(c: TestClient, name: str, notes: str) -> str:
     res = c.post("/documents", data={"name": name, "doc_type": "travel", "notes": notes})
     assert res.status_code == 200, res.text
-    return f"{VAULT_PREFIX}{res.json()['slug']}"
+    return f"{DOC_VAULT_PREFIX}{res.json()['slug']}"
 
 
 # ============================================================ #1 Travel itinerary
@@ -219,20 +233,21 @@ def test_01_trip_plan_invents_nothing(client):
     no_vault_edges()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: Document Vault entries are keyword-linked like any item "
-    "(documents/api.py create_document -> safe_entry_graph_links; graph_capture._item_description_sources "
-    "backfills them too) — spec #1/#10 says the vault is never in the graph",
-)
-def test_01_flight_ticket_in_document_vault_stays_out_of_the_graph(client):
+def test_01_flight_ticket_in_document_vault_is_linked_like_any_note(client):
     """The trip's flight ticket PDF is filed in the Document Vault (same drop
-    session). Its notes name the traveler and the city — still ✗ any edge."""
+    session). Its notes name the traveler and a known restaurant.
+    Draft spec #1/#10 said ✗ any edge; CORRECTED 2026-11-12 by the owner
+    ("Documents can be visible to AI unless deemed private"): it is
+    keyword-linked to the person and the experience it names. It is still
+    never invented into the trip plan (no edge to a note it doesn't name)."""
     plan = _save_trip_plan(client)
     doc = create_vault_document(
         client, "Flight ticket IAD-VIE May 2027", "Austrian Airlines, Arjun Mehta and me, IAD to Vienna, Founding Farmers lunch before."
     )
-    assert edges_touching(doc) == set()
+    out = edges_from(doc)
+    assert person_id(client, "Arjun Mehta") in out
+    assert founding_farmers_id(client) in out
+    assert person_id(client, "Alfonso Rivera") not in out
     assert not any(doc in e for e in edges_touching(plan))
     no_vault_edges()
 
@@ -563,13 +578,13 @@ def test_35_person_backlinks_never_include_unrelated_people_content(client):
     assert f"journal:{DAY}" not in sources
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP: a Document Vault entry naming a person becomes one of their back-links "
-    "(documents/api.py create_document -> safe_entry_graph_links) — spec: vault is never in the graph",
-)
-def test_35_person_backlinks_never_include_the_vault(client):
-    create_vault_document(client, "Apartment lease", "Lease co-signed with Arjun Mehta.")
+def test_35_person_backlinks_include_a_document_naming_them(client):
+    """Draft spec said the vault never back-links; CORRECTED 2026-11-12 by the
+    owner: a (non-private) Document Vault entry naming a person IS one of
+    their back-links, like any note. Unrelated people get nothing."""
+    doc = create_vault_document(client, "Apartment lease", "Lease co-signed with Arjun Mehta.")
     sources = {e["source_id"] for e in reverse_lookup(person_id(client, "Arjun Mehta"))}
-    assert not any(s.startswith(VAULT_PREFIX) for s in sources), sources
+    assert doc in sources, sources
+    others = {e["source_id"] for e in reverse_lookup(person_id(client, "Alfonso Rivera"))}
+    assert doc not in others
     no_vault_edges()

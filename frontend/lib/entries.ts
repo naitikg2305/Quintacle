@@ -223,14 +223,15 @@ export function graphIdFor(entry: ParsedEntry, result: unknown): string | null {
 }
 
 // The same-event call both batch Saves make once their commits are done: a
-// batch with 2+ graph-addressable members is ONE real-world capture, so its
+// batch with ANY graph-addressable member is ONE real-world capture (a lone
+// expense is its own event too — owner decision 2026-11-12), so its
 // records get interlinked by construction (they share this Save as a birth
 // certificate — never keyword inference). Additive and never blocking: the
 // entries are already saved, so a failed link comes back as a status warning
 // for the caller to show, not a thrown error.
 export async function linkBatchAsEvent(members: (string | null)[], date: string): Promise<string | null> {
   const real = members.filter((m): m is string => m !== null);
-  if (real.length < 2) return null;
+  if (real.length === 0) return null;
   try {
     await linkEvent(real, date);
     return null;
@@ -498,6 +499,7 @@ export async function commitEntry(date: string, entry: ParsedEntry, assets: File
           issued_date: entry.issued_date,
           expiry_date: entry.expiry_date,
           notes: entry.notes,
+          private: entry.private ?? false,
         },
         assets
       );

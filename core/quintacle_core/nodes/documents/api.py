@@ -51,6 +51,7 @@ async def create_document(
     expiry_date: str = Form(""),
     status: str = Form("active"),
     notes: str = Form(""),
+    private: bool = Form(False),
     files: list[UploadFile] = File(default=[]),
 ) -> dict:
     """Creates or updates a document. When this is a genuinely NEW document
@@ -60,7 +61,14 @@ async def create_document(
     a note you might not reread. Only fires on first creation, not on every
     edit, so redefining an existing document never spawns duplicate todos.
     `files` covers a multi-page scan (lease, insurance policy) — every page
-    kept, not just a fixed front/back pair."""
+    kept, not just a fixed front/back pair.
+
+    Visibility (owner decision 2026-11-12): a document is model-visible like
+    any KB note — keyword-linked, in /graph, search, retrieval, MCP — unless
+    the owner ticks `private` when uploading; then it carries the KB
+    `private: true` flag (nodes/kb/privacy.py) and never reaches a cloud
+    model or the MCP server. The SECRETS vault (nodes/vault) is a different
+    thing and stays invisible everywhere."""
     store = get_store()
     known_names = [d["name"] for d in store.all()]
     resolved_name = canonicalize_name(name, known_names)
@@ -79,6 +87,7 @@ async def create_document(
         status=status,
         notes=notes,
         assets=asset_paths,
+        private=private,
     )
 
     # Write rule (graph_capture): a document's notes can name a person ("lease
@@ -97,4 +106,10 @@ async def create_document(
         )
         todo_created = True
 
-    return {"name": resolved_name, "slug": slug, "assets": asset_paths, "todo_created": todo_created}
+    return {
+        "name": resolved_name,
+        "slug": slug,
+        "assets": asset_paths,
+        "todo_created": todo_created,
+        "private": private,
+    }

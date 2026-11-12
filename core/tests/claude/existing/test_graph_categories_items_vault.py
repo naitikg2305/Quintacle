@@ -26,6 +26,12 @@ Vault finding (2026-11-11): there are TWO things called "vault".
   by retrieval_backfill (retrieval.is_excluded deliberately keeps
   "organisation/document-vault" indexable). Spec #10/#30 says these must be
   invisible -> those tests are xfail(strict) GAPs.
+
+Correction 2026-11-12 (owner decision): "Documents can be visible to AI
+unless deemed private (which I have an option of doing when uploading)."
+The visibility above is CORRECT by default; the former xfail tests now
+assert it, and a document uploaded with `private` gets the KB private flag
+(never cloud/MCP, still the owner's). Only the secrets vault is invisible.
 """
 from __future__ import annotations
 
@@ -302,7 +308,15 @@ def test_outfit_reaches_person_named_by_its_item(env):
 
 
 # --- #10 Document drop, #30 Docs on IRS, DHS ----------------------------------
-# Spec: Vault document. ✗ any edge, ✗ search index, ✗ graph (vault invisible).
+# Spec (DRAFT 2026-11-11) said: Vault document. ✗ any edge, ✗ search index,
+# ✗ graph (vault invisible). CORRECTED by owner decision 2026-11-12:
+# "Documents can be visible to AI unless deemed private (which I have an
+# option of doing when uploading)." So a Document Vault document is
+# model-visible by default — keyword-linked, in /graph, /kb/search, the
+# retrieval index and MCP — and a document uploaded with `private` checked
+# carries the KB `private: true` flag (nodes/kb/privacy.py): never reaches a
+# cloud model or MCP, still shown to the owner. The SECRETS vault
+# (nodes/vault) stays invisible everywhere (test further down).
 # A passport / IRS letter / DHS notice drop is routed to document_entry and
 # saved through POST /documents (entries.ts createDocument).
 
@@ -313,12 +327,20 @@ VAULT_DOCS = [
 ]
 
 
-def _post_document(client, name, doc_type, notes):
-    r = client.post(
-        "/documents",
-        data={"name": name, "doc_type": doc_type, "issued_date": "", "expiry_date": "", "status": "active", "notes": notes},
-        files=[("files", ("scan.png", io.BytesIO(b"\x89PNG fake"), "image/png"))],
-    )
+# Retrieval-index queries come from the notes BODY: the index entry a
+# document gets from the backfill is titled by its first body line, not by
+# its `name` frontmatter (a document stores its name as `name:`, not
+# `title:`) — so "CP575"/"I-797", which only appear in the name, are found
+# by /kb/search and kb_search_entries (filename match) but not by /retrieve.
+# Recorded fact, 2026-11-12.
+BODY_QUERY = {"US Passport": "passport", "IRS CP575 EIN letter": "EIN", "DHS I-797 approval notice": "WAC2612345678"}
+
+
+def _post_document(client, name, doc_type, notes, private=None):
+    data = {"name": name, "doc_type": doc_type, "issued_date": "", "expiry_date": "", "status": "active", "notes": notes}
+    if private is not None:
+        data["private"] = "true" if private else "false"
+    r = client.post("/documents", data=data, files=[("files", ("scan.png", io.BytesIO(b"\x89PNG fake"), "image/png"))])
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -331,71 +353,143 @@ def test_document_drop_lands_in_kb_document_vault_folder(env):
     assert not (env.data / "vault" / "entries").exists() or not any((env.data / "vault" / "entries").iterdir())
 
 
-_DOC_GAP = (
-    "GAP: Document Vault documents live INSIDE kb/ (documents/store.py _HOME='Organisation/Document Vault'; "
-    "graph_capture.DOCUMENTS_FOLDER) so they are model-visible: "
-)
-
-
-@pytest.mark.xfail(strict=True, reason=_DOC_GAP + "documents/api.py create_document calls safe_entry_graph_links "
-                   "(and graph_capture.run_graph_capture_backfill re-links via _item_description_sources).")
 @pytest.mark.parametrize("name,doc_type,notes,query", VAULT_DOCS)
-def test_vault_document_has_no_edges(env, name, doc_type, notes, query):
+def test_vault_document_is_keyword_linked_to_the_person_it_names(env, name, doc_type, notes, query):
+    """2026-11-12: visible by default -> linked like any note, and the
+    startup backfill keeps (does not duplicate or drop) the link."""
     _post_document(env.client, name, doc_type, notes)
-    run_graph_capture_backfill()  # the startup pass must not add any either
-    assert edges_touching(document_note_id(name)) == []
+    run_graph_capture_backfill()
+    assert has_edge(document_note_id(name), PERSON_ID, "mentions_person")
 
 
-@pytest.mark.xfail(strict=True, reason=_DOC_GAP + "api.py graph() emits every KBStore.graph_entries() note, "
-                   "including organisation/document-vault/*.")
 @pytest.mark.parametrize("name,doc_type,notes,query", VAULT_DOCS)
-def test_vault_document_absent_from_graph(env, name, doc_type, notes, query):
+def test_vault_document_present_in_graph(env, name, doc_type, notes, query):
     _post_document(env.client, name, doc_type, notes)
     g = graph(env.client)
-    assert not any(n["id"].startswith(f"note:{DOCUMENTS_FOLDER}/") for n in g["nodes"])
+    assert any(n["id"] == document_note_id(name) for n in g["nodes"])
+    assert graph_has_edge(g, document_note_id(name), PERSON_ID)
 
 
-@pytest.mark.xfail(strict=True, reason=_DOC_GAP + "KBStore.search walks all of kb/ (REST /kb/search and MCP "
-                   "kb_search_entries share it).")
 @pytest.mark.parametrize("name,doc_type,notes,query", VAULT_DOCS)
-def test_vault_document_absent_from_kb_search(env, name, doc_type, notes, query):
+def test_vault_document_present_in_kb_search(env, name, doc_type, notes, query):
     _post_document(env.client, name, doc_type, notes)
     hits = env.client.get("/kb/search", params={"q": query}).json()
-    assert not any(h["folder"].startswith(DOCUMENTS_FOLDER) for h in hits)
+    assert any(h["folder"].startswith(DOCUMENTS_FOLDER) for h in hits)
 
 
 @pytest.mark.parametrize("name,doc_type,notes,query", VAULT_DOCS)
 def test_vault_document_not_indexed_at_write_time(env, name, doc_type, notes, query):
-    """POST /documents itself never calls safe_index_note — at write time
-    the retrieval index stays clean (the leak is the backfill, below)."""
+    """Fact, unchanged by the 2026-11-12 decision: POST /documents itself
+    never calls safe_index_note, so a new document reaches the retrieval
+    index at the next backfill (startup), not at write time."""
     _post_document(env.client, name, doc_type, notes)
     results = env.client.get("/retrieve", params={"q": query}).json()["results"]
     assert not any(DOCUMENTS_FOLDER in r["id"] for r in results)
 
 
-@pytest.mark.xfail(strict=True, reason=_DOC_GAP + "retrieval_backfill.run_backfill indexes every graph_entries() "
-                   "note, and retrieval.is_excluded explicitly keeps 'organisation/document-vault' indexable.")
 @pytest.mark.parametrize("name,doc_type,notes,query", VAULT_DOCS)
-def test_vault_document_absent_from_retrieval_index_after_backfill(env, name, doc_type, notes, query):
+def test_vault_document_present_in_retrieval_index_after_backfill(env, name, doc_type, notes, query):
     _post_document(env.client, name, doc_type, notes)
     run_backfill(env.data)
-    assert retrieval.get_retrieval_index().get_node(document_note_id(name)) is None
-    results = env.client.get("/retrieve", params={"q": query}).json()["results"]
-    assert not any(DOCUMENTS_FOLDER in r["id"] for r in results)
+    assert retrieval.get_retrieval_index().get_node(document_note_id(name)) is not None
+    results = env.client.get("/retrieve", params={"q": BODY_QUERY[name]}).json()["results"]
+    assert any(r["id"] == document_note_id(name) for r in results)
 
 
-@pytest.mark.xfail(strict=True, reason=_DOC_GAP + "mcp_server/server.py kb_search_entries -> KBStore.search walks kb/; "
-                   "kb_list_folders lists organisation/document-vault.")
 @pytest.mark.parametrize("name,doc_type,notes,query", VAULT_DOCS)
-def test_vault_document_absent_from_mcp(env, name, doc_type, notes, query):
+def test_vault_document_present_in_mcp(env, name, doc_type, notes, query):
     from quintacle_core.mcp_server import server as mcp
 
     _post_document(env.client, name, doc_type, notes)
     run_backfill(env.data)
     mcp.init(env.data)
-    assert not any(h["folder"].startswith(DOCUMENTS_FOLDER) for h in mcp.kb_search_entries(query))
-    assert not any(DOCUMENTS_FOLDER in r["id"] for r in mcp.search_index(query))
-    assert not any(f.startswith(DOCUMENTS_FOLDER) for f in mcp.kb_list_folders())
+    assert any(h["folder"].startswith(DOCUMENTS_FOLDER) for h in mcp.kb_search_entries(query))
+    assert any(r["id"] == document_note_id(name) for r in mcp.search_index(BODY_QUERY[name]))
+    assert any(f.startswith(DOCUMENTS_FOLDER) for f in mcp.kb_list_folders())
+
+
+# --- the upload-time "Private (no cloud AI)" option (2026-11-12) -------------
+
+PRIVATE_DOC = ("Therapist intake form", "medical", f"Intake for panic attacks; emergency contact {PERSON}. zebrafinch-7731")
+
+
+def test_private_flag_is_written_to_the_document_frontmatter(env):
+    name, doc_type, notes = PRIVATE_DOC
+    out = _post_document(env.client, name, doc_type, notes, private=True)
+    assert out["private"] is True
+    text = (env.kb_root / DOCUMENTS_FOLDER / f"{out['slug']}.md").read_text()
+    assert "private: true" in text
+    public = _post_document(env.client, "US Passport", "passport", "")
+    assert public["private"] is False
+    assert "private" not in (env.kb_root / DOCUMENTS_FOLDER / f"{public['slug']}.md").read_text()
+
+
+def test_private_document_never_reaches_mcp(env):
+    from quintacle_core.mcp_server import server as mcp
+
+    name, doc_type, notes = PRIVATE_DOC
+    out = _post_document(env.client, name, doc_type, notes, private=True)
+    _post_document(env.client, "US Passport", "passport", f"Passport renewed; {PERSON} was my emergency contact.")
+    run_backfill(env.data)
+    mcp.init(env.data)
+    assert mcp.kb_search_entries("zebrafinch") == []
+    assert not any(h["slug"] == out["slug"] for h in mcp.kb_search_entries("intake"))
+    hits = mcp.search_index("therapist intake panic zebrafinch", k=20)
+    assert all(h["id"] != document_note_id(name) for h in hits)
+    assert all(n["id"] != document_note_id(name) for h in hits for n in h.get("neighbors", []))
+    assert "zebrafinch" not in str(hits)
+    with pytest.raises(ValueError, match="no such entry"):
+        mcp.kb_get_entry(folder=DOCUMENTS_FOLDER, slug=out["slug"])
+    # an unmarked document still flows to MCP
+    assert any(h["slug"] == "us-passport" for h in mcp.kb_search_entries("passport"))
+
+
+def _spy_chat(monkeypatch) -> list[dict]:
+    from quintacle_core.nodes.kb import chat
+
+    calls: list[dict] = []
+
+    def make(runner_name):
+        def runner(model, messages, kb_text):
+            calls.append({"runner": runner_name, "kb_text": kb_text or ""})
+            return "stub-reply"
+
+        return runner
+
+    for runner_name in ("_run_anthropic", "_run_openai", "_run_bedrock", "_run_local"):
+        monkeypatch.setattr(chat, runner_name, make(runner_name))
+    return calls
+
+
+def test_private_document_stays_out_of_cloud_chat_but_local_chat_may_use_it(env, monkeypatch):
+    name, doc_type, notes = PRIVATE_DOC
+    _post_document(env.client, name, doc_type, notes, private=True)
+    _post_document(env.client, "US Passport", "passport", "Passport renewed in 2026; zebrafinch-free.")
+    run_backfill(env.data)
+    calls = _spy_chat(monkeypatch)
+    question = [{"role": "user", "content": "what does my therapist intake form say? zebrafinch passport"}]
+
+    r = env.client.post("/kb/chat", json={"messages": question, "model": "claude-sonnet-5-5"})
+    assert r.status_code == 200, r.text
+    cloud_text = calls[-1]["kb_text"]
+    assert "zebrafinch-7731" not in cloud_text and "Therapist intake form" not in cloud_text
+    assert "Passport renewed" in cloud_text  # public documents still flow to cloud
+
+    r = env.client.post("/kb/chat", json={"messages": question, "model": "local:qwen3:8b"})
+    assert r.status_code == 200, r.text
+    assert calls[-1]["runner"] == "_run_local" and "zebrafinch-7731" in calls[-1]["kb_text"]
+    assert document_note_id(name) in r.json()["private_notes"]
+
+
+def test_private_document_still_shown_to_the_owner(env):
+    """The owner always sees it: the Documents list (flagged), Browse search,
+    and his own graph view."""
+    name, doc_type, notes = PRIVATE_DOC
+    out = _post_document(env.client, name, doc_type, notes, private=True)
+    [doc] = [d for d in env.client.get("/documents").json() if d["slug"] == out["slug"]]
+    assert doc["private"] is True and doc["notes"] == notes
+    assert any(h["slug"] == out["slug"] for h in env.client.get("/kb/search", params={"q": "zebrafinch"}).json())
+    assert any(n["id"] == document_note_id(name) for n in graph(env.client)["nodes"])
 
 
 # The SECRETS vault (nodes/vault) — the thing CLAUDE.md's invisibility rule

@@ -648,8 +648,9 @@ def link_event(members: list[str], for_date: str | None = None) -> dict:
     committing records that came from one capture ("chipotle 14.50" is both
     a food row and an expense row; this is how those twins know each other).
     Deterministic event id (hash of sorted members + date), so re-linking
-    the same batch is a no-op, not a duplicate event. Fewer than 2 valid
-    members is a no-op; malformed ids come back in `skipped`. Commits
+    the same batch is a no-op, not a duplicate event. A single valid member
+    still gets its own event (one capture = one event, 2026-11-12); no
+    valid member is a no-op; malformed ids come back in `skipped`. Commits
     immediately, independently undoable (undo removes the event's edges)."""
     entry_date = date.fromisoformat(for_date) if for_date else None
     session = _session("graph.link_event", f"Linked {len(members)} records as one event")

@@ -635,8 +635,12 @@ def link_event(members: list[str], for_date: date | None = None) -> dict:
     journal day actually exists (same existence gate the photo-drop journal
     links use). Guards:
 
-    - fewer than 2 valid members → no-op (a single entry isn't an "event
-      grouping", it's noise) — returns event_id None, creates nothing.
+    - no valid members → no-op — returns event_id None, creates nothing.
+      A LONE member still gets its own event (owner decision 2026-11-12:
+      "expenses are its own ofc" — one capture is one event even when it
+      saved a single record; this is also what ties a lone expense to its
+      journal day via the event's on_day edge). Before 2026-11-12 the guard
+      was "fewer than 2 → no-op".
     - malformed/duplicate ids are skipped and reported in `skipped`; member
       EXISTENCE is deliberately not checked, same as every other edge write
       (graph.py never validates ids).
@@ -655,7 +659,7 @@ def link_event(members: list[str], for_date: date | None = None) -> dict:
             skipped.append(str(member))
         elif candidate not in valid:
             valid.append(candidate)
-    if len(valid) < 2:
+    if not valid:
         return {"event_id": None, "edges_created": 0, "skipped": skipped}
 
     event_id = event_id_for(valid, for_date)

@@ -106,3 +106,35 @@ Status note added after the fact; the gap list above is left as written.
 - **Folder charter hubs.** Each note in a folder is `part_of` that folder's `about-<folder>` note (provenance
   `folder_hub`). This happens when the note is saved, when the hub is saved (it links the existing notes), and in
   the backfill. Code: `graph_capture.folder_hub_links`.
+
+### 2026-11-12: owner corrections (rows #10/#30, #18, #25–27)
+
+Correction notes. The table above is left as written; where it disagrees with this section, this section wins.
+
+- **#10 / #30, Document Vault: visible unless marked private.** Owner: "Documents can be visible to AI unless
+  deemed private (which I have an option of doing when uploading)." The draft "✗ any edge, ✗ search index,
+  ✗ graph" was wrong.
+  - A document (`nodes/documents`, stored in `kb/Organisation/Document Vault/`) is linked like any note. It shows
+    in `/graph`, `/kb/search`, the retrieval index and MCP. This is what the code already did.
+  - The upload option is new. `POST /documents` takes `private`, and the drop review card and the Documents page
+    have a "Private (no cloud AI)" toggle. A private document gets `private: true` in its frontmatter, so the KB
+    privacy rule (`nodes/kb/privacy.py`) applies to it: it never reaches a cloud model or MCP, local chat may use
+    it, and the owner still sees it.
+  - "Vault invisible" now means only the **secrets** vault (`nodes/vault`, `<data>/vault`, outside `kb/`). That
+    one stays invisible everywhere.
+  - The strict-xfail invisibility tests were rewritten to assert visibility. New tests cover the private flag.
+    Both are in `test_graph_categories_items_vault.py` and `test_graph_categories_travel_people.py`.
+- **#18, chat facts stay with the chat.** Owner: "Chat thing obv in scratchpad, dummy chats are the transcript."
+  The draft "Facts → the show's ledger note" was wrong.
+  - Facts extracted from a chat live in the soft record, which points at the archived transcript. They are never
+    written into the show's ledger note automatically. Only "Record that" writes into a note.
+  - The test now checks that the ledger note is unchanged and that its only new edge is the transcript's
+    `transcript_of`.
+- **#25–27, a lone record gets its own event.** Owner: "Yes expenses are its own ofc." `graph_capture.link_event`
+  (behind both REST `POST /graph/event` and the MCP `link_event` tool) and `entries.ts linkBatchAsEvent` used to
+  skip batches with fewer than 2 members. They now link any batch with 1 or more members.
+  - Tie to the day: the event gets `on_day → journal:<date>` when that journal day already exists at save time.
+    A missing day is never created.
+  - Known limit: this only works in one save order. A journal day written after the expense does not get the edge
+    back. Events don't store their date in the graph, unlike experiences (`visited_day_link`). The day view still
+    lists the expense, because it reads expense rows by date.
