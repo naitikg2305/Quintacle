@@ -64,14 +64,44 @@ def _never_a_real_local_model(monkeypatch):
     unstubbed call used to queue behind the GPU and hang the suite. Blocks
     the network hop to the Ollama port only; tests that stub urlopen or
     _parse_local themselves (after this fixture) still win."""
+    import urllib.parse
     import urllib.request
 
     real = urllib.request.urlopen
 
     def guarded(req, *a, **k):
-        url = getattr(req, "full_url", req)
-        if ":11434" in str(url):
+        url = str(getattr(req, "full_url", req))
+        if ":11434" in url:
             raise OSError("real local-model call in a faked test — stub it")
+        # 2026-11-12: no internet either. Since the sandboxed data dir above
+        # (no cached weights), the first photo commit tried to download the
+        # YOLO weights from GitHub and sat out the 120 s timeout (suite went
+        # ~1.5 → ~3.7 min). Fail fast instead; perception degrades gracefully.
+        host = urllib.parse.urlsplit(url).hostname or ""
+        if host and host not in ("localhost", "127.0.0.1", "::1", "testserver"):
+            raise OSError(f"real network call in a faked test ({host}) — stub it")
         return real(req, *a, **k)
 
     monkeypatch.setattr(urllib.request, "urlopen", guarded)
+
+
+@pytest.fixture(autouse=True)
+def _never_the_metered_api(monkeypatch):
+    """2026-11-12: a faked test must never reach the real Anthropic API.
+    api.py's load_dotenv() puts the owner's real key into the environment, so
+    an unstubbed cloud seam (max_backend's API fallback) made real, billed
+    calls — test_drop_presets did, ~3 per suite run, via the meal composer's
+    micro estimate. Replace the key and refuse any non-local httpx request
+    (the SDK's transport). Tests that fake anthropic.Anthropic never get here."""
+    import httpx
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "faked-tests-never-call-the-api")
+    real_send = httpx.Client.send
+
+    def guarded_send(self, request, *a, **k):
+        host = request.url.host or ""
+        if host not in ("localhost", "127.0.0.1", "::1", "testserver"):
+            raise httpx.ConnectError(f"real network call in a faked test ({host}) — stub it", request=request)
+        return real_send(self, request, *a, **k)
+
+    monkeypatch.setattr(httpx.Client, "send", guarded_send)

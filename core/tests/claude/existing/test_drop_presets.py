@@ -113,6 +113,18 @@ def _stub_extractors(monkeypatch, calls, meal_name="Power Bowl", routine_name="U
     monkeypatch.setattr(api_module, "suggest_meal_composition", meal)
     monkeypatch.setattr(api_module, "suggest_workout_routine", routine)
     monkeypatch.setattr(api_module, "estimate_nutrition", nutrition)
+    # The meal composer estimates micros for components USDA can't match via
+    # its own (function-local) import of nutrition_llm.estimate_nutrition —
+    # unstubbed, that was a real metered API call (2026-11-12).
+    import quintacle_core.nodes.logs.nutrition_llm as nutrition_llm
+
+    monkeypatch.setattr(
+        nutrition_llm,
+        "estimate_nutrition",
+        lambda description, provider=None: NutritionEstimate(
+            basis_amount_g=100, protein_g=10, carbs_g=4, fat_g=2, fiber_g=0, kcal=120, micros=[]
+        ),
+    )
 
 
 def _types(resp):
