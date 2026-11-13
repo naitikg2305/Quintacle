@@ -103,7 +103,11 @@ def test_wardrobe_item_description_links_to_person(tmp_path, monkeypatch):
     assert res.status_code == 200
 
     edges = get_graph_store().edges_from(wardrobe_item_note_id("Leather Jacket"))
-    assert [(e["kind"], e["target_id"]) for e in edges] == [("mentions_person", "note:people/laura/profile")]
+    # 2026-11-13: plus its place in the folder tree (folder_tree provenance).
+    assert sorted((e["kind"], e["target_id"]) for e in edges) == [
+        ("mentions_person", "note:people/laura/profile"),
+        ("part_of", "folder:personal-development/physical/style-dressing/items"),
+    ]
 
 
 def test_activity_description_links_from_its_day(tmp_path, monkeypatch):

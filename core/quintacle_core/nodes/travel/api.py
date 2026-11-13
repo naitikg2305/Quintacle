@@ -4,7 +4,15 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ...graph import get_graph_store, link_new_entry, sync_frontmatter_links
-from ...graph_capture import emerge_places_for_text, mention_candidates, visited_day_link
+from ...graph_capture import (
+    _Stores as CaptureStores,
+    emerge_places_for_text,
+    folder_hub_links,
+    mention_candidates,
+    safe_folder_tree_links,
+    safe_resolve_pending_typed_links,
+    visited_day_link,
+)
 from ...markdown_paths import resolve_nested, slugify
 from ...place_graph import link_experience_places, link_note_places
 from ...trip_photos import backfill_trip_photos, photos_for_plan
@@ -61,8 +69,9 @@ def create_experience(body: ExperienceCreate) -> dict:
     journal_id_by_date = {d.isoformat(): f"journal:{d.isoformat()}" for d in get_journal_store().list_dates()}
     experience_id_by_name = {e["name"]: f"experience:{e['folder']}/{e['slug']}" for e in get_store().all()}
     title_lookup = {**note_id_by_title, **journal_id_by_date, **experience_id_by_name}
-    resolved_titles = [canonicalize_name(t, list(title_lookup)) for t in body.links]
-    sync_frontmatter_links(exp_id, resolved_titles, title_lookup)
+    # 2026-11-13 (owner): typed links resolve exactly (case-insensitive), in
+    # sync_frontmatter_links — never fuzzy.
+    sync_frontmatter_links(exp_id, body.links, title_lookup)
 
     # The concrete retrofit from docs/graph-model.md: an experience and a
     # person detected from the same drop (api.py's propose_drop) used to be
@@ -78,6 +87,11 @@ def create_experience(body: ExperienceCreate) -> dict:
         visited_day_link(exp_id, body.visited_date)
     except Exception:
         pass
+
+    # 2026-11-13: the experience file's place in the folder tree, and notes
+    # that already typed this experience's name in `links:` link to it now.
+    safe_folder_tree_links(exp_id)
+    safe_resolve_pending_typed_links(exp_id, name)
 
     # This experience's city just joined (or reinforced) the place lexicon
     # (graph_capture) — and the experience itself counts as a mention of its
@@ -185,6 +199,13 @@ def move_planned(body: PlannedMove) -> dict:
         safe_remove_node(old_id)
         full = kb.read_full(folder, slug) or {}
         safe_index_note(folder, slug, full.get("title") or slug, full.get("content") or "")
+    # 2026-11-13: the re-keyed folder_tree / folder_hub edges still point at
+    # the OLD folder — re-sync the note into its new folder's tree + hub.
+    try:
+        folder_hub_links(CaptureStores(), new_id)
+    except Exception:
+        pass
+    safe_folder_tree_links(new_id)
     # 2026-11-05 (place_graph.py): a trip now in Planned links to its destinations.
     link_note_places(kb, folder, slug)
     return {"folder": folder, "slug": slug}

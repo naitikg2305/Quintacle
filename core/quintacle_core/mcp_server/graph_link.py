@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 from ..graph import init_graph_store, link_new_entry as _engine_link, sync_frontmatter_links
 from ..graph_capture import entry_graph_links, mention_candidates
 from ..place_graph import link_note_places
-from ..nodes.journal.normalize import canonicalize_name
 from ..nodes.journal.store import JournalStore
 from ..nodes.kb.store import KBStore
 from ..nodes.people.store import PersonStore
@@ -106,8 +105,8 @@ def link_new_entry(
             journal_id_by_date = {d.isoformat(): f"journal:{d.isoformat()}" for d in _journal_store.list_dates()}
             experience_id_by_name = {e["name"]: f"experience:{e['folder']}/{e['slug']}" for e in experiences}
             title_lookup = {**note_id_by_title, **journal_id_by_date, **experience_id_by_name}
-            resolved = [canonicalize_name(t, list(title_lookup)) for t in links]
-            created += sync_frontmatter_links(entry_id, resolved, title_lookup)
+            # 2026-11-13: exact, case-insensitive (resolved inside sync_frontmatter_links).
+            created += sync_frontmatter_links(entry_id, links, title_lookup)
 
         # 2026-11-05 (place_graph.py): a note carrying a `place` or a Planned
         # trip's destinations links into the place hierarchy — inside the

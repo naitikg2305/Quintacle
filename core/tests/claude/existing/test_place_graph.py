@@ -284,7 +284,9 @@ def test_mcp_attach_links_and_undo_removes_edges(tmp_path, geo):
     nid = f"note:{created['folder']}/{created['slug']}"
     assert (nid, VIE, "located_in") in edges()
     s.undo_write(result["ledger_id"])
-    assert not any(k in ("located_in", "part_of") for _, _, k in edges())
+    # 2026-11-13: the earlier kb_create_entry push's folder-tree edge
+    # (note -> part_of -> folder:trips) is not this push's to undo.
+    assert not any(k in ("located_in", "part_of") for _, t, k in edges() if not t.startswith("folder:"))
     assert not list((tmp_path / "data" / "graph" / "edges").glob("*.md")) or all(
         "place:" not in p.read_text() for p in (tmp_path / "data" / "graph" / "edges").glob("*.md")
     )

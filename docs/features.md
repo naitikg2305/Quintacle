@@ -94,6 +94,15 @@ same text always produces the same links:
   single expense is its own moment.
 - **Folders:** a note is part of its folder's "About" page.
 
+**Folders, places and typed links (2026-11-13).** Folders form the tree on their own: every note belongs to
+its folder, and every folder belongs to the folder above it, all the way up (a plan in Fun/Travel/Planned/Europe
+2027 and a trip in Fun/Travel/Done both sit under Travel, then Fun). A folder's "About" note describes that
+folder. You never make these links or parent nodes yourself, and moving a note moves it in the tree. Places
+cross-connect separately: anything about Vienna links to Vienna, which sits in Austria, which sits in Europe.
+Links you type in `links:` are exact and instant: "travel" finds the note "Travel" (capital letters don't
+matter), but "Travels" doesn't. If the note doesn't exist yet, the link is kept, and it connects the moment you
+create that note.
+
 Person and place pages are built from these links, never copied text. A fact lives in one place and every
 page that needs it points to it.
 

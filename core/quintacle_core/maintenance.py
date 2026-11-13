@@ -30,7 +30,11 @@ Only ids that MAP TO SOMETHING CHECKABLE are ever judged:
   only when this run removed an edge touching it AND nothing points INTO it
   anymore (no located_in, no child part_of); its own part_of edges then go
   too, cascading up city → country → continent the same way.
-- Everything else (`asset:`, `meal:<name>`, `routine:`, `item:`, ...) is
+- `folder:<slug path>` (2026-11-13, graph_capture's folder tree) — stale
+  when `kb/<slug path>/` no longer exists; its part_of edges (members in,
+  parent out) go with it. A deleted note's own membership edge already goes
+  with the note's id.
+- Everything else (`asset:`,`meal:<name>`, `routine:`, `item:`, ...) is
   never judged.
 
 ## What cleanup does (and how it's undoable)
@@ -123,6 +127,14 @@ class _Checker:
             if self._kb_file_exists(rest):
                 return False, ""
             return True, f"kb/{rest}.md missing"
+        if kind == "folder":
+            # 2026-11-13 (graph_capture folder tree): a virtual folder node is
+            # stale once its KB directory is gone (raw or slugified path).
+            if not self.kb_ok or not _safe_rel(rest):
+                return None, ""
+            if (self.kb_root / rest).is_dir() or resolve_nested(self.kb_root, rest).is_dir():
+                return False, ""
+            return True, f"kb/{rest}/ folder missing"
         if kind == "journal":
             if not self.journal_ok or not _ISO_DATE.match(rest):
                 return None, ""

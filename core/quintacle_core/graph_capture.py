@@ -87,6 +87,7 @@ SAME_EVENT = "same_event"  # link_event: records born from one capture/Save
 BACKLINK = "backlink"  # a just-created person/hub scanning content that already named it
 KNOWN_PLACE = "known_place"  # a text naming a city that is already a place node
 FOLDER_HUB = "folder_hub"  # a note -> its folder's about-<folder> charter hub
+# (FOLDER_TREE = "folder_tree", 2026-11-13: note -> folder: node -> parent; defined with the folder-tree section)
 VISITED_DAY = "visited_day"  # an experience -> its visited_date's journal day
 
 # Edge kinds for the 2026-11-11 candidate types. Project/company hubs and
@@ -303,6 +304,7 @@ def _emerge_places(
             # Retrieval index (retrieval.py): place notes are written here,
             # not through kb/api — failure-isolated, never blocks emergence.
             safe_index_note(place_folder, place_slug, name, body)
+            safe_folder_tree_links(f"note:{place_folder}/{place_slug}")  # 2026-11-13
             emerged.append(name)
         for sid in matching:
             created.append(create_edge(sid, target, "at_location", EMERGENT_PLACE))
@@ -327,6 +329,12 @@ def entry_graph_links(entry_id: str, entry_type: str, text: str, *, source_of_ed
     created += known_place_links(entry_id, text or "", stores=stores)
     if entry_id.startswith("note:"):
         created += folder_hub_links(stores, entry_id)
+        created += folder_tree_links(entry_id, stores=stores)  # 2026-11-13: note -> folder -> … -> top
+    # 2026-11-13: notes already typing this entry's title in `links:` link to
+    # it now (exact, case-insensitive), not at the next startup.
+    title = _entry_title(stores, entry_id)
+    if title:
+        created += resolve_pending_typed_links(entry_id, title, stores=stores)
     if entry_id.startswith("journal:"):
         created += visited_day_links_for_day(stores, entry_id.removeprefix("journal:"), experiences)
     residences = stores.residences.all()
@@ -418,9 +426,17 @@ def folder_hub_links(stores: "_Stores", note_id: str, *, source_of_edge: str = F
     if not folder:
         return []
     hub = _folder_hub_slug(stores, folder)
+    hub_id = f"note:{folder}/{hub}" if hub is not None else None
+    # 2026-11-13: re-sync, not only add — a moved note's re-keyed folder_hub
+    # edge (travel move_planned) still points at its OLD folder's hub.
+    store = get_graph_store()
+    for row in store.conn.execute(
+        "SELECT id, target_id FROM edges WHERE source_id = ? AND source_of_edge = ?", (note_id, source_of_edge)
+    ).fetchall():
+        if row["target_id"] != hub_id:
+            store.remove_edge(row["id"])
     if hub is None:
         return []
-    hub_id = f"note:{folder}/{hub}"
     if slug != hub:
         return [create_edge(note_id, hub_id, FOLDER_HUB_KIND, source_of_edge)]
     return [
@@ -428,6 +444,228 @@ def folder_hub_links(stores: "_Stores", note_id: str, *, source_of_edge: str = F
         for member in stores.kb.list_entries(folder)
         if member != hub
     ]
+
+
+# --- folder tree (2026-11-13) ------------------------------------------------
+#
+# Owner decision 2026-11-13: every KB folder is a graph node and the folder
+# tree is in the graph — automatic, never hand-made. Virtual ids (no file,
+# like place_graph's place:…): `folder:<folder slug path>`, e.g.
+# `folder:fun/travel/planned/europe-2027`. Edges, provenance FOLDER_TREE:
+#   note/experience -> part_of  -> its own folder node
+#   folder          -> part_of  -> its parent folder node (up to the top level)
+#   charter note    -> describes -> its folder node (in addition to part_of)
+# A folder node is never private (privacy.is_private_node only judges note:
+# ids); its private member notes stay out of cloud surfaces through the
+# usual `exclude` hook on neighbor labels. Vault lives outside kb/ and the
+# conversations/ archive is refused (retrieval.is_excluded), so neither
+# ever gets a folder node.
+
+FOLDER_TREE = "folder_tree"
+FOLDER_PREFIX = "folder:"
+FOLDER_MEMBER_KIND = "part_of"
+FOLDER_DESCRIBES_KIND = "describes"
+
+
+def folder_node_id(folder: str) -> str | None:
+    """`folder:<slug path>` for a KB folder slug path, None for the root, an
+    assets/ dir, or an excluded tree (conversations/, vault)."""
+    from .retrieval import is_excluded
+
+    parts = [p for p in (folder or "").strip("/").split("/") if p]
+    if not parts or "assets" in parts or any(p.startswith(".") for p in parts):
+        return None
+    node_id = FOLDER_PREFIX + "/".join(parts)
+    return None if is_excluded(node_id) else node_id
+
+
+def is_folder_id(node_id: str) -> bool:
+    return (node_id or "").startswith(FOLDER_PREFIX)
+
+
+def _humanize(segment: str) -> str:
+    return segment.replace("-", " ").replace("_", " ").strip().title() or segment
+
+
+def folder_label(folder_id: str) -> str:
+    """Display name: the folder's last segment, humanized ("Europe 2027")."""
+    return _humanize(folder_id.removeprefix(FOLDER_PREFIX).rsplit("/", 1)[-1])
+
+
+def folder_breadcrumb(folder_id: str) -> str:
+    """"Fun › Travel › Planned › Europe 2027" — the retrieval summary line."""
+    return " › ".join(_humanize(s) for s in folder_id.removeprefix(FOLDER_PREFIX).split("/") if s)
+
+
+def _index_folder_node(folder_id: str) -> None:
+    """Retrieval row for a folder node (title = display name, summary = its
+    breadcrumb) so search/neighbor labels read "Travel", not "fun/travel".
+    Only when missing — never re-embeds on every save. Never raises."""
+    from . import retrieval
+
+    index = retrieval._index
+    if index is None:
+        return
+    try:
+        if index.get_node(folder_id) is None:
+            retrieval.safe_index_node(folder_id, "folder", folder_label(folder_id), f"Folder: {folder_breadcrumb(folder_id)}")
+    except Exception:
+        logging.getLogger(__name__).exception("folder node index failed for %s", folder_id)
+
+
+def folder_chain_links(folder: str) -> list[dict]:
+    """folder -> part_of -> parent, from `folder` up to its top-level folder.
+    Idempotent (create_edge dedupes); a chain already in place costs one
+    lookup per level."""
+    created: list[dict] = []
+    node = folder_node_id(folder)
+    while node is not None:
+        _index_folder_node(node)
+        parent_path = node.removeprefix(FOLDER_PREFIX).rpartition("/")[0]
+        parent = folder_node_id(parent_path) if parent_path else None
+        if parent is None:
+            break
+        created.append(create_edge(node, parent, FOLDER_MEMBER_KIND, FOLDER_TREE))
+        node = parent
+    return created
+
+
+def _is_experience_folder(folder: str) -> bool:
+    """ExperienceStore.all()'s rule: notes at fun/travel/<city>/<kind>/,
+    except the planned / bucket-list / assets trees."""
+    from .nodes.travel.store import NON_EXPERIENCE_DIRS
+
+    parts = folder.split("/")
+    return len(parts) == 4 and parts[:2] == ["fun", "travel"] and parts[2] not in NON_EXPERIENCE_DIRS
+
+
+def folder_tree_links(entry_id: str, *, stores: "_Stores | None" = None) -> list[dict]:
+    """Re-syncs one entry's place in the folder tree: `part_of` to its own
+    folder node (plus `describes` when it is that folder's charter note),
+    and the folder chain above it. Any OTHER outgoing folder_tree edge from
+    this entry is removed — a note moved (its edges re-keyed) or demoted
+    from charter never keeps a stale folder edge. `entry_id` is a note: or
+    experience: id (experience files live in the KB tree too)."""
+    kind, _, rest = entry_id.partition(":")
+    if kind not in ("note", "experience"):
+        return []
+    folder, _, slug = rest.rpartition("/")
+    if kind == "note" and _is_experience_folder(folder):
+        # ExperienceStore reads every note at Fun/Travel/<City>/<Kind>/ as an
+        # experience and /graph draws it under its experience: id only — the
+        # membership edge goes there too (any note: twin is dropped).
+        twin_store = get_graph_store()
+        for row in twin_store.conn.execute(
+            "SELECT id FROM edges WHERE source_id = ? AND source_of_edge = ?", (entry_id, FOLDER_TREE)
+        ).fetchall():
+            twin_store.remove_edge(row["id"])
+        kind, entry_id = "experience", f"experience:{rest}"
+    target = folder_node_id(folder) if folder and slug else None
+    desired: set[tuple[str, str]] = set()
+    if target is not None:
+        desired.add((target, FOLDER_MEMBER_KIND))
+        if kind == "note" and slug.startswith("about-"):
+            stores = stores or _Stores()
+            if _folder_hub_slug(stores, folder) == slug:
+                desired.add((target, FOLDER_DESCRIBES_KIND))
+    store = get_graph_store()
+    for row in store.conn.execute(
+        "SELECT id, target_id, kind FROM edges WHERE source_id = ? AND source_of_edge = ?", (entry_id, FOLDER_TREE)
+    ).fetchall():
+        if (row["target_id"], row["kind"]) not in desired:
+            store.remove_edge(row["id"])
+    created = [create_edge(entry_id, t, k, FOLDER_TREE) for t, k in sorted(desired)]
+    if target is not None:
+        created += folder_chain_links(folder)
+    return created
+
+
+def safe_folder_tree_links(entry_id: str) -> list[dict]:
+    """folder_tree_links that never fails the write it follows (logged)."""
+    try:
+        return folder_tree_links(entry_id)
+    except Exception:
+        logging.getLogger(__name__).exception("folder tree link failed for %s (write itself succeeded)", entry_id)
+        return []
+
+
+def folder_tree_backfill(stores: "_Stores", experiences: list[dict]) -> int:
+    """Startup pass: every note's / experience's membership plus the chain
+    above it. Idempotent. A folder with no note anywhere beneath it (the
+    empty scaffolding dirs stores mkdir at init) gets no node — there is
+    nothing in it to navigate to, and a node exists iff an edge touches it."""
+    created = 0
+    experience_paths = {(e["folder"], e["slug"]) for e in experiences}
+    for folder in stores.kb.list_folders():
+        if folder_node_id(folder) is None:
+            continue
+        for slug in stores.kb.list_entries(folder):
+            kind = "experience" if (folder, slug) in experience_paths else "note"
+            created += len(folder_tree_links(f"{kind}:{folder}/{slug}", stores=stores))
+    return created
+
+
+def graph_folder_nodes(stored_edges: list[dict]) -> list[dict]:
+    """/graph's folder nodes: every folder: id the edges table references,
+    labelled with its display name (plus the full breadcrumb as `path`)."""
+    ids = sorted(
+        {endpoint for e in stored_edges for endpoint in (e["source_id"], e["target_id"]) if is_folder_id(endpoint)}
+    )
+    return [
+        {"id": fid, "type": "folder", "label": folder_label(fid), "path": folder_breadcrumb(fid)}
+        for fid in ids
+    ]
+
+
+# --- typed links resolve immediately (2026-11-13) ----------------------------
+
+
+def resolve_pending_typed_links(target_id: str, title: str, *, stores: "_Stores | None" = None) -> list[dict]:
+    """A note/experience/journal day just written under `title`: every
+    EXISTING note or experience whose `links:` frontmatter names that title
+    (graph.typed_link_key — exact, case-insensitive) gets its
+    frontmatter_links edge to it now, not at the next startup's catch-up.
+    Mirrors backlink_new_target: one pass over the store, on save."""
+    from .graph import typed_link_key, typed_link_kind
+
+    key = typed_link_key(title)
+    if not key:
+        return []
+    stores = stores or _Stores()
+    experiences = stores.travel.all()
+    experience_paths = {(e["folder"], e["slug"]) for e in experiences}
+    sources: list[tuple[str, list]] = []
+    for n in stores.kb.graph_entries():
+        if (n["folder"], n["slug"]) in experience_paths:
+            continue
+        sources.append((f"note:{n['folder']}/{n['slug']}", n.get("links") or []))
+    for e in experiences:
+        sources.append((f"experience:{e['folder']}/{e['slug']}", e.get("links") or []))
+    created = []
+    for source_id, links in sources:
+        if source_id == target_id or not isinstance(links, list):
+            continue
+        if any(typed_link_key(link) == key for link in links):
+            created.append(create_edge(source_id, target_id, typed_link_kind(target_id), "frontmatter_links"))
+    return created
+
+
+def safe_resolve_pending_typed_links(target_id: str, title: str) -> list[dict]:
+    try:
+        return resolve_pending_typed_links(target_id, title)
+    except Exception:
+        logging.getLogger(__name__).exception("pending typed-link scan failed for %s (write itself succeeded)", target_id)
+        return []
+
+
+def _entry_title(stores: "_Stores", entry_id: str) -> str | None:
+    if entry_id.startswith("journal:"):
+        return entry_id.removeprefix("journal:")
+    if not entry_id.startswith("note:"):
+        return None
+    folder, _, slug = entry_id.removeprefix("note:").rpartition("/")
+    full = stores.kb.read_full(folder, slug) if folder else None
+    return (full or {}).get("title") or None
 
 
 # --- experience -> its visited day (2026-11-11) -----------------------------
@@ -579,6 +817,9 @@ def run_graph_capture_backfill() -> dict:
         hub = _folder_hub_slug(stores, folder)
         if hub is not None:
             structural_edges += len(folder_hub_links(stores, f"note:{folder}/{hub}"))
+    # 2026-11-13: the folder tree — every note/experience -> its folder ->
+    # parent -> … -> top-level folder (+ charter note `describes` its folder).
+    structural_edges += folder_tree_backfill(stores, experiences)
 
     place_edges, emerged = _emerge_places(stores, sources, experiences, residences)
     # Known places AFTER emergence: a source naming a city that is (now) a

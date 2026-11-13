@@ -41,13 +41,17 @@ def planned_folder_with_year(folder: str, title: str, content: str) -> str:
 
 
 def existing_links_only(links, known_titles) -> list[str]:
-    from .nodes.journal.normalize import canonicalize_name
+    # 2026-11-13 (owner): the same exact, case-insensitive rule typed links
+    # resolve by (graph.typed_link_key) — "quintacle" keeps "Quintacle", but
+    # a near-miss like "Quintacles" is dropped instead of fuzzy-snapped.
+    from .graph import typed_link_key
 
-    known = list(known_titles)
-    known_lower = {k.lower() for k in known}
+    canonical: dict[str, str] = {}
+    for k in known_titles:
+        canonical.setdefault(typed_link_key(k), str(k))
     out: list[str] = []
     for link in links or []:
-        name = canonicalize_name(str(link).strip(), known) if str(link).strip() else ""
-        if name and name.lower() in known_lower and name not in out:
+        name = canonical.get(typed_link_key(link)) if str(link or "").strip() else None
+        if name and name not in out:
             out.append(name)
     return out

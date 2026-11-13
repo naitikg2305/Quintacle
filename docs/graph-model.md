@@ -366,3 +366,70 @@ algorithms to lean on.
   natural place for frontmatter — a companion sidecar file per artifact?
 - How this interacts with the sync mechanic in `deployment-and-privacy.md` — if
   edges live in per-item metadata, do they sync the same line-diff way as content?
+
+## Folder tree + exact typed links (2026-11-13, owner decisions)
+
+Owner rule: the graph must have no gaps for AI navigation, fully automatic —
+the owner never creates links or parent nodes by hand. Two changes; nothing
+above is rewritten.
+
+**1. Every KB folder is a graph node.** Before this, a folder only showed up
+through its optional `about-<folder>.md` charter note (`folder_hub` edges,
+2026-11-11), and only notes *directly* in that folder linked to it — no chain
+upward, and folders without a charter note were invisible. Now
+(`core/quintacle_core/graph_capture.py`, "folder tree" section):
+
+- Node id `folder:<folder slug path>` (e.g. `folder:fun/travel/planned/europe-2027`),
+  virtual like `place:` ids — no file. Label = the last segment humanized
+  ("Europe 2027"); it is indexed into retrieval as type `folder` (summary =
+  breadcrumb "Fun › Travel › Planned › Europe 2027") the first time it appears.
+- Edges, provenance `folder_tree`: every note → `part_of` → its own folder;
+  every folder → `part_of` → its parent, up to the top-level folder; a
+  folder's charter note (the same `_folder_hub_slug` rule) additionally →
+  `describes` → its folder. Two trips in `Fun/Travel/Planned/…` and
+  `Fun/Travel/Done/…` meet at `folder:fun/travel`.
+- Experience files (ExperienceStore reads every note at
+  `Fun/Travel/<City>/<Kind>/` as an experience, and `/graph` draws them under
+  their `experience:` id) get the membership edge under that id.
+- A folder with no note anywhere beneath it (the empty scaffolding dirs stores
+  `mkdir` at init) gets no node — nothing in it to navigate to.
+- Hooked into every save: `graph_capture.entry_graph_links` for `note:` ids
+  (which covers POST /kb/entries, /kb/entries/with-asset, /kb/record-that/save,
+  bucket create, project/career hub create, business ideas, work-log import,
+  wardrobe/grooming/document/home item saves, MCP `kb_create_entry`), plus
+  POST /people, POST /travel/experiences, emergent Places notes, and
+  POST /travel/planned/move (re-sync after re-keying, so the moved note loses
+  its old folder edge — `folder_tree_links` removes any outgoing
+  `folder_tree` edge that no longer matches). The startup
+  `run_graph_capture_backfill` walks every note (idempotent).
+- `maintenance.py` judges `folder:` ids: stale once `kb/<path>/` is gone.
+- Privacy: a folder node is never private (`privacy.is_private_node` only
+  judges `note:` ids). Its private member notes are filtered out of cloud
+  neighbor labels by the usual `exclude` hook (`privacy.private_filter`).
+  The vault lives outside `kb/` and `conversations/` is refused by
+  `retrieval.is_excluded`, so neither gets a folder node.
+- MCP undo: every folder edge a push created (membership AND any folder →
+  parent edge it was first to need) is staged like any other edge, so undo
+  stays exact. Known small gap: undoing the push that first filled a folder
+  removes that folder's chain edge while later notes still sit in it; the
+  next save in that folder or the startup backfill restores it.
+- `place_graph._parent_of` now ignores `folder:` targets — `part_of` is shared
+  with the place hierarchy, and a Places note is also a member of
+  `folder:places`.
+- `folder_hub` (note → about note) is kept: knowledge pages and existing
+  tests use it, and it is the direct note-to-charter hop. It now re-syncs too,
+  so a moved note's stale hub edge goes.
+
+**2. Typed links are exact and instant.** A note's `links:` titles (typed by
+the owner) used to resolve with `journal.normalize.canonicalize_name`
+(difflib, cutoff 0.8) at write time and in the startup catch-up — so
+"Travels" could silently snap to "Travel". Now `graph.resolve_typed_link`
+(inside `sync_frontmatter_links`) uses exact, trimmed, case-insensitive title
+equality (`graph.typed_link_key`): "travel" = "Travel", "Travels" ≠ "Travel".
+`canonicalize_name` itself and its people/meal/routine users are unchanged.
+`drop_fixups.existing_links_only` (the filter on AI-*suggested* links in a
+drop proposal) uses the same key. Pending links resolve immediately:
+`graph_capture.resolve_pending_typed_links` (mirrors `backlink_new_target`)
+runs on every note / journal day / experience / person save and links every
+existing note or experience whose `links:` already names the new title.
+Journal dates and experience names stay valid targets.
