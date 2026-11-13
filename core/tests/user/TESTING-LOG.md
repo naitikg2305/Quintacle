@@ -95,3 +95,15 @@ counts. Faked tests: `existing/test_gazetteer_transit.py`. Not live in the runni
 
 **Test:** `test_t01_austria_drop.py`. Local: failed on Frankfurt and Linz before the fix, 3/3 pass after.
 Cloud: not run yet.
+
+### T1 rerun, 2026-11-13: after the folder tree and exact typed links
+
+- Merged: the folder tree (every folder is a graph node, chained to its parent) and exact,
+  capitalization-insensitive, instant typed links.
+- The test now also saves the entry the way the app's Save does, then checks the graph:
+  - the folder chain: trip → Europe 2027 → Planned → Travel → Fun;
+  - each city → its country → Europe;
+  - no Frankfurt or Linz;
+  - no vault.
+- **Local 8/8 pass. Claude 8/8 pass.** Faked suite 1,529 pass, tsc 0.
+- The backend was restarted. Startup built 107 folder-tree edges on the owner's store.
