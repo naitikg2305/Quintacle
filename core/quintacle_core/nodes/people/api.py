@@ -4,7 +4,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ...graph import link_new_entry, reverse_lookup
-from ...graph_capture import mention_candidates, safe_backlink_new_target
+from ...graph_capture import (
+    mention_candidates,
+    safe_backlink_new_target,
+    safe_folder_tree_links,
+    safe_resolve_pending_typed_links,
+)
 from ...retrieval import safe_index_person
 from ..journal.normalize import canonicalize_name
 from ..travel.store import ExperienceStore
@@ -55,6 +60,10 @@ def create_person(body: PersonCreate) -> dict:
     # notes / experiences that already name this person link to them now,
     # not only at the next startup's run_graph_capture_backfill.
     safe_backlink_new_target(person_id)
+    # 2026-11-13: profile -> people/<name> folder -> people; typed links to
+    # this person's name (exact, case-insensitive) resolve now.
+    safe_folder_tree_links(person_id)
+    safe_resolve_pending_typed_links(person_id, resolved_name)
 
     # Retrieval index (retrieval.py) — failure-isolated, never fails the save.
     safe_index_person(resolved_name, folder, body.category, body.how_met, body.notes)

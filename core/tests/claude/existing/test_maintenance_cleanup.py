@@ -260,11 +260,17 @@ def test_startup_and_endpoint_clean_a_deleted_note(tmp_path, monkeypatch):
     dry = client.post("/maintenance/cleanup", params={"dry_run": "true"}).json()
     assert dry["dry_run"] is True
     assert "note:knowledge/gone" in [s["id"] for s in dry["stale"]]
-    assert len(dry["edges"]) == 1
+    # 2026-11-13: the startup backfill also put the note in the folder tree
+    # (note:knowledge/gone -> part_of -> folder:knowledge); both edges go.
+    assert {(e["target"], e["kind"]) for e in dry["edges"]} == {
+        ("note:knowledge/keep", "mentions"),
+        ("folder:knowledge", "part_of"),
+    }
     assert len(get_graph_store().all()) >= 1
 
     real = client.post("/maintenance/cleanup", params={"dry_run": "false"}).json()
-    assert real["dry_run"] is False and real["counts"]["edges"] == 1
+    assert real["dry_run"] is False and real["counts"]["edges"] == 2
+    assert "folder:knowledge" not in [s["id"] for s in real["stale"]]  # the folder still exists
     assert all("note:knowledge/gone" not in (e["source_id"], e["target_id"]) for e in get_graph_store().all())
 
     # Next startup: an edge created to a since-deleted note is cleaned automatically.

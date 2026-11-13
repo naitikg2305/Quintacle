@@ -21,7 +21,6 @@ from ...place_graph import backfill_places, link_note_places
 from ...retrieval import safe_index_note
 from ...perception import perceive_photo
 from ..journal.api import get_store as get_journal_store
-from ..journal.normalize import canonicalize_name
 from ..people.store import PersonStore
 from ..profile.api import get_store as get_profile_store
 from ..travel.api import get_store as get_travel_store
@@ -347,8 +346,9 @@ def _sync_note_graph_links(note_id: str, title: str, content: str, link_titles: 
         # as stale while the file still listed them (record_that_save,
         # create_entry with no links). Sync what the note actually states.
         link_titles = get_store().read_links(*note_id.removeprefix("note:").rsplit("/", 1))
-    resolved_titles = [canonicalize_name(t, list(title_lookup)) for t in link_titles]
-    sync_frontmatter_links(note_id, resolved_titles, title_lookup)
+    # 2026-11-13 (owner): typed links are exact (case-insensitive, trimmed) —
+    # resolved inside sync_frontmatter_links, never fuzzy-matched.
+    sync_frontmatter_links(note_id, link_titles, title_lookup)
 
     # Shared write-rule call (graph_capture): keyword-links against every
     # known person/experience AND runs the incremental place-emergence check,

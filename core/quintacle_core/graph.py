@@ -37,6 +37,10 @@ validates types, it just stores/queries them. The full scheme in use:
   Drop sort, one journal parse) gets a `part_of` edge to its event node.
   The id is a deterministic hash of the sorted member ids + date, so
   re-linking the same batch never mints a duplicate event.
+- "folder:<folder slug path>" (2026-11-13) — a KB folder, virtual (no file),
+  minted by graph_capture.folder_tree_links: note -> part_of -> folder ->
+  part_of -> parent folder … -> top level; a charter note -> describes ->
+  its folder. Provenance "folder_tree".
 - Synthesized by /graph per request, never stored as edge endpoints:
   "asset:<folder>/<slug>", "ingredient:<id>", "meal:<id>",
   "routine:<name>", "exercise:<name>", "item:<name>", "outfit:<name>".
@@ -409,6 +413,36 @@ def link_new_entry(
     return created
 
 
+def typed_link_key(title) -> str:
+    """The one comparison key for a typed link (2026-11-13, owner): trimmed,
+    case-folded title. "travel" == " Travel ", but "Travels" != "Travel" —
+    no fuzzy matching, no stemming. Used by sync_frontmatter_links, the
+    pending-link scan (graph_capture.resolve_pending_typed_links) and
+    drop_fixups.existing_links_only, so all three agree on "same title"."""
+    return str(title or "").strip().casefold()
+
+
+def resolve_typed_link(title, title_lookup: dict[str, str]) -> str | None:
+    """The graph id a typed link names, or None. An exact key wins; otherwise
+    the first title whose typed_link_key matches (title_lookup's own order —
+    callers build it notes, then journal dates, then experiences)."""
+    raw = str(title or "").strip()
+    if not raw:
+        return None
+    if raw in title_lookup:
+        return title_lookup[raw]
+    key = typed_link_key(raw)
+    for candidate, target in title_lookup.items():
+        if typed_link_key(candidate) == key:
+            return target
+    return None
+
+
+def typed_link_kind(target_id: str) -> str:
+    """Edge kind for a typed link: "on_day" to a journal day, else "related"."""
+    return "on_day" if target_id.startswith("journal:") else DEFAULT_EDGE_KIND
+
+
 def sync_frontmatter_links(
     entry_id: str,
     link_titles: list[str],
@@ -425,21 +459,26 @@ def sync_frontmatter_links(
 
     `title_lookup` maps every candidate title to its full graph id — build
     it the same way `/graph` already does (note titles + journal dates +
-    experience names) and resolve fuzzy drift (e.g. a slightly-off AI title)
-    against `list(title_lookup)` with `journal.normalize.canonicalize_name`
-    BEFORE calling this — kept out of this function so graph.py has no
-    dependency on the journal module.
+    experience names). [2026-11-13 correction: callers used to resolve fuzzy
+    drift with `journal.normalize.canonicalize_name` before calling this.
+    Owner decision: typed links are exact — this function now resolves each
+    title itself with resolve_typed_link (case-insensitive, trimmed, never
+    fuzzy); callers pass the titles as typed.]
 
     `kind_for_target(target_id) -> str` lets the caller pick the edge kind
     per target (default: "on_day" for a "journal:"-prefixed target, else
     "related" — the same two kinds `/graph` already used for this)."""
     store = get_graph_store()
     if kind_for_target is None:
-        kind_for_target = lambda tid: "on_day" if tid.startswith("journal:") else DEFAULT_EDGE_KIND  # noqa: E731
+        kind_for_target = typed_link_kind
 
-    resolved_targets = {
-        title_lookup[title] for title in link_titles if title in title_lookup and title_lookup[title] != entry_id
-    }
+    # 2026-11-13 (owner): typed links resolve EXACTLY — case-insensitive,
+    # whitespace-trimmed title equality (resolve_typed_link), never fuzzy.
+    resolved_targets = set()
+    for title in link_titles:
+        target = resolve_typed_link(title, title_lookup)
+        if target is not None and target != entry_id:
+            resolved_targets.add(target)
 
     current = {
         e["target_id"]: e

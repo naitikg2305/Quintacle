@@ -180,7 +180,9 @@ def _known_city_id(ctx: _Ctx, city_slug: str) -> str | None:
 
 def _parent_of(ctx: _Ctx, node_id: str) -> str | None:
     row = ctx.gs.conn.execute(
-        "SELECT target_id FROM edges WHERE source_id = ? AND kind = ? ORDER BY created_at LIMIT 1", (node_id, PART_OF)
+        "SELECT target_id FROM edges WHERE source_id = ? AND kind = ? AND target_id NOT LIKE 'folder:%' "
+        "ORDER BY created_at LIMIT 1",
+        (node_id, PART_OF),
     ).fetchone()
     return row["target_id"] if row else None
 

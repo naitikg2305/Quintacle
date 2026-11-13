@@ -32,6 +32,7 @@ from .graph_capture import (
     run_graph_capture_backfill,
     wardrobe_item_note_id,
 )
+from .graph_capture import graph_folder_nodes
 from .place_graph import graph_place_nodes, proposal_destinations
 from .drop_fixups import existing_links_only, planned_folder_with_year
 from .nodes.drop_router import (
@@ -452,15 +453,15 @@ def create_app() -> FastAPI:
     journal_id_by_date = {d.isoformat(): f"journal:{d.isoformat()}" for d in get_journal_store().list_dates()}
     experience_id_by_name = {e["name"]: f"experience:{e['folder']}/{e['slug']}" for e in experiences}
     link_target_by_title = {**note_id_by_title, **journal_id_by_date, **experience_id_by_name}
-    title_lookup = list(link_target_by_title.keys())
+    # 2026-11-13 (owner): typed links resolve exactly — case-insensitive,
+    # trimmed title equality inside sync_frontmatter_links, never the fuzzy
+    # canonicalize_name this loop used before.
     for n in notes:
         note_id = f"note:{n['folder']}/{n['slug']}"
-        resolved = [canonicalize_name(t, title_lookup) for t in n["links"]]
-        sync_frontmatter_links(note_id, resolved, link_target_by_title)
+        sync_frontmatter_links(note_id, n["links"], link_target_by_title)
     for e in experiences:
         exp_id = f"experience:{e['folder']}/{e['slug']}"
-        resolved = [canonicalize_name(t, title_lookup) for t in (e.get("links") or [])]
-        sync_frontmatter_links(exp_id, resolved, link_target_by_title)
+        sync_frontmatter_links(exp_id, e.get("links") or [], link_target_by_title)
 
     # Second half of the catch-up (graph_capture): frontmatter links above
     # were only ever the STATED connections — existing journal days, notes,
@@ -1215,6 +1216,9 @@ def create_app() -> FastAPI:
         # continent / country / city nodes referenced by located_in/part_of
         # edges (real Places notes are already emitted above as notes).
         nodes.extend(graph_place_nodes(get_graph_store().all()))
+        # 2026-11-13 (graph_capture folder tree): every folder: node the
+        # edges reference, labelled with its display name ("Europe 2027").
+        nodes.extend(graph_folder_nodes(get_graph_store().all()))
 
         repo = get_logs_repo()
         ingredients_by_id = {i["id"]: i for i in repo.list_ingredients()}
