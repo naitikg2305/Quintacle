@@ -147,6 +147,25 @@ create that note.
 Person and place pages are built from these links, never copied text. A fact lives in one place and every
 page that needs it points to it.
 
+## An operating system for your life
+
+Put together, Quintacle works the way an operating system does:
+
+| An OS has | Quintacle has |
+|---|---|
+| **A file system:** folders inside folders, every file has one home | **The folder tree:** every note sits in exactly one folder, and every folder sits inside its parent (Fun → Travel → Planned → Europe 2027 → the trip). It's built automatically, so there are no orphans and no gaps. |
+| **Shortcuts and tags:** one file reachable from many places | **Cross-links:** places (Vienna → Austria → Europe), people, days, moments and typed links reach a note from every angle, without copying it. |
+| **Drivers:** each one turns a device into data the system understands | **Drop:** each reader turns a PDF, photo, receipt or sentence into a structured suggestion (OCR, the local vision model, the local language model). |
+| **A kernel:** the code that decides, the same way every time | **Deterministic code:** dates, money, names, places and links are decided by code, never guessed by a model. |
+| **Permissions:** who may read what | **Privacy:** a private note never reaches cloud AI; the passwords vault is never seen by any model. |
+| **A shell:** how you ask it things | **Chat:** an AI that answers by walking the graph (up to a folder, across to a place, out to a person) instead of guessing. |
+| **Undo and logs** | **Review before save, and an undo ledger** for every write made through MCP. |
+
+**Why the folder tree matters for AI:** a small local model can't hold your whole life in its head. It can walk
+a clear tree, though: "what's planned in Europe?" means go to Travel, then Planned, then read what's there,
+and check the Europe place for anything elsewhere. The graph is built for an AI to navigate, not to look
+pretty.
+
 ---
 
 ## Testing checklist: the owner's 38 uses
