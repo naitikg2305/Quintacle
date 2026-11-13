@@ -147,6 +147,10 @@ _AMBIGUOUS = {
 }
 
 _ORIGIN_RE = re.compile(r"(?:\bfrom|\bout\s+of|\bleaving|\bdepart(?:ing|s)?(?:\s+from)?)\s+$", re.IGNORECASE)
+# 2026-11-13 (owner, T2 NYC drop): "the Bronx's real Little Italy" listed
+# Italy as a destination. A place name inside a neighborhood name (Little
+# Italy, Little India, Little Havana, Little Tokyo) is not that place.
+_NEIGHBORHOOD_BEFORE_RE = re.compile(r"\bLittle\s+$")
 # 2026-11-13 (owner, T1 Austria drop): a city passed THROUGH is not a place
 # visited. A mention right after "via" / "change(s) … " / "connecting in" /
 # "layover in" / "stopover in", or one in the middle of a flight chain
@@ -156,6 +160,21 @@ _TRANSIT_BEFORE_RE = re.compile(
     r"(?:\bvia|\bchanges?\b[^.\n]{0,15}|\bconnect(?:ing|ion)?(?:\s+(?:in|at))?|\blayover(?:\s+(?:in|at))?|\bstopover(?:\s+(?:in|at))?)\s+$",
     re.IGNORECASE,
 )
+# 2026-11-13 (owner, Brazil drop): "connect once in the US (Miami, Atlanta,
+# Houston or New York)" -- every city in a connection list is passed through,
+# not visited. Reaches back to the nearest connection word in the same
+# sentence (a ; or . ends it); a "to"/"into"/"then" after that word means the
+# city is where the trip goes ("via Frankfurt to Vienna" keeps Vienna).
+_TRANSIT_LIST_RE = re.compile(
+    r"\b(?:via|connect(?:s|ing|ion)?|layovers?|stopovers?|change\s+planes)\b(?P<rest>[^.!?;\n]*)$",
+    re.IGNORECASE,
+)
+_ONWARD_RE = re.compile(r"\b(?:to|into|then)\b", re.IGNORECASE)
+# 2026-11-13 (owner, Brazil drop, chose the broad rule): "(like Budapest)"
+# compares; a place right after like / such as / similar to / compared to is
+# not a place on this trip. Owner accepted that "beach towns like Paraty"
+# drops Paraty too.
+_COMPARE_BEFORE_RE = re.compile(r"\b(?:like|such\s+as|similar\s+to|compared\s+to)\s+(?:your\s+)?$", re.IGNORECASE)
 _CHAIN_BEFORE_RE = re.compile(r"\)\s*(?:to|->|→|-)\s+$")
 _CHAIN_AFTER_RE = re.compile(r"^\s*\([A-Z]{3}\)\s*(?:to|->|→|-)\s")
 
@@ -238,10 +257,17 @@ def find_places(text: str) -> list[PlaceMention]:
             continue
         if _ORIGIN_RE.search(text[max(0, m.start() - 20): m.start()]):
             continue
+        if _NEIGHBORHOOD_BEFORE_RE.search(text[max(0, m.start() - 10): m.start()]):
+            continue
+        if _COMPARE_BEFORE_RE.search(text[max(0, m.start() - 20): m.start()]):
+            continue
         kind, name = lookup[word.lower()]
         if kind == "city":
             before, after = text[max(0, m.start() - 30): m.start()], text[m.end(): m.end() + 12]
             if _TRANSIT_BEFORE_RE.search(before) or (_CHAIN_BEFORE_RE.search(before) and _CHAIN_AFTER_RE.match(after)):
+                continue
+            transit = _TRANSIT_LIST_RE.search(text[max(0, m.start() - 120): m.start()])
+            if transit and not _ONWARD_RE.search(transit.group("rest")):
                 continue
             city, country = canonical_city(name) or (name, None)
             mention = PlaceMention(city, country, continent_for(country) if country else None)

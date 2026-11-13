@@ -496,6 +496,12 @@ export type ParsedKBEntry = {
   // `private: true` — the note never reaches a cloud model or the MCP server.
   // A "Private, skip AI" proposal arrives with it already set.
   private?: boolean;
+  // 2026-11-13 (owner, T2): the drop matched a note that already exists —
+  // by the same name (code) or the AI's pick (checked by code). The card
+  // offers keep both (alt_title, the AI's nearby name) / append / replace.
+  existing_match?: { folder: string; slug: string; title: string; by: "same_name" | "ai"; reason?: string; original_title?: string };
+  alt_title?: string;
+  on_conflict?: "new" | "append" | "replace";
   file_meta?: FileMetaInfo[];
 };
 export type MicroEstimate = { nutrient: string; amount: number; unit: string; source?: string; approx?: boolean };
@@ -1467,6 +1473,10 @@ export type KBSuggestion = {
   fields?: Record<string, string>;
   perception?: Record<string, unknown> | null;
   private?: boolean; // Save stamps `private: true` (never clears an existing flag)
+  // 2026-11-13: the note already exists (drop's existing_match). Omitted =
+  // the old write-by-name behaviour (Browse's edit-save relies on it).
+  on_conflict?: "new" | "append" | "replace";
+  target_slug?: string;
 };
 
 // What a photo commit reports back from the auto photo-journal step:
@@ -1527,6 +1537,8 @@ export async function pushKBEntryWithAsset(
   if (suggestion.perception) form.append("perception", JSON.stringify(suggestion.perception));
   if (suggestion.private) form.append("private", "true");
   if (suggestion.fields && Object.keys(suggestion.fields).length > 0) form.append("fields", JSON.stringify(suggestion.fields));
+  if (suggestion.on_conflict) form.append("on_conflict", suggestion.on_conflict);
+  if (suggestion.target_slug) form.append("target_slug", suggestion.target_slug);
   const res = await fetch(`${API_BASE}/kb/entries/with-asset`, { method: "POST", body: form });
   if (!res.ok) throw new Error(`push failed: ${res.status} ${await res.text()}`);
   return res.json();

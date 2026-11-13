@@ -91,7 +91,7 @@ def saved(client, result):
     entry = first(result, "kb_entry")
     c = client
     form = {"folder": entry["folder"], "title": entry["title"], "content": entry["content"],
-            "links": ",".join(entry.get("links") or [])}
+            "links": ",".join(entry.get("links") or []), "on_conflict": entry.get("on_conflict") or "new"}
     if entry.get("fields"):
         form["fields"] = json.dumps(entry["fields"])
     r = c.post("/kb/entries/with-asset", data=form,

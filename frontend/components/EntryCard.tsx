@@ -408,6 +408,53 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
               File info: {m.line}
             </p>
           ))}
+          {entry.existing_match && (
+            // 2026-11-13 (owner, T2): never a silent overwrite. Keep both is the
+            // default, under the AI's nearby name (editable in the title box).
+            <div className="border rounded px-2 py-1.5 text-xs space-y-1">
+              <p>
+                {entry.existing_match.by === "same_name" ? "A note with this name already exists: " : "Looks like a version of: "}
+                <span className="font-semibold">{entry.existing_match.title}</span>
+                {entry.existing_match.by === "ai" && entry.existing_match.reason ? (
+                  <span className="opacity-60"> ({entry.existing_match.reason})</span>
+                ) : null}
+              </p>
+              <div className="flex flex-wrap gap-3">
+                {(
+                  [
+                    ["new", "Keep both (new note)"],
+                    ["append", "Append to it"],
+                    ["replace", "Replace its text"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <label key={value} className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      name={`on-conflict-${i}`}
+                      checked={(entry.on_conflict ?? "new") === value}
+                      onChange={() =>
+                        onUpdate(
+                          i,
+                          value === "new" && entry.existing_match?.by === "same_name" && entry.title === entry.existing_match.title
+                            ? { on_conflict: value, title: entry.alt_title ?? entry.title }
+                            : { on_conflict: value }
+                        )
+                      }
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              {entry.on_conflict && entry.on_conflict !== "new" && (
+                <p className="opacity-60">
+                  {entry.on_conflict === "append"
+                    ? `Adds this as a dated section at the end of "${entry.existing_match.title}". Its earlier text stays.`
+                    : `Replaces the text of "${entry.existing_match.title}". Its links and fields are kept.`}{" "}
+                  The title box is ignored.
+                </p>
+              )}
+            </div>
+          )}
           <textarea
             className="w-full border rounded p-2 text-sm"
             rows={4}

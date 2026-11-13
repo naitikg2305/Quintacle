@@ -9,6 +9,9 @@ deterministic before the review card shows them.
 - existing_links_only: the `links` the model proposes are kept only when
   they name a note, journal day or experience that exists ("About Travel"
   was suggested with no such note).
+- trip_folder_links: a note going into a Planned trip folder links to the
+  notes already in that folder -- the same trip (owner, T3 2026-11-13: the
+  local model left a flight ticket unlinked from its trip's itinerary).
 """
 from __future__ import annotations
 
@@ -54,4 +57,31 @@ def existing_links_only(links, known_titles) -> list[str]:
         name = canonical.get(typed_link_key(link)) if str(link or "").strip() else None
         if name and name not in out:
             out.append(name)
+    return out
+
+
+_MAX_TRIP_LINKS = 10
+
+
+def trip_folder_links(store, folder: str, links) -> list[str]:
+    """`links` plus the titles of the notes already in the same Planned trip
+    folder (Fun/Travel/Planned/<trip>), so a ticket, booking or revised plan
+    always links to the rest of its trip -- code, not the model's choice."""
+    out = list(links or [])
+    parts = [p for p in (folder or "").split("/") if p.strip()]
+    if not is_planned_folder("/".join(slugify(p) for p in parts)) or len(parts) < 4:
+        return out
+    try:
+        rows = store.list_entries_meta(folder)
+    except Exception:
+        return out
+    taken = {slugify(x) for x in out}
+    added = 0
+    for r in rows:
+        title = r.get("title") or ""
+        if added >= _MAX_TRIP_LINKS or r["slug"].startswith("_") or not title or slugify(title) in taken:
+            continue
+        out.append(title)
+        taken.add(slugify(title))
+        added += 1
     return out

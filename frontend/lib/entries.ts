@@ -439,6 +439,11 @@ export async function commitEntry(date: string, entry: ParsedEntry, assets: File
         perception: entry.perception ?? null,
         private: entry.private ?? false,
         ...(entry.fields && Object.keys(entry.fields).length > 0 ? { fields: entry.fields } : {}),
+        // A drop card always saves with an explicit choice: never a silent overwrite.
+        on_conflict: entry.on_conflict ?? "new",
+        ...(entry.existing_match && entry.on_conflict !== "new" && entry.on_conflict !== undefined
+          ? { target_slug: entry.existing_match.slug }
+          : {}),
       };
       return assets.length > 0 ? pushKBEntryWithAsset(suggestion, assets) : pushKBEntry(suggestion);
     }

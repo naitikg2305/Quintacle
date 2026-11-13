@@ -34,7 +34,8 @@ from .graph_capture import (
 )
 from .graph_capture import graph_folder_nodes
 from .place_graph import graph_place_nodes, proposal_destinations
-from .drop_fixups import existing_links_only, planned_folder_with_year
+from .drop_existing import apply_to_proposal as apply_existing_match
+from .drop_fixups import existing_links_only, planned_folder_with_year, trip_folder_links
 from .nodes.drop_router import (
     IMAGE_MIME_TYPES,
     classify_image_type,
@@ -311,7 +312,12 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        # 2026-11-13 (owner bug, Browse): with credentials on, Starlette echoes
+        # the request's Origin. After a PDF iframe (origin :8000) was open,
+        # Chrome sent folder fetches stamped Origin :8000 but checked the reply
+        # against :3000 -> CORS block, empty folder. No client sends cookies,
+        # so credentials off -> a plain "*" that matches any origin.
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -962,6 +968,12 @@ def create_app() -> FastAPI:
                 e["folder"] = planned_folder_with_year(e.get("folder") or "", e.get("title") or "", e.get("content") or "")
                 if e.get("links"):
                     e["links"] = existing_links_only(e["links"], known_titles)
+                # 2026-11-13 (owner, T3): same trip folder -> linked (code).
+                e["links"] = trip_folder_links(get_kb_store(), e.get("folder") or "", e.get("links"))
+                # 2026-11-13 (owner, T2): a note that already exists is never
+                # silently overwritten — the card offers keep both (nearby
+                # name) / append / replace (drop_existing).
+                apply_existing_match(get_kb_store(), e, provider=provider)
 
         # The branch's own proposals (before the additive extras below) are
         # the ones the image pipeline badge describes.

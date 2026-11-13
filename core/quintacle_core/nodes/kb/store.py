@@ -326,11 +326,15 @@ class KBStore:
         logs/ and presets/ elsewhere in the KB tree. Returns the path relative
         to the folder (e.g. "assets/deadlift-form.jpg") for the markdown
         entry to reference."""
-        assets_dir = self.assets_dir(folder)
-        assets_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = safe_asset_name(filename)
-        (assets_dir / safe_name).write_bytes(data)
-        return f"assets/{safe_name}"
+        # 2026-11-13 (owner, T2): never over an existing file. Four NYC notes
+        # in one folder each attached "chat-draft.md" and every save wrote
+        # over the last, so the first note's file held the fourth's text.
+        # A taken name gets -2, -3 ... (free_asset_path); replacing a file on
+        # purpose is replace_asset().
+        self.assets_dir(folder).mkdir(parents=True, exist_ok=True)
+        rel = self.free_asset_path(folder, filename)
+        self._clamped_asset_path(folder, rel).write_bytes(data)
+        return rel
 
     def assets_dir(self, folder: str) -> Path:
         return resolve_nested(self.root, folder) / "assets"

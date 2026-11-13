@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
@@ -183,7 +183,10 @@ export default function KBBrowsePage() {
     if (path) {
       setCurrentPath(path);
       const open = q.get("open");
-      if (open) readKBEntry(path, open).then(setViewing);
+      if (open) {
+        pathRef.current = path;
+        showEntry(path, open);
+      }
     }
   }, []);
 
@@ -203,28 +206,69 @@ export default function KBBrowsePage() {
     return () => clearTimeout(handle);
   }, [query]);
 
+  // 2026-11-13 (owner bug): leaving a folder before its contents (or an
+  // opened note) finished loading let the late answer land in the NEW folder:
+  // the old folder's notes showed everywhere, and clicking one fetched it
+  // from the wrong folder (404). Every answer is now kept only if the folder
+  // it was asked for is still the one on screen.
+  const pathRef = useRef(currentPath);
   useEffect(() => {
+    pathRef.current = currentPath;
     setViewing(null);
     setViewingRawFile(null);
     setEditing(false);
-    if (currentPath) {
-      listKBEntries(currentPath).then(setFiles);
-      listKBFiles(currentPath).then(setRawFiles);
-      listKBEntriesMeta(currentPath).then(setRows);
-      getKBView(currentPath).then(setView);
-    } else {
-      setFiles([]);
-      setRawFiles([]);
-      setRows([]);
-      setView(null);
-    }
+    // Clear right away so the old folder's items never show under the new path.
+    setFiles([]);
+    setRawFiles([]);
+    setRows([]);
+    setView(null);
+    if (!currentPath) return;
+    let alive = true;
+    // A failed load shows in the status line instead of an error overlay.
+    // (The PDF-open fetch errors were a backend CORS echo, fixed in api.py.)
+    const load = <T,>(get: () => Promise<T>, set: (v: T) => void) =>
+      get()
+        .then((v) => {
+          if (alive) set(v);
+        })
+        .catch((e) => {
+          if (alive) setStatus(`couldn't load this folder: ${e instanceof Error ? e.message : String(e)}`);
+        });
+    const path = currentPath;
+    load(() => listKBEntries(path), setFiles);
+    load(() => listKBFiles(path), setRawFiles);
+    load(() => listKBEntriesMeta(path), setRows);
+    load(() => getKBView(path), setView);
+    return () => {
+      alive = false;
+    };
   }, [currentPath]);
+
+  // 2026-11-13 (owner bug): clicking a breadcrumb or folder with a note/PDF
+  // open. Close the file in the SAME click as the folder change, so the
+  // preview never renders against the new folder (the PDF iframe asked for
+  // it there: fetch errors), and so clicking the folder you're already in
+  // still takes you back to its list instead of doing nothing (stuck).
+  function goTo(path: string) {
+    pathRef.current = path;
+    setViewing(null);
+    setViewingRawFile(null);
+    setEditing(false);
+    setStatus(null);
+    setCurrentPath(path);
+  }
+
+  // A note is shown only if you're still in the folder it was opened from.
+  async function showEntry(folder: string, slug: string) {
+    const entry = await readKBEntry(folder, slug);
+    if (pathRef.current === folder) setViewing(entry);
+  }
 
   async function openFile(slug: string) {
     setViewingRawFile(null);
     setEditing(false);
     setStatus(null);
-    setViewing(await readKBEntry(currentPath, slug));
+    await showEntry(currentPath, slug);
   }
 
   function openRawFile(name: string) {
@@ -241,7 +285,8 @@ export default function KBBrowsePage() {
     setViewingRawFile(null);
     setEditing(false);
     setStatus(null);
-    setViewing(await readKBEntry(folder, slug));
+    pathRef.current = folder; // the folder effect runs after this render
+    await showEntry(folder, slug);
   }
 
   function continueInChat() {
@@ -394,7 +439,7 @@ export default function KBBrowsePage() {
 
       <div className="flex items-center justify-between gap-3 border-b border-line pb-2">
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap text-sm">
-          <button onClick={() => setCurrentPath("")} className="text-muted hover:text-accent">
+          <button onClick={() => goTo("")} className="text-muted hover:text-accent">
             Knowledge base
           </button>
           {crumbs.map((crumb, i) => {
@@ -402,7 +447,7 @@ export default function KBBrowsePage() {
             return (
               <span key={pathToHere} className="flex items-center gap-1">
                 <ChevronRight size={14} className="text-muted/60" />
-                <button onClick={() => setCurrentPath(pathToHere)} className="text-muted hover:text-accent">
+                <button onClick={() => goTo(pathToHere)} className="text-muted hover:text-accent">
                   {crumb}
                 </button>
               </span>
@@ -437,7 +482,7 @@ export default function KBBrowsePage() {
               {folders.map((name) => {
                 const path = currentPath ? `${currentPath}/${name}` : name;
                 return (
-                  <button key={path} onClick={() => setCurrentPath(path)} className={tile(false)}>
+                  <button key={path} onClick={() => goTo(path)} className={tile(false)}>
                     <Folder size={28} className="text-accent" />
                     <span className="break-words text-xs">{name}</span>
                   </button>

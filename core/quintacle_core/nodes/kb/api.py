@@ -389,17 +389,59 @@ class EntryCreate(BaseModel):
     # `private: true` (False never CLEARS an existing flag; that's
     # POST /kb/entry/private's job, explicitly).
     private: bool = False
+    # 2026-11-13 (owner, T2): what to do when the note already exists.
+    # None = the old behaviour (write by folder + title; Browse's edit-save
+    # relies on it). "new" = refuse to overwrite (409); "append" / "replace"
+    # act on `target_slug` (the card's existing_match).
+    on_conflict: Literal["new", "append", "replace"] | None = None
+    target_slug: str | None = None
+
+
+def _strip_heading(body: str, title: str) -> str:
+    lines = body.lstrip("\n").split("\n")
+    if lines and lines[0].strip() == f"# {title}":
+        lines = lines[1:]
+    return "\n".join(lines).strip("\n")
+
+
+def _apply_on_conflict(folder, title, content, links, fields, on_conflict, target_slug):
+    """(title, content, links, fields) to write, per the card's choice.
+    Append keeps the existing note's text and adds a dated section."""
+    from ...markdown_paths import slugify
+
+    store = get_store()
+    if not on_conflict:
+        return title, content, links, fields
+    if on_conflict == "new":
+        if slugify(title) in store.list_entries(folder):
+            raise HTTPException(409, f'A note named "{title}" already exists in {folder}. Rename it, or choose Append or Replace.')
+        return title, content, links, fields
+    if not target_slug:
+        raise HTTPException(400, f"{on_conflict} needs target_slug")
+    existing = store.read_full(folder, target_slug)
+    if existing is None:
+        raise HTTPException(404, f"no note {target_slug} in {folder}")
+    old_title = existing["title"]
+    # Both keep the note's own links and fields, plus whatever the card adds.
+    merged_links = list(dict.fromkeys([*store.read_links(folder, target_slug), *(links or [])]))
+    merged_fields = {**(existing.get("fields") or {}), **(fields or {})} or None
+    if on_conflict == "replace":
+        return old_title, content, merged_links, merged_fields
+    old_body = _strip_heading(existing["content"], old_title)
+    added = f"{old_body}\n\n---\n\n## Added {clock.today().isoformat()}\n\n{content.strip()}\n"
+    return old_title, added, merged_links, merged_fields
 
 
 @router.post("/entries")
 def create_entry(body: EntryCreate) -> dict:
     content = _localize_remote_images(body.content, body.folder, get_store())
-    folder_slug, entry_slug = get_store().write(body.folder, body.title, content, body.links, fields=body.fields)
+    title, content, links, fields = _apply_on_conflict(body.folder, body.title, content, body.links, body.fields, body.on_conflict, body.target_slug)
+    folder_slug, entry_slug = get_store().write(body.folder, title, content, links, fields=fields)
     if body.private:
         get_store().set_private(folder_slug, entry_slug, True)
-    _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", body.title, content, body.links)
+    _sync_note_graph_links(f"note:{folder_slug}/{entry_slug}", title, content, links)
     # Retrieval index (retrieval.py) — failure-isolated, never fails the save.
-    safe_index_note(folder_slug, entry_slug, body.title, content)
+    safe_index_note(folder_slug, entry_slug, title, content)
     return {"folder": folder_slug, "slug": entry_slug}
 
 
@@ -741,6 +783,8 @@ async def create_entry_with_asset(
     perception: str = Form(""),  # optional JSON PerceptionResult dump carried through review from the drop proposal
     private: bool = Form(False),  # 2026-11-05: the review card's Private checkbox
     fields: str = Form(""),  # 2026-11-11: optional JSON {key: value} (a plan's reviewed `destinations`)
+    on_conflict: str = Form(""),  # 2026-11-13: "" (old behaviour) | new | append | replace — see EntryCreate
+    target_slug: str = Form(""),
 ) -> dict:
     try:
         fields_dict = json.loads(fields) if fields.strip() else None
@@ -750,6 +794,10 @@ async def create_entry_with_asset(
         fields_dict = None
     else:
         fields_dict = {str(k): str(v) for k, v in fields_dict.items()}
+    if on_conflict and on_conflict not in ("new", "append", "replace"):
+        raise HTTPException(400, f"unknown on_conflict {on_conflict!r}")
+    # Refuse (409/404) BEFORE any asset is written or image downloaded.
+    _apply_on_conflict(folder, title, "", [], None, on_conflict or None, target_slug or None)
     file_data = [(f.filename or "asset", await f.read()) for f in files]
     link_list = [l.strip() for l in links.split(",") if l.strip()]
     # Deterministic EXIF GPS off the first photo, if present — no AI, no user input
@@ -761,7 +809,8 @@ async def create_entry_with_asset(
             attached: dict[str, str] = {}
             for other, _ in file_data:
                 if other != name:
-                    saved_as = safe_asset_name(other)
+                    # The name save_asset will pick (it skips taken names).
+                    saved_as = get_store().free_asset_path(folder, other).split("/", 1)[1]
                     attached.setdefault(other.lower(), saved_as)
                     attached[other] = saved_as
             text, got = _attach_markdown_images(data.decode("utf-8", errors="replace"), folder, get_store(), attached)
@@ -769,6 +818,8 @@ async def create_entry_with_asset(
             md_images.extend(got)
     if md_images:
         content = content.rstrip() + "\n\n" + "\n".join(f"![]({p})" for p in md_images)
+    title, content, link_list, fields_dict = _apply_on_conflict(
+        folder, title, content, link_list, fields_dict, on_conflict or None, target_slug or None)
     folder_slug, entry_slug = get_store().write(folder, title, content, link_list, location, fields=fields_dict)
     asset_paths = [get_store().save_asset(folder_slug, name, data) for name, data in file_data]
     # Re-write with the asset reference(s) now that we know their final
