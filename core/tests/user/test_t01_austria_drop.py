@@ -11,7 +11,12 @@ Expectations (owner, 2026-11-13):
 - a flight layover (Frankfurt) must not be. A train change (Linz) is treated
   like a layover *(draft, owner to confirm)*.
 - the trip's year is in its folder (owner: "yeah i want the year");
-- linked notes only name notes that exist (no "About Travel" when there is none).
+- linked notes only name notes that exist (no "About Travel" when there is none);
+- after Save (the same request the app's Save makes), the graph has no gaps:
+  - the trip sits in its folder tree: trip → Europe 2027 → Planned → Travel → Fun;
+  - each trip city chains to its country, then to Europe;
+  - no node for Frankfurt or Linz is touched;
+  - nothing goes to the Document Vault.
 
 Run one provider per pytest call (each sets process-wide model routing):
     cd core && .venv/bin/python -m pytest tests/user/test_t01_austria_drop.py -q                      # local
@@ -31,12 +36,16 @@ PROVIDER = os.environ.get("QUINTACLE_USER_PROVIDER", "local")
 
 
 @pytest.fixture(scope="module")
-def result(tmp_path_factory):
+def client(tmp_path_factory):
     reason = missing_max() if PROVIDER == "cloud" else missing_requirements()
     if reason:
         pytest.skip(reason)
-    c = make_client(tmp_path_factory.mktemp("t01"), seed_store=REAL_STORE, cloud=PROVIDER == "cloud")
-    return drop(c, path=PDF, provider=PROVIDER)
+    return make_client(tmp_path_factory.mktemp("t01"), seed_store=REAL_STORE, cloud=PROVIDER == "cloud")
+
+
+@pytest.fixture(scope="module")
+def result(client):
+    return drop(client, path=PDF, provider=PROVIDER)
 
 
 def test_sorted_as_a_planned_trip_not_a_document(result):
@@ -68,3 +77,66 @@ def test_layover_and_train_change_are_not_destinations(result):
     dest = _destinations(result)
     assert "frankfurt" not in dest, dest  # flight layover PRG-FRA-IAD
     assert "linz" not in dest, dest  # train change Salzburg → Prague
+
+
+# ------------------------------------------------------------------ after Save
+
+
+@pytest.fixture(scope="module")
+def saved(client, result):
+    """Save the proposal exactly as the app's review card does
+    (frontend/lib/api.ts pushKBEntryWithAsset → POST /kb/entries/with-asset)."""
+    import json
+
+    entry = first(result, "kb_entry")
+    c = client
+    form = {"folder": entry["folder"], "title": entry["title"], "content": entry["content"],
+            "links": ",".join(entry.get("links") or [])}
+    if entry.get("fields"):
+        form["fields"] = json.dumps(entry["fields"])
+    r = c.post("/kb/entries/with-asset", data=form,
+               files=[("files", (PDF.name, PDF.read_bytes(), "application/pdf"))])
+    assert r.status_code == 200, r.text[:400]
+    out = r.json()
+    return f"note:{out['folder']}/{out['slug']}", out["folder"]
+
+
+def _edges():
+    from quintacle_core.graph import get_graph_store
+
+    return [(e["source_id"], e["target_id"]) for e in get_graph_store().all()]
+
+
+def _reachable(start: str) -> set[str]:
+    out, todo, edges = set(), [start], _edges()
+    while todo:
+        n = todo.pop()
+        for s, t in edges:
+            if s == n and t not in out:
+                out.add(t)
+                todo.append(t)
+    return out
+
+
+def test_saved_trip_sits_in_its_folder_tree(saved):
+    note_id, folder = saved
+    assert folder.startswith("fun/travel/planned/") and "2027" in folder, folder
+    up = _reachable(note_id)
+    for f in (f"folder:{folder}", "folder:fun/travel/planned", "folder:fun/travel", "folder:fun"):
+        assert f in up, (f, sorted(up))
+
+
+def test_saved_trip_cities_chain_to_country_and_europe(saved):
+    note_id, _ = saved
+    up = _reachable(note_id)
+    for city, country in (("budapest", "hungary"), ("vienna", "austria"), ("salzburg", "austria"), ("prague", "czechia")):
+        assert any(n.startswith("place:") and n.endswith(f"/{city}") for n in up), (city, sorted(up))
+        assert any(n.startswith("place:") and n.endswith(f"/{country}") for n in up), (country, sorted(up))
+    assert "place:europe" in up, sorted(up)
+
+
+def test_saved_trip_touches_no_layover_city_or_vault(saved):
+    note_id, _ = saved
+    touched = {t for s, t in _edges() if s == note_id} | {s for s, t in _edges() if t == note_id}
+    assert not any(n.endswith("/frankfurt") or n.endswith("/linz") for n in _reachable(note_id) | touched)
+    assert not any("document-vault" in n or n.startswith("vault") for n in touched)
