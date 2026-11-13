@@ -147,6 +147,17 @@ _AMBIGUOUS = {
 }
 
 _ORIGIN_RE = re.compile(r"(?:\bfrom|\bout\s+of|\bleaving|\bdepart(?:ing|s)?(?:\s+from)?)\s+$", re.IGNORECASE)
+# 2026-11-13 (owner, T1 Austria drop): a city passed THROUGH is not a place
+# visited. A mention right after "via" / "change(s) … " / "connecting in" /
+# "layover in" / "stopover in", or one in the middle of a flight chain
+# ("… to Frankfurt (FRA) to …"), doesn't count. The city still counts when
+# it is named any other way elsewhere in the text.
+_TRANSIT_BEFORE_RE = re.compile(
+    r"(?:\bvia|\bchanges?\b[^.\n]{0,15}|\bconnect(?:ing|ion)?(?:\s+(?:in|at))?|\blayover(?:\s+(?:in|at))?|\bstopover(?:\s+(?:in|at))?)\s+$",
+    re.IGNORECASE,
+)
+_CHAIN_BEFORE_RE = re.compile(r"\)\s*(?:to|->|→|-)\s+$")
+_CHAIN_AFTER_RE = re.compile(r"^\s*\([A-Z]{3}\)\s*(?:to|->|→|-)\s")
 
 
 @dataclass(frozen=True)
@@ -229,6 +240,9 @@ def find_places(text: str) -> list[PlaceMention]:
             continue
         kind, name = lookup[word.lower()]
         if kind == "city":
+            before, after = text[max(0, m.start() - 30): m.start()], text[m.end(): m.end() + 12]
+            if _TRANSIT_BEFORE_RE.search(before) or (_CHAIN_BEFORE_RE.search(before) and _CHAIN_AFTER_RE.match(after)):
+                continue
             city, country = canonical_city(name) or (name, None)
             mention = PlaceMention(city, country, continent_for(country) if country else None)
         else:

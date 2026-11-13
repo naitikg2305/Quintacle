@@ -33,6 +33,7 @@ from .graph_capture import (
     wardrobe_item_note_id,
 )
 from .place_graph import graph_place_nodes, proposal_destinations
+from .drop_fixups import existing_links_only, planned_folder_with_year
 from .nodes.drop_router import (
     IMAGE_MIME_TYPES,
     classify_image_type,
@@ -947,6 +948,19 @@ def create_app() -> FastAPI:
                 dest = proposal_destinations(e.get("folder") or "", e.get("title") or "", e.get("content") or "")
                 if dest:
                     e["fields"] = {**(e.get("fields") or {}), "destinations": dest}
+        # 2026-11-13 (owner, T1): the trip's year goes in its Planned folder,
+        # and proposed links must name something that exists (drop_fixups).
+        kb_props = [e for e in entries if e.get("type") == "kb_entry"]
+        if kb_props:
+            known_titles = (
+                [n["title"] for n in get_kb_store().graph_entries()]
+                + [d.isoformat() for d in get_journal_store().list_dates()]
+                + [x["name"] for x in get_travel_store().all()]
+            )
+            for e in kb_props:
+                e["folder"] = planned_folder_with_year(e.get("folder") or "", e.get("title") or "", e.get("content") or "")
+                if e.get("links"):
+                    e["links"] = existing_links_only(e["links"], known_titles)
 
         # The branch's own proposals (before the additive extras below) are
         # the ones the image pipeline badge describes.

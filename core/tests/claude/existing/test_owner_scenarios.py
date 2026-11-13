@@ -157,7 +157,7 @@ def test_itinerary_pdf_drop_is_read_and_sorted_into_planned_region(client, model
     body = r.json()
     assert body["provider_used"] == "local"
     [entry] = body["entries"]
-    assert entry["type"] == "kb_entry" and entry["folder"] == "Fun/Travel/Planned/Central Europe"
+    assert entry["type"] == "kb_entry" and entry["folder"] == "Fun/Travel/Planned/Central Europe 2027"  # owner 2026-11-13: trip year in the folder
     [fm] = entry["file_meta"]
     assert fm["title"] == "Central Europe trip plan" and fm["pages"] == 4 and fm["line"].startswith("🗂 PDF")
     # The sorter saw the PDF's content, and its prompt carries the travel rule.
@@ -168,7 +168,7 @@ def test_itinerary_pdf_drop_is_read_and_sorted_into_planned_region(client, model
     # Review -> Save (the PDF rides along), then Travel -> Planned lists it.
     out = _commit(client, entry["folder"], entry["title"], entry["content"], [("itinerary.pdf", pdf, "application/pdf")])
     planned = client.get("/travel/planned").json()
-    assert [(p["slug"], p["group"]) for p in planned] == [(out["slug"], "central-europe")]
+    assert [(p["slug"], p["group"]) for p in planned] == [(out["slug"], "central-europe-2027")]  # owner 2026-11-13: trip year in the folder
     text = _note(client, out)
     assert "🗂" in text and "Central Europe trip plan" in text
     got = client.get("/kb/asset", params={"folder": out["folder"], "path": "assets/itinerary.pdf"})
@@ -255,7 +255,7 @@ def test_chat_answer_md_drop_is_read_then_saved_with_images_browse_can_load(clie
     [entry] = r.json()["entries"]
     sort_call = next(c for c in calls if c["schema"] == "KBSuggestion")
     assert "no description given" not in sort_call["user"] and "Day 1: Central Park" in sort_call["user"]
-    assert entry["folder"] == "Fun/Travel/Planned/New York"
+    assert entry["folder"] == "Fun/Travel/Planned/New York 2027"  # owner 2026-11-13: trip year in the folder
 
     class Resp:
         headers = {"Content-Type": "image/jpeg"}
@@ -277,7 +277,7 @@ def test_chat_answer_md_drop_is_read_then_saved_with_images_browse_can_load(clie
     for p in paths:  # Browse loads note-relative paths from the note's folder
         got = client.get("/kb/asset", params={"folder": out["folder"], "path": p})
         assert got.status_code == 200 and len(got.content) > 0, p
-    assert client.get("/travel/planned").json()[0]["group"] == "new-york"
+    assert client.get("/travel/planned").json()[0]["group"] == "new-york-2027"  # owner 2026-11-13: trip year in the folder
 
 
 def test_plain_text_file_drop_is_read_not_no_description(client, models):
