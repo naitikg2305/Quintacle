@@ -36,8 +36,9 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -115,19 +116,18 @@ def _flatten_messages(messages: list[dict]) -> list[dict] | str:
     return [*blocks, {"type": "text", "text": "\n".join(lines) + "\n" + text_of(last_content)}]
 
 
-def run(
+def _invocation(
     system: Any,
     messages: list[dict],
     *,
-    model: str | None = None,
-    json_schema: dict | None = None,
-    tools: tuple[str, ...] = (),
-    timeout: float | None = None,
-) -> dict:
-    """One headless call. Returns {"text", "structured", "model"}. Raises
-    MaxError on any failure. `tools` (e.g. ("WebSearch", "WebFetch") for chat)
-    are the only tools that exist and are pre-approved so the headless run
-    never stops for permission."""
+    model: str | None,
+    json_schema: dict | None,
+    tools: tuple[str, ...],
+    timeout: float | None,
+    partial: bool = False,
+) -> tuple[dict, list[str], dict, float]:
+    """The one place the headless CLI call is shaped (shared by `run` and
+    `run_stream`): (stdin message, argv, child env, timeout seconds)."""
     if not available():
         raise MaxError("Claude Max isn't available here (CLI not found or Max disabled)")
     content = _flatten_messages(messages)
@@ -141,10 +141,129 @@ def run(
         *tool_args,
         "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
     ]
+    if partial:
+        cmd.append("--include-partial-messages")
     if json_schema is not None:
         cmd += ["--json-schema", json.dumps(json_schema)]
     env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
     limit = timeout or float(os.environ.get(TIMEOUT_ENV) or (600 if tools else 240))
+    return msg, cmd, env, limit
+
+
+def _final_result(result: dict | None, returncode: int | None, tail: str, model: str | None, json_schema: dict | None) -> dict:
+    """Shared tail of `run` / `run_stream`: the CLI's `result` event -> our
+    {"text", "structured", "model"} dict, or a readable MaxError."""
+    if result is None:
+        raise MaxError(f"Claude Max returned no result (exit {returncode}): {tail[:200]!r}")
+    if result.get("is_error") or result.get("subtype") != "success":
+        raise MaxError(f"Claude Max failed: {str(result.get('result') or result.get('subtype'))[:200]}")
+    if json_schema is not None and result.get("structured_output") is None:
+        raise MaxError("Claude Max returned no structured output")
+    return {
+        "text": result.get("result") or "",
+        "structured": result.get("structured_output"),
+        "model": next(iter(result.get("modelUsage") or {}), alias_for(model)),
+    }
+
+
+def run_stream(
+    system: Any,
+    messages: list[dict],
+    on_delta: Callable[[str], None],
+    *,
+    model: str | None = None,
+    tools: tuple[str, ...] = (),
+    timeout: float | None = None,
+) -> dict:
+    """`run`, streamed (2026-11-19, chat streaming): same CLI invocation plus
+    `--include-partial-messages`, read line by line from a Popen. Every
+    `stream_event` text_delta is handed to `on_delta` as it arrives (a new
+    text block after earlier text — e.g. the answer after a web search —
+    is preceded by a "\\n\\n" delta, matching how the final text is joined).
+    Returns the same dict as `run`; raises MaxError the same way. If
+    `on_delta` raises (client went away), the child is killed and the
+    exception propagates."""
+    msg, cmd, env, limit = _invocation(system, messages, model=model, json_schema=None, tools=tools, timeout=timeout, partial=True)
+    # stderr goes to a temp file, not a pipe: an unread stderr pipe that
+    # fills up would deadlock the child while we sit reading stdout.
+    errf = tempfile.TemporaryFile(mode="w+")
+    try:
+        p = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errf,
+            text=True, env=env, cwd=tempfile.gettempdir(),
+        )
+    except OSError as e:
+        errf.close()
+        raise MaxError(f"Claude Max couldn't start: {e}") from e
+    timed_out = threading.Event()
+
+    def _kill() -> None:
+        timed_out.set()
+        p.kill()
+
+    watchdog = threading.Timer(limit, _kill)
+    watchdog.daemon = True
+    watchdog.start()
+    result = None
+    emitted = False
+    block_needs_gap = False
+    tail = ""
+    try:
+        assert p.stdin is not None and p.stdout is not None
+        p.stdin.write(json.dumps(msg) + "\n")
+        p.stdin.close()
+        for line in p.stdout:
+            tail = line
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            kind = event.get("type")
+            if kind == "result":
+                result = event
+            elif kind == "stream_event":
+                ev = event.get("event") or {}
+                if ev.get("type") == "content_block_start" and (ev.get("content_block") or {}).get("type") == "text":
+                    block_needs_gap = emitted
+                elif ev.get("type") == "content_block_delta":
+                    delta = ev.get("delta") or {}
+                    if delta.get("type") == "text_delta" and delta.get("text"):
+                        if block_needs_gap:
+                            on_delta("\n\n")
+                            block_needs_gap = False
+                        on_delta(delta["text"])
+                        emitted = True
+        p.wait()
+    except BaseException:
+        p.kill()
+        p.wait()
+        errf.close()
+        raise
+    finally:
+        watchdog.cancel()
+    if timed_out.is_set():
+        errf.close()
+        raise MaxError(f"Claude Max timed out after {limit:.0f}s")
+    errf.seek(0)
+    stderr = errf.read()
+    errf.close()
+    return _final_result(result, p.returncode, stderr or tail, model, None)
+
+
+def run(
+    system: Any,
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    json_schema: dict | None = None,
+    tools: tuple[str, ...] = (),
+    timeout: float | None = None,
+) -> dict:
+    """One headless call. Returns {"text", "structured", "model"}. Raises
+    MaxError on any failure. `tools` (e.g. ("WebSearch", "WebFetch") for chat)
+    are the only tools that exist and are pre-approved so the headless run
+    never stops for permission."""
+    msg, cmd, env, limit = _invocation(system, messages, model=model, json_schema=json_schema, tools=tools, timeout=timeout)
     try:
         p = subprocess.run(
             cmd, input=json.dumps(msg) + "\n", capture_output=True, text=True,
@@ -162,17 +281,7 @@ def run(
             continue
         if event.get("type") == "result":
             result = event
-    if result is None:
-        raise MaxError(f"Claude Max returned no result (exit {p.returncode}): {(p.stderr or p.stdout)[:200]!r}")
-    if result.get("is_error") or result.get("subtype") != "success":
-        raise MaxError(f"Claude Max failed: {str(result.get('result') or result.get('subtype'))[:200]}")
-    if json_schema is not None and result.get("structured_output") is None:
-        raise MaxError("Claude Max returned no structured output")
-    return {
-        "text": result.get("result") or "",
-        "structured": result.get("structured_output"),
-        "model": next(iter(result.get("modelUsage") or {}), alias_for(model)),
-    }
+    return _final_result(result, p.returncode, p.stderr or p.stdout, model, json_schema)
 
 
 # JSON-Schema keywords Pydantic emits that aren't standard JSON Schema — the

@@ -34,7 +34,7 @@ def get_routine_store() -> GroomingRoutineStore:
 
 
 @router.post("/items")
-async def create_item(
+def create_item(
     name: str = Form(...),
     category: str = Form(...),
     description: str = Form(""),
@@ -44,7 +44,7 @@ async def create_item(
     resolved_name = canonicalize_item_name(name, known_names)
     asset_paths = []
     for f in files:
-        data = await f.read()
+        data = f.file.read()
         asset_paths.append(get_item_store().save_asset(f.filename or "item", data))
     slug = get_item_store().write(resolved_name, category, description, asset_paths)
     # Write rule (graph_capture): same deal as wardrobe items — the

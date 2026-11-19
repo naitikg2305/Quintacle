@@ -44,7 +44,7 @@ def get_asset(path: str) -> Response:
 
 
 @router.post("")
-async def create_document(
+def create_document(
     name: str = Form(...),
     doc_type: str = Form(""),
     issued_date: str = Form(""),
@@ -76,7 +76,7 @@ async def create_document(
 
     asset_paths = []
     for f in files:
-        data = await f.read()
+        data = f.file.read()
         asset_paths.append(store.save_asset(f.filename or "document", data))
 
     slug = store.write(

@@ -360,7 +360,7 @@ def test_install_skips_incomplete_foundation_release(tmp_path, monkeypatch):
 
 def test_chat_lane_scales_named_food(usda_db):
     block = chat_nutrition_block("how much selenium in 200g roast lamb leg")
-    assert block and block.startswith("## Nutrition facts (USDA FoodData Central, per stated amounts)")
+    assert block and block.startswith("## Nutrition facts (the owner's saved ingredients, else USDA FoodData Central, per stated amounts)")
     assert "Selenium 60.2 mcg" in block  # 30.1 mcg/100 g × 2
     assert "Lamb, leg, whole" in block and "200 g" in block
     assert "% of target" in block

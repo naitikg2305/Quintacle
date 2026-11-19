@@ -19,6 +19,17 @@ local-first routing (docs/local-inference-migration.md, "Decided 2026-10-15"):
 Per-call `provider` (plumbed from the endpoints for the "redo with cloud"
 step-back) wins over the QUINTACLE_INGEST_PROVIDER env default.
 
+[2026-11-19 owner decision, "cant auto switch to cloud": auto NO LONGER
+falls back to cloud. Cloud is only ever a user-chosen escalation (the "Redo
+with cloud" step-back re-sends the ORIGINAL input with provider=cloud). In
+auto, a local failure of any kind — daemon down / not installed, model not
+pulled, schema-invalid output — now raises the local error (OllamaError /
+LocalParseError) exactly like provider=local; endpoints surface it as a
+readable error (/drop answers with `local_unavailable` so the review UI
+offers Redo with cloud). "auto" stays a valid value (env/old clients send
+it) and now behaves as local. Explicit provider="cloud" is unchanged. The
+auto description above is kept as decision history.]
+
 TEXT-ONLY in this wave: vision+schema sites (classify_image_type, receipt
 extraction, the describe_* estimators) stay on cloud until the local
 vision+schema path is proven — plain local vision descriptions are already
@@ -91,8 +102,9 @@ PARSE_SEED = 42
 
 class LocalParseError(OllamaError):
     """Local model answered, but its output didn't validate against the
-    requested schema — a *local* failure (feeds auto's cloud fallback),
-    distinct from the daemon being unreachable."""
+    requested schema — a *local* failure, distinct from the daemon being
+    unreachable. (Until 2026-11-19 it fed auto's cloud fallback; now it is
+    raised to the caller in auto too — cloud only by user choice.)"""
 
 
 @dataclass
@@ -185,8 +197,8 @@ def _parse_local(system: str, user_content, output_format: type[BaseModel], max_
         # Parse payloads carry real context (meal/routine libraries, the KB
         # notes index) — sized per request by parse_num_ctx (8k, 16k only
         # when this request needs it) so nothing silently truncates. num_predict mirrors the cloud call's max_tokens cap; a
-        # truncated JSON tail fails validation below and (in auto) falls
-        # back to cloud rather than committing a half-parsed result.
+        # truncated JSON tail fails validation below and raises (never a
+        # half-parsed result; since 2026-11-19 never a silent cloud retry).
         # 2026-11-07: temperature 0 + a fixed seed — structured parsing (and
         # the USDA candidate pick, which routes through here) must give the
         # same answer for the same input; chat generation is untouched.
@@ -222,6 +234,12 @@ def _parse_local(system: str, user_content, output_format: type[BaseModel], max_
     try:
         return output_format.model_validate_json(content)
     except ValidationError as e:
+        if data.get("done_reason") == "length":
+            # 2026-11-19 (owner fix 5, diagnosed): the model looped until the token cap -> cut-off JSON.
+            raise LocalParseError(
+                f"local model \"{raw_model}\" ran out of tokens ({max_tokens}) before finishing the "
+                f"{output_format.__name__} (it was repeating itself) — redo with cloud"
+            ) from e
         raise LocalParseError(
             f"local model \"{raw_model}\" returned output that doesn't match the "
             f"{output_format.__name__} schema: {e.error_count()} validation error(s) — "
@@ -242,21 +260,17 @@ def parse_structured(
 ) -> ParseResult:
     """One structured parse, routed per the local-first rule. `provider`
     (from an endpoint's ?provider=... step-back redo) wins; otherwise the
-    QUINTACLE_INGEST_PROVIDER env var; default "auto" (local first, cloud
-    fallback). Returns the validated instance plus which provider served."""
+    QUINTACLE_INGEST_PROVIDER env var; default "auto". Returns the validated
+    instance plus which provider served.
+
+    2026-11-19 (owner): "auto" never switches to cloud on its own — it runs
+    local and a local failure raises (OllamaError / LocalParseError). Only an
+    explicit provider="cloud" (the user's Redo with cloud) reaches the cloud."""
     mode = (provider or os.environ.get(PROVIDER_ENV) or "auto").strip().lower() or "auto"
     if mode not in VALID_PROVIDERS:
         raise ValueError(f"unknown ingest provider {mode!r} — use one of {', '.join(VALID_PROVIDERS)}")
-    if mode in ("local", "auto"):
-        try:
-            return _record(ParseResult(_parse_local(system, user_content, output_format, max_tokens), "local"))
-        except OllamaError as e:
-            if mode == "local":
-                raise
-            logger.warning(
-                "ingest provider auto: local parse (%s) failed, falling back to cloud (%s): %s",
-                local_parse_model(),
-                DEFAULT_MODEL,
-                e,
-            )
-    return _record(ParseResult(_parse_cloud(system, user_content, output_format, max_tokens), "cloud"))
+    if mode == "cloud":
+        return _record(ParseResult(_parse_cloud(system, user_content, output_format, max_tokens), "cloud"))
+    # local and auto: local only. A failure propagates — no cloud call the
+    # user didn't choose.
+    return _record(ParseResult(_parse_local(system, user_content, output_format, max_tokens), "local"))

@@ -309,7 +309,7 @@ def test_profile_hints_are_whole_words_and_ingredients_outrank_numbers_alone(tin
     # ingredient word "chicken" now outranks a numbers-only neighbour.
     per100 = {"kcal": 152, "protein_g": 17, "carbs_g": 2.7, "fat_g": 8}
     got = store.nearest_by_profile(per100, ["The", "per", "serving", "Organic", "Chicken", "Cheddar"])
-    pike = next(c for c in got if c["fdc_id"] == 16)
-    assert pike["hint_hits"] == 0
+    # 2026-11-17: a label that names its meat only matches that meat -> pike isn't a candidate at all.
+    assert all(c["fdc_id"] != 16 for c in got)
     assert got[0]["fdc_id"] == 15
     assert store.nearest_by_profile(per100)[0]["fdc_id"] == 16  # numbers alone still rank by distance

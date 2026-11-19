@@ -53,6 +53,9 @@ def usda_proposal(name: str, basis_amount_g: float = 100, provider: str | None =
 def merge_label_with_usda(label_micros: list[dict], fdc_id: int, basis_amount_g: float) -> list[dict]:
     """Label micros (tagged source=label) + every USDA nutrient the label
     didn't state (tagged source=usda), scaled to the label's basis."""
+    # 2026-11-18 (owner, lamb): the review card sends back the USDA-filled rows too (source=usda);
+    # they are re-derived below from fdc_id, never re-tagged as printed label values.
+    label_micros = [m for m in label_micros if (m.get("source") or "label") == "label"]
     out = [{**m, "source": "label"} for m in label_micros]
     have = {m["nutrient"] for m in label_micros}
     fill = usda.preset_from_usda(fdc_id, basis_amount_g)

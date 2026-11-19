@@ -4,11 +4,12 @@ import datetime as _datetime
 import logging
 import os
 import re
+import uuid
 from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -17,6 +18,7 @@ load_dotenv()
 
 from . import clock
 from . import db
+from . import drop_log
 from . import llm_dispatch
 from . import maintenance
 from . import retrieval
@@ -35,8 +37,10 @@ from .graph_capture import (
 from .graph_capture import graph_folder_nodes
 from .place_graph import graph_place_nodes, proposal_destinations
 from .drop_existing import apply_to_proposal as apply_existing_match
-from .drop_fixups import existing_links_only, planned_folder_with_year, trip_folder_links
+from .drop_fixups import existing_links_only, nutrition_note_folder, planned_folder_with_year, trip_folder_for_plain_planned, trip_folder_links, trip_folder_matches_plan
+from .drop_fixups import strip_chat_closing
 from .nodes.drop_router import (
+    normalize_image,
     IMAGE_MIME_TYPES,
     classify_image_type,
     classify_text_file_type,
@@ -61,7 +65,7 @@ from .nodes.kb.photo_place import geocode_cache_path
 from .nodes.kb.file_meta import proposal_file_meta
 from .nodes.kb.privacy import private_manual_entry, public_notes_index
 from .nodes.kb.llm import suggest_kb_entry, suggest_kb_placement
-from .nodes.logs.meal_composer import resolve_composition, suggest_meal_composition
+from .nodes.logs.meal_composer import apply_stated_amounts, resolve_composition, suggest_meal_composition
 from .nodes.logs.routine_llm import resolve_workout_routine, suggest_workout_routine
 from .nodes.logs.nutrition_llm import estimate_nutrition, estimate_nutrition_from_image
 from .nodes.logs.usda_sourcing import basis_from_text, looks_like_label_text, usda_proposal
@@ -152,10 +156,77 @@ def _name_exists(name: str, known_names: list[str]) -> bool:
 # /graph addresses a routine by that note id (one node, not a duplicate).
 GROOMING_ROUTINES_FOLDER = GROOMING_ITEMS_FOLDER.rsplit("/", 1)[0] + "/routines"
 
+_SAYS_EATEN = re.compile(r"\b(?:i|we)\s+(?:just\s+)?(?:ate|had|eaten|finished|grabbed)\b|\b(?:i've|we've)\s+(?:eaten|had)\b",
+                         re.IGNORECASE)
 _GENERIC_LABEL_NAMES = {"", "labeled food", "labelled food", "food", "product"}
 
 
-def _label_profile_match(fields: dict, hint_text: str = "") -> dict:
+_INGREDIENTS_LINE_RE = re.compile(r"\bingredients?\s*[:;.]?\s*([^\n]+)", re.IGNORECASE)
+
+
+def label_single_ingredient(text: str) -> str | None:
+    """2026-11-18 (owner): a label photo is ONE product. Its INGREDIENTS line names it ("LAMB",
+    "Atlantic salmon"): the food word of a one-ingredient line, else None (several ingredients,
+    or no line)."""
+    from .nutrition_db import store as usda_store
+
+    m = _INGREDIENTS_LINE_RE.search(text or "")
+    if not m:
+        return None
+    line = re.split(r"[.(]|\bcontains\b|\bwww\b", m.group(1), flags=re.IGNORECASE)[0].strip()
+    if not line or "," in line or re.search(r"\band\b|&", line, re.IGNORECASE):
+        return None
+    words = [w for w in re.findall(r"[A-Za-z]{3,}", line) if usda_store.is_food_word(w)]
+    return words[-1].lower() if words else None
+
+
+def label_ingredient_name(name: str, usda_description: str) -> str:
+    """2026-11-18 (owner): a label name with no food word is renamed from its USDA match:
+    junk ("Safe Handling Instructions") -> "Lamb"; a brand ("Chobani") -> "Chobani (Greek yogurt)".
+    A name that already names a food stays."""
+    from .nodes.logs.label_parser import _name_quality_ok, name_from_usda_description
+    from .nutrition_db import store as usda_store
+
+    head = name_from_usda_description(usda_description or "")
+    if not head:
+        return name
+    if any(usda_store.is_food_word(w) for w in re.findall(r"[A-Za-z]{3,}", name or "")):
+        return name
+    clean = (name or "").strip()
+    if clean and clean.lower() not in _GENERIC_LABEL_NAMES and _name_quality_ok(clean):
+        return f"{clean} ({head})"
+    return head
+
+
+def ingredient_existing_match(entry: dict, known: list[dict]) -> dict | None:
+    """2026-11-18 (owner: "similar to travel"): is this proposed ingredient one he already saved?
+    Same name, the same USDA food, or the same numbers per 100 g (kcal within 5%, protein / fat /
+    carbs within 1.5 g). The card then offers Update it / Save as new — never a silent overwrite
+    or a silent duplicate."""
+    from .nodes.journal.normalize import canonicalize_item_name
+
+    names = [k["name"] for k in known]
+    same = canonicalize_item_name(entry.get("suggested_name") or "", names)
+    by_name = {k["name"]: k for k in known}
+    if same in by_name:
+        return {"id": by_name[same]["id"], "name": same, "by": "same_name"}
+
+    def per100(d):
+        b = float(d.get("basis_amount_g") or 0) or 100.0
+        return {k: float(d.get(k) or 0) * 100.0 / b for k in ("kcal", "protein_g", "fat_g", "carbs_g")}
+
+    mine = per100(entry)
+    for k in known:
+        if entry.get("fdc_id") and k.get("fdc_id") == entry.get("fdc_id") and (k.get("source") or "") == (entry.get("source") or ""):
+            return {"id": k["id"], "name": k["name"], "by": "same_usda"}
+        theirs = per100(k)
+        if mine["kcal"] and abs(mine["kcal"] - theirs["kcal"]) <= 0.05 * max(mine["kcal"], 1) and all(
+                abs(mine[x] - theirs[x]) <= 1.5 for x in ("protein_g", "fat_g", "carbs_g")):
+            return {"id": k["id"], "name": k["name"], "by": "same_numbers"}
+    return None
+
+
+def _label_profile_match(fields: dict, hint_text: str = "", require_word: str | None = None) -> dict:
     """2026-11-06: when a label's name can't be matched (a Nutrition Facts
     panel names no food), find USDA foods by the label's own numbers."""
     from .nutrition_db import store as usda_store
@@ -172,10 +243,14 @@ def _label_profile_match(fields: dict, hint_text: str = "") -> dict:
     if name.strip().lower() in _GENERIC_LABEL_NAMES:
         name = ""  # 2026-11-07: "Labeled food" is a placeholder — its "food" hinted every "Fast Foods" row
     words = re.findall(r"[A-Za-z]{3,}", f"{name} {hint_text}")
-    cands = usda_store.nearest_by_profile(per100, words)
+    cands = usda_store.nearest_by_profile(per100, words, require_word=require_word)
     if not cands:
         return {}
     best = cands[0]
+    if require_word:  # the label's one ingredient decided the candidates; numbers pick among them
+        return {"fdc_id": best["fdc_id"], "usda_description": best["description"], "usda_match_by": f"label ingredient ({require_word}) + numbers",
+                "usda_candidates": [{"fdc_id": c["fdc_id"], "description": c["description"], "category": c["category"],
+                                     "source": c["source"]} for c in cands]}
     # Auto-pick only on a clear winner: words agreed, or the runner-up is
     # clearly farther. Otherwise leave the choice to the owner (picker shows
     # the shortlist) — numbers alone can't tell Greek yogurt from cottage cheese.
@@ -209,6 +284,10 @@ def _label_agrees_with_usda(fields: dict, fdc_id: int) -> bool:
     for key in ("protein_g", "fat_g", "carbs_g"):
         if key in label and abs(float(ref.get(key) or 0) - label[key]) > max(8.0, 0.5 * label[key]):
             return False
+    # 2026-11-17 (owner, T6): protein tells same-named foods apart (Greek yogurt ~10 g/100 g vs
+    # plain yogurt ~5.7): a name match off by more than max(3 g, 30%) of the label's protein loses.
+    if "protein_g" in label and abs(float(ref.get("protein_g") or 0) - label["protein_g"]) > max(3.0, 0.3 * label["protein_g"]):
+        return False
     return True
 
 
@@ -259,8 +338,20 @@ def _source_ingredient_image(fields: dict) -> dict:
     and weighed it — the numbers come from USDA when it matches."""
     from_label = bool(fields.pop("from_label", False))
     ocr_text = fields.pop("ocr_text", "") or ""
+    ingredients_line = fields.pop("ingredients", "") or ""
     name = fields.get("suggested_name", "") or ""
     generic = from_label and name.strip().lower() in _GENERIC_LABEL_NAMES
+    if from_label:
+        # 2026-11-18 (owner): the label's one ingredient picks the USDA food (numbers choose among
+        # the foods with that word), and a non-food name is renamed from it. If no food with that
+        # word fits the printed numbers (yogurt says "milk"), the older path below decides.
+        word = label_single_ingredient(f"Ingredients: {ingredients_line}" if ingredients_line else ocr_text)
+        if word:
+            prof = _label_profile_match(fields, ocr_text, require_word=word)
+            if prof.get("fdc_id") and _label_agrees_with_usda(fields, prof["fdc_id"]):
+                entry = {**fields, "source": "label", **prof}
+                entry["suggested_name"] = label_ingredient_name(name, prof["usda_description"])
+                return _with_usda_fill(entry)
     usda = ({} if generic else usda_proposal(name, fields.get("basis_amount_g") or 100)) or {}
     candidates = usda.get("usda_candidates", [])
     if from_label:
@@ -277,9 +368,13 @@ def _source_ingredient_image(fields: dict) -> dict:
                     from .nodes.logs.label_parser import name_from_usda_description
 
                     entry["suggested_name"] = name_from_usda_description(prof["usda_description"]) or name
+                else:
+                    entry["suggested_name"] = label_ingredient_name(name, prof.get("usda_description") or "")
                 return _with_usda_fill(entry)
             if usda.get("matched"):  # contradicted name match, nothing better: keep it as a candidate only
                 usda = {**usda, "matched": False}
+        if fill:
+            fields = {**fields, "suggested_name": label_ingredient_name(name, usda.get("usda_description", ""))}
         return _with_usda_fill({**fields, "source": "label", "fdc_id": fill,
                 "usda_description": usda.get("usda_description", "") if fill else "", "usda_candidates": candidates})
     if usda.get("matched"):
@@ -294,6 +389,16 @@ DATA_DIR = Path(os.environ.get("QUINTACLE_DATA_DIR", Path.home() / ".quintacle")
 # (see docs/reference/drop-pipeline.md "Multi-attachment commits") — the ones
 # where a `perception` field means "about this entry's own photo".
 _PHOTO_BEARING_ENTRY_TYPES = {"kb_entry", "document_entry", "wardrobe_item", "grooming_item", "home_item", "outfit_photo"}
+
+
+class DropLogSave(BaseModel):
+    """POST /drop-log/save body (2026-11-19, drop_log.py): what one Save on
+    the drop/scratchpad page committed, after the owner's edits."""
+
+    drop_id: str | None = None
+    saved: list[dict] = []
+    deleted: list[dict] | None = None
+    provider_used: str | None = None
 
 
 class EventLinkRequest(BaseModel):
@@ -322,6 +427,17 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    drop_log.init(DATA_DIR)
+
+    def _log_drop_state(exc: Exception, content: dict) -> None:
+        # 2026-11-19 (drop-log): a /drop that became a local_unavailable
+        # proposal state still gets its drop_id + log line (context stashed
+        # on the exception by propose_drop). Never raises.
+        ctx = getattr(exc, "_drop_log_ctx", None)
+        if isinstance(ctx, dict):
+            content["drop_id"] = ctx.get("drop_id")
+            drop_log.log_drop(**ctx, response=content)
+
     @app.exception_handler(OllamaError)
     async def _ollama_error_handler(request, exc: OllamaError):
         # A local-parse failure (daemon down, model missing, schema-invalid
@@ -330,6 +446,19 @@ def create_app() -> FastAPI:
         # same contract as /kb/chat's inline OllamaError handling.
         from fastapi.responses import JSONResponse
 
+        # 2026-11-19 (owner: "cant auto switch to cloud"): auto no longer
+        # retries on cloud, so a local failure in /drop's classification is
+        # an expected STATE, not an error — same proposal shape as an
+        # unreadable photo, so the review UI offers Redo with cloud.
+        if request.url.path == "/drop":
+            content = {
+                "entries": [],
+                "provider_used": "local",
+                "pipeline": None,
+                "local_unavailable": f"The local model couldn't sort this ({exc}). Use Redo with cloud to try again on the cloud.",
+            }
+            _log_drop_state(exc, content)
+            return JSONResponse(status_code=200, content=content)
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     @app.exception_handler(image_policy.LocalImageUnavailable)
@@ -343,10 +472,9 @@ def create_app() -> FastAPI:
         from fastapi.responses import JSONResponse
 
         if request.url.path == "/drop":
-            return JSONResponse(
-                status_code=200,
-                content={"entries": [], "provider_used": "local", "pipeline": None, "local_unavailable": str(exc)},
-            )
+            content = {"entries": [], "provider_used": "local", "pipeline": None, "local_unavailable": str(exc)}
+            _log_drop_state(exc, content)
+            return JSONResponse(status_code=200, content=content)
         return JSONResponse(status_code=422, content={"detail": str(exc), "local_unavailable": True})
 
     init_schedule_store(DATA_DIR / "schedule" / "todos")
@@ -536,13 +664,17 @@ def create_app() -> FastAPI:
             meal = dict(row)
             meal["serving_g"] = sum(float(c["quantity_g"]) for c in repo.meal_components(meal["id"]))
             known_meals.append(meal)
-        suggestion = suggest_meal_composition(text, known_ingredients, provider=provider, known_meals=known_meals)
+        # 2026-11-18 (owner): saved ingredient/meal names are never renamed by the stated-amount guards.
+        known_names = [i["name"] for i in known_ingredients] + [m["name"] for m in known_meals]
+        suggestion = apply_stated_amounts(
+            suggest_meal_composition(text, known_ingredients, provider=provider, known_meals=known_meals), text, known_names)
         return resolve_composition(suggestion, known_ingredients, provider=provider, known_meals=known_meals)
 
-    def _propose_preset_entry(text: str, provider: str | None) -> dict | None:
+    def _propose_preset_entry(text: str, provider: str | None, warnings: list[str] | None = None) -> dict | None:
         """Gate -> existing extractor -> dedupe against the registries. Any
         failure is logged and swallowed: an extra suggestion must never
         fail the drop."""
+        kind = None
         try:
             kind = looks_like_preset(text)
             if kind is None:
@@ -576,12 +708,32 @@ def create_app() -> FastAPI:
             if not resolved["components"] or _name_exists(resolved["meal_name"], [m["name"] for m in get_logs_repo().list_meals()]):
                 return None
             return {"type": "meal_composition", **resolved}
-        except Exception:
+        except Exception as exc:
             logger.warning("additive preset suggestion failed; skipping", exc_info=True)
+            # 2026-11-18 (owner, T4): never silent — the drop page shows why no preset card came.
+            if warnings is not None:
+                what = {"workout_routine": "routine", "ingredient_preset": "ingredient"}.get(kind, "meal")
+                # 2026-11-19: say plainly when it was the LOCAL model (auto never
+                # switches to cloud on its own any more) — Redo with cloud is the fix.
+                if isinstance(exc, OllamaError):
+                    # Count it as a local call so provider_used reads "local"
+                    # even when the primary sort was deterministic — that is
+                    # what shows the Redo with cloud button.
+                    llm_dispatch.record_provider("local")
+                    warnings.append(f"The local model couldn't build the {what} suggestion, so no {what} card was added. Use Redo with cloud to build it on the cloud.")
+                else:
+                    warnings.append(f"The {what} suggestion failed ({type(exc).__name__}), so no {what} card was added. Try Redo with cloud.")
             return None
 
-    @app.post("/drop")
-    async def propose_drop(
+    # 2026-11-19 (drop-log): the route itself is the thin `propose_drop`
+    # wrapper below, which mints a drop_id and logs every proposal
+    # (drop_log.py); this is the unchanged body.
+    # 2026-11-19 (fix 6): plain `def` so FastAPI runs the whole body (model/
+    # OCR/sqlite calls) in its threadpool — `async def` ran them ON the event
+    # loop and froze every other endpoint during a 1–3 min local sort. The
+    # provider/pipeline ContextVar collectors are set and read inside this
+    # same worker thread, so provider_used/pipeline still work.
+    def _propose_drop_impl(
         text: str = Form(""),
         file: UploadFile | None = File(None),
         file2: UploadFile | None = File(None),
@@ -622,7 +774,7 @@ def create_app() -> FastAPI:
         if private_skip_ai:
             manual = private_manual_entry(text, file.filename if file is not None else None)
             if file is not None:  # deterministic file metadata — still zero model calls
-                manual["file_meta"] = proposal_file_meta([(file.filename or "upload", await file.read())])
+                manual["file_meta"] = proposal_file_meta([(file.filename or "upload", file.file.read())])
             return {"entries": [manual], "provider_used": None}
         if provider is not None and provider.strip().lower() not in llm_dispatch.VALID_PROVIDERS:
             raise HTTPException(400, f"provider must be one of {', '.join(llm_dispatch.VALID_PROVIDERS)}")
@@ -634,14 +786,16 @@ def create_app() -> FastAPI:
         image_policy.set_request_provider(provider)
         pipelines = image_policy.collect_pipelines()
 
-        data = await file.read() if file is not None else None
+        data = file.file.read() if file is not None else None
         filename = file.filename if (file is not None and file.filename) else ""
+        data, filename = normalize_image(data, filename)  # AVIF/HEIC (even named .jpg) -> JPEG
         ext = extension(filename) if filename else ""
         is_image = data is not None and ext in IMAGE_MIME_TYPES
         mime = IMAGE_MIME_TYPES.get(ext) if is_image else None
 
-        data2 = await file2.read() if file2 is not None else None
+        data2 = file2.file.read() if file2 is not None else None
         filename2 = file2.filename if (file2 is not None and file2.filename) else ""
+        data2, filename2 = normalize_image(data2, filename2)
         ext2 = extension(filename2) if filename2 else ""
         is_image2 = data2 is not None and ext2 in IMAGE_MIME_TYPES
         mime2 = IMAGE_MIME_TYPES.get(ext2) if is_image2 else None
@@ -697,6 +851,7 @@ def create_app() -> FastAPI:
         # Set only by the unprefixed plain-text fall-through: the additive
         # preset suggestion (below) never runs for prefixed/file/stock drops.
         preset_check_text: str | None = None
+        drop_warnings: list[str] = []
 
         if entry_type == "workout_routine":
             parsed_routine = parse_routine_definition(rest)
@@ -825,6 +980,11 @@ def create_app() -> FastAPI:
             # 2026-11-11: word-by-word only — this name is the save's upsert key,
             # and a distinguishing word ("Greek" vs "Plain" yogurt) is a new preset.
             fields["suggested_name"] = canonicalize_item_name(fields["suggested_name"], known_ingredient_names)
+            # 2026-11-18 (owner: "similar to travel"): a saved ingredient this looks like -> the card asks.
+            match = ingredient_existing_match(fields, [dict(r) for r in get_logs_repo().list_ingredients()])
+            if match:
+                fields["existing_match"] = match
+                fields["on_conflict"] = "update"
             entries = [{"type": "ingredient_preset", **fields}]
             experience_check_text = f"{fields.get('suggested_name', '')} {rest}"
         elif entry_type == "meal_composition":
@@ -917,6 +1077,7 @@ def create_app() -> FastAPI:
         else:
             # No prefix, no file — plain text with no deterministic signal at
             # all. Only path that hits full multi-type AI classification.
+            rest = strip_chat_closing(rest)  # 2026-11-19 fix 7: a pasted chat answer's closing questions/offers aren't notes
             parsed = parse_journal_dump(rest, known_meals, reference_date, known_routines=known_routines, provider=provider)
             entries = [e.model_dump() for e in parsed]
             preset_check_text = rest
@@ -959,12 +1120,19 @@ def create_app() -> FastAPI:
         # and proposed links must name something that exists (drop_fixups).
         kb_props = [e for e in entries if e.get("type") == "kb_entry"]
         if kb_props:
+            kb_folders = get_kb_store().list_folders()
             known_titles = (
                 [n["title"] for n in get_kb_store().graph_entries()]
                 + [d.isoformat() for d in get_journal_store().list_dates()]
                 + [x["name"] for x in get_travel_store().all()]
             )
             for e in kb_props:
+                # 2026-11-17 (owner, T4): a nutrition note under a NEW top folder -> his Nutrition folder.
+                e["folder"] = nutrition_note_folder(e.get("folder") or "", kb_folders)
+                # 2026-11-17 (owner, T2): plain Planned -> the trip's own folder (code), then its year.
+                # 2026-11-18 (owner, T2 fix d): an existing trip folder must be THIS trip (places + year).
+                e["folder"] = trip_folder_matches_plan(e.get("folder") or "", e.get("title") or "", e.get("content") or "")
+                e["folder"] = trip_folder_for_plain_planned(e.get("folder") or "", e.get("title") or "", e.get("content") or "")
                 e["folder"] = planned_folder_with_year(e.get("folder") or "", e.get("title") or "", e.get("content") or "")
                 if e.get("links"):
                     e["links"] = existing_links_only(e["links"], known_titles)
@@ -1082,9 +1250,13 @@ def create_app() -> FastAPI:
         # proposal in the SAME entry shape, appended after the primary
         # result. Failure-isolated; skipped when the name already exists.
         if preset_check_text:
-            preset_entry = _propose_preset_entry(preset_check_text, provider)
+            preset_entry = _propose_preset_entry(preset_check_text, provider, drop_warnings)
             if preset_entry is not None:
                 entries.append(preset_entry)
+                # 2026-11-17 (owner, T7): a meal drop is a plan, not "I ate this" -> no food-log
+                # card, unless the text says it was eaten ("I had / I ate ...").
+                if preset_entry.get("type") == "meal_composition" and not _SAYS_EATEN.search(preset_check_text):
+                    entries = [e for e in entries if e.get("type") != "food"]
 
         canonicalize_entries(entries, get_log_store())
 
@@ -1124,7 +1296,65 @@ def create_app() -> FastAPI:
             for entry in entries[:n_primary]:
                 entry["pipeline"] = pipeline
 
-        return {"entries": entries, "provider_used": llm_dispatch.summarize_providers(used), "pipeline": pipeline}
+        return {"entries": entries, "provider_used": llm_dispatch.summarize_providers(used), "pipeline": pipeline, "warnings": drop_warnings}
+
+    @app.post("/drop")
+    def propose_drop(
+        text: str = Form(""),
+        file: UploadFile | None = File(None),
+        file2: UploadFile | None = File(None),
+        keep_as_is: bool = Form(False),
+        reference_date: str = Form(""),
+        provider: str | None = Form(None),
+        private_skip_ai: bool = Form(False),
+    ) -> dict:
+        """POST /drop — see `_propose_drop_impl` for the behaviour. 2026-11-19
+        (owner: "save log"): adds `drop_id` to the response and appends one
+        "drop" record to drop-log/ (drop_log.py) on every proposal return,
+        including the local_unavailable states the exception handlers turn
+        into proposals (the handlers log via the context stashed on the exc).
+        Plain `def` — runs in the threadpool like the body."""
+        drop_id = uuid.uuid4().hex
+        files = [
+            {"name": f.filename or "upload", "size": getattr(f, "size", None)}
+            for f in (file, file2) if f is not None
+        ]
+        log_ctx = {
+            "drop_id": drop_id, "text": text, "files": files, "provider_requested": provider,
+            "reference_date": reference_date, "keep_as_is": keep_as_is, "private_skip_ai": private_skip_ai,
+        }
+        try:
+            result = _propose_drop_impl(text, file, file2, keep_as_is, reference_date, provider, private_skip_ai)
+        except (OllamaError, image_policy.LocalImageUnavailable) as exc:
+            # Turned into a 200 proposal STATE by the handlers above, which
+            # read this to add drop_id and write the log line.
+            try:
+                exc._drop_log_ctx = log_ctx
+            except Exception:
+                pass
+            raise
+        result["drop_id"] = drop_id
+        drop_log.log_drop(**log_ctx, response=result)
+        return result
+
+    @app.post("/drop-log/save")
+    def drop_log_save(body: dict = Body(default_factory=dict)) -> dict:
+        """2026-11-19: the drop/scratchpad page reports a Save — the entries
+        exactly as saved (after edits) + cards deleted first — for the save
+        log. Body shape: DropLogSave. Validated leniently by hand (a raw dict,
+        not the model) so a malformed body answers ok:false, never a 422/500."""
+        try:
+            parsed = DropLogSave.model_validate(body)
+            drop_log.log_save(drop_id=parsed.drop_id, saved=parsed.saved, deleted=parsed.deleted, provider_used=parsed.provider_used)
+            return {"ok": True}
+        except Exception:
+            logger.warning("drop-log save failed", exc_info=True)
+            return {"ok": False}
+
+    @app.get("/drop-log/recent")
+    def drop_log_recent(limit: int = 20) -> dict:
+        """The last `limit` drop/save records (newest last) across day files."""
+        return {"records": drop_log.recent(min(max(limit, 0), 1000))}
 
     @app.get("/retrieve")
     def retrieve_nodes(q: str, k: int = 10, types: str | None = None) -> dict:

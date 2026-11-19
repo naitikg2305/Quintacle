@@ -9,7 +9,7 @@ Expectations (owner, 2026-11-13):
 - destinations are the trip's cities: Budapest, Vienna, Salzburg, Prague;
 - the optional excursion (Hallstatt) may be listed;
 - a flight layover (Frankfurt) must not be. A train change (Linz) is treated
-  like a layover *(draft, owner to confirm)*.
+  like a layover (owner confirmed 2026-11-17: "preferrably no it shouldnt show up").
 - the trip's year is in its folder (owner: "yeah i want the year");
 - linked notes only name notes that exist (no "About Travel" when there is none);
 - after Save (the same request the app's Save makes), the graph has no gaps:
@@ -19,8 +19,8 @@ Expectations (owner, 2026-11-13):
   - nothing goes to the Document Vault.
 
 Run one provider per pytest call (each sets process-wide model routing):
-    cd core && .venv/bin/python -m pytest tests/user/test_t01_austria_drop.py -q                      # local
-    cd core && QUINTACLE_USER_PROVIDER=cloud .venv/bin/python -m pytest tests/user/test_t01_austria_drop.py -q  # Claude via Max
+    cd core && .venv/bin/python -m pytest tests/user/travel/test_t01_austria_drop.py -q                      # local
+    cd core && QUINTACLE_USER_PROVIDER=cloud .venv/bin/python -m pytest tests/user/travel/test_t01_austria_drop.py -q  # Claude via Max
 """
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ from pathlib import Path
 
 import pytest
 
-from tests.claude.harness import REAL_STORE, drop, first, folder_of, make_client, missing_max, missing_requirements, types
+from tests.claude.harness import REAL_STORE, drop, first, folder_of, make_client, missing_max, missing_requirements, sandbox_before, types
 
-PDF = Path(__file__).parent / "files" / "travel" / "Austria_drop.pdf"
+PDF = Path(__file__).parents[1] / "files" / "travel" / "Austria_drop.pdf"
 PROVIDER = os.environ.get("QUINTACLE_USER_PROVIDER", "local")
 
 
@@ -40,7 +40,12 @@ def client(tmp_path_factory):
     reason = missing_max() if PROVIDER == "cloud" else missing_requirements()
     if reason:
         pytest.skip(reason)
-    return make_client(tmp_path_factory.mktemp("t01"), seed_store=REAL_STORE, cloud=PROVIDER == "cloud")
+    # His data as it was when he dropped the PDF (2026-11-13 ~03:30, right after the 03:19 wipe:
+    # Fun/Travel/Planned was empty, no ingredients). Everything saved since is left out.
+    return sandbox_before(tmp_path_factory.mktemp("t01"), chats_from="2026-11-13-0300",
+                          leave_out=("fun/travel/planned/europe-2027", "fun/travel/planned/europe-2026",
+                                     "fun/travel/planned/new-york-2028"),
+                          leave_out_ingredients=("Costco Lean Lamb", "Kirkland Signature Plain Nonfat Greek Yogurt (2/3 cup)"), cloud=PROVIDER == "cloud")
 
 
 @pytest.fixture(scope="module")

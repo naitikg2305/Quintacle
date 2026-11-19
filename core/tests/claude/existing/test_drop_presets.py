@@ -136,10 +136,18 @@ def test_meal_shaped_text_adds_meal_preset_after_primary(client, monkeypatch):
     _stub_extractors(monkeypatch, calls)
     resp = client.post("/drop", data={"text": "200g rice, 150g chicken breast, 100g broccoli", "provider": "cloud"})
     assert resp.status_code == 200
-    assert _types(resp) == ["food", "meal_composition"]
-    preset = resp.json()["entries"][1]
+    # 2026-11-17 (owner, T7): a meal drop is a plan -> no food-log card unless it says it was eaten.
+    assert _types(resp) == ["meal_composition"]
+    preset = resp.json()["entries"][0]
     assert preset["meal_name"] == "Power Bowl" and len(preset["components"]) == 2 and "totals" in preset
     assert calls == [("meal", "cloud")]  # provider passed through
+
+
+def test_meal_drop_that_says_eaten_keeps_the_food_log(client, monkeypatch):
+    calls = []
+    _stub_extractors(monkeypatch, calls)
+    resp = client.post("/drop", data={"text": "I had 200g rice, 150g chicken breast, 100g broccoli"})
+    assert _types(resp) == ["food", "meal_composition"]
 
 
 def test_routine_shaped_text_adds_routine_preset(client, monkeypatch):
@@ -236,6 +244,10 @@ def test_extractor_failure_never_fails_the_drop(client, monkeypatch):
         resp = client.post("/drop", data={"text": text})
         assert resp.status_code == 200
         assert _types(resp) == ["food"]
+        # 2026-11-18 (owner, T4): the failure is said out loud, never silent.
+        assert resp.json()["warnings"] and "suggestion failed" in resp.json()["warnings"][0]
+        # 2026-11-18 (owner, T4): the failure is said out loud, never silent.
+        assert resp.json()["warnings"] and "suggestion failed" in resp.json()["warnings"][0]
 
 
 def test_extra_call_is_counted_by_provider_collector(client, monkeypatch):

@@ -39,7 +39,7 @@ files/travel/nyc-2028/local_itinerary.md and claude_itinerary.md.
 Sandbox: a copy of the owner's real store with today's NYC 2028 folder and chat
 left out, so the knowledge base is as it was before step 1. Needs Ollama AND
 Claude Max (local and cloud in one run, like the owner's session):
-    cd core && .venv/bin/python -m pytest tests/user/test_t02_nyc_2028_chat.py -q
+    cd core && .venv/bin/python -m pytest tests/user/travel/test_t02_nyc_2028_chat.py -q
 Cloud chat model: QUINTACLE_T02_CLOUD_MODEL (default max:opus).
 """
 from __future__ import annotations
@@ -52,12 +52,14 @@ from pathlib import Path
 
 import pytest
 
-from tests.claude.harness import REAL_STORE, drop, first, folder_of, make_client, missing_max, missing_requirements, types
+from tests.claude.harness import REAL_STORE, drop, first, folder_of, make_client, missing_max, missing_requirements, sandbox_before, types
 
 PROMPT = "plan a trip to new york city in 2028 5 days? "
 LOCAL_MODEL = "local:qwen3:8b"
 CLOUD_MODEL = os.environ.get("QUINTACLE_T02_CLOUD_MODEL", "max:opus")
 QUINTACLE_HUB = "note:projects/quintacle/quintacle"
+HIS_LOCAL = Path(__file__).parents[1] / "files" / "travel" / "nyc-2028" / "local_itinerary.md"
+HIS_CLAUDE = Path(__file__).parents[1] / "files" / "travel" / "nyc-2028" / "claude_itinerary.md"
 # Left out of the sandbox copy: what the owner's session itself created.
 LEFT_OUT = ("new-york-2028", "plan-a-trip-to-new-york-city-in-2028-5-days")
 
@@ -70,11 +72,13 @@ def client(tmp_path_factory):
     reason = missing_requirements() or missing_max()
     if reason:
         pytest.skip(reason)
-    tmp = tmp_path_factory.mktemp("t02")
-    seed = tmp / "seed"
-    shutil.copytree(REAL_STORE, seed, ignore=shutil.ignore_patterns(
-        *LEFT_OUT, "models", "*.onnx", "*.zip", "*.lock", "*-shm", "*-wal"))
-    return make_client(tmp, seed_store=seed, cloud=True)
+    # His data as it was when he started the chat (2026-11-13 07:05): T1's Europe 2027 itinerary
+    # existed; the NYC 2028 notes, the T3 ticket, Europe 2026 and all later chats did not.
+    return sandbox_before(tmp_path_factory.mktemp("t02"), chats_from="2026-11-13-0705",
+                          leave_out=("fun/travel/planned/new-york-2028", "fun/travel/planned/europe-2026",
+                                     "fun/travel/planned/europe-2027/2027-europe-travel-itinerary-sample",
+                                     "fun/travel/planned/europe-2027/assets/sample-dc-europe-flight-2027.pdf"),
+                          leave_out_ingredients=("Costco Lean Lamb", "Kirkland Signature Plain Nonfat Greek Yogurt (2/3 cup)"), cloud=True)
 
 
 def _chat(client, messages, model):
@@ -117,8 +121,10 @@ def _save(client, card: dict, answer: str, suffix: str, links: list[str]) -> str
 @pytest.fixture(scope="module")
 def session(client):
     s: dict = {}
-    # 1. local chat
-    s["local_answer"] = _chat(client, [{"role": "user", "content": PROMPT}], LOCAL_MODEL)
+    # 1. local chat (fresh answer: compared only). The DROPS use HIS saved answers from that day,
+    # so a random chat answer can't decide the pass/fail drop checks (owner, 2026-11-17).
+    s["fresh_local_answer"] = _chat(client, [{"role": "user", "content": PROMPT}], LOCAL_MODEL)
+    s["local_answer"] = HIS_LOCAL.read_text(encoding="utf-8")
     # 2. drop it locally, Save as A (owner kept the card's links)
     s["A_card"] = _send_to_drop(client, s["local_answer"], "local")
     s["A"] = _save(client, s["A_card"], s["local_answer"], "(local+local)", s["A_card"].get("links") or [])
@@ -127,7 +133,8 @@ def session(client):
     s["B_card"] = _send_to_drop(client, s["local_answer"], "cloud")
     s["B"] = _save(client, s["B_card"], s["local_answer"], "(local+claude)", [a_title])
     # 4. escalate: the conversation before the local answer, to Claude
-    s["claude_answer"] = _chat(client, [{"role": "user", "content": PROMPT}], CLOUD_MODEL)
+    s["fresh_claude_answer"] = _chat(client, [{"role": "user", "content": PROMPT}], CLOUD_MODEL)
+    s["claude_answer"] = HIS_CLAUDE.read_text(encoding="utf-8")
     # 5-6. drop Claude's answer locally (D) and with cloud (E); no links typed
     s["D_card"] = _send_to_drop(client, s["claude_answer"], "local")
     s["D"] = _save(client, s["D_card"], s["claude_answer"], "(claude+local)", [])
@@ -136,13 +143,13 @@ def session(client):
     # Both answers kept next to the sandbox, to compare with the owner's.
     import quintacle_core.api as api_module
 
-    for name in ("local_answer", "claude_answer"):
+    for name in ("fresh_local_answer", "fresh_claude_answer"):
         (Path(api_module.DATA_DIR).parent / f"{name}.md").write_text(s[name], encoding="utf-8")
     print(f"\nT2 answers saved in {Path(api_module.DATA_DIR).parent}")
     return s
 
 
-ANSWERS = ["local_answer", "claude_answer"]
+ANSWERS = ["fresh_local_answer", "fresh_claude_answer"]  # this run's chat answers (report only)
 CARDS = ["A_card", "B_card", "D_card", "E_card"]
 NOTES = ["A", "B", "D", "E"]
 
@@ -166,43 +173,69 @@ _GOING_HOME = re.compile(
     r"|check\s+into\s+(?:a\s+)?hotel\s+in\s+(dc|d\.c\.|washington))", re.IGNORECASE)
 
 
-@pytest.mark.parametrize("which", ANSWERS)
-def test_answer_is_new_york_in_2028(session, which):
+def _chat_answer_is_new_york_in_2028(session, which):
     text = session[which]
     assert re.search(r"new york|nyc", text, re.IGNORECASE), text[:500]
     assert "2028" in text, text[:500]
 
 
-@pytest.mark.parametrize("which", ANSWERS)
-def test_answer_has_exactly_five_days(session, which):
+def _chat_answer_has_exactly_five_days(session, which):
     days = _days(session[which])
     assert set(days) == {1, 2, 3, 4, 5}, sorted(days)
 
 
-@pytest.mark.parametrize("which", ANSWERS)
-def test_answer_goes_home_only_on_the_last_day(session, which):
+def _chat_answer_goes_home_only_on_the_last_day(session, which):
     days = _days(session[which])
     early = {n: t for n, t in days.items() if n < 5 and _GOING_HOME.search(t)}
     assert not early, {n: _GOING_HOME.search(t).group(0) for n, t in early.items()}
 
 
-@pytest.mark.parametrize("which", ANSWERS)
-def test_answer_does_not_add_all_five_boroughs(session, which):
+def _chat_answer_does_not_add_all_five_boroughs(session, which):
     assert not re.search(r"(all|every|each)\s+(of\s+the\s+)?(5|five)\s+boroughs", session[which], re.IGNORECASE)
 
 
-@pytest.mark.parametrize("which", ANSWERS)
-def test_answer_does_not_invent_a_quintacle_note(session, which):
+def _chat_answer_does_not_invent_a_quintacle_note(session, which):
     assert "quintacle" not in session[which].lower()
 
 
-def test_claude_finds_the_saved_nyc_notes(session):
+def _chat_claude_finds_the_saved_nyc_notes(session):
     text = session["claude_answer"]
     assert "new-york-2028" in text or "(local+local)" in text or "(local+claude)" in text, text[:800]
 
 
-def test_claude_never_offers_to_delete(session):
+def _chat_claude_never_offers_to_delete(session):
     assert not re.search(r"\b(delete|remove)\b", session["claude_answer"], re.IGNORECASE)
+
+
+
+
+# 2026-11-17 (owner): "these are non deterministic chats ... u can only compare claude and local.
+# the only hard testing is the final drops." His chat expectations from 2026-11-13 are kept,
+# but as a REPORT printed with the comparison: they never fail the run.
+_CHAT_CHECKS = [(_chat_answer_is_new_york_in_2028, True), (_chat_answer_has_exactly_five_days, True), (_chat_answer_goes_home_only_on_the_last_day, True), (_chat_answer_does_not_add_all_five_boroughs, True), (_chat_answer_does_not_invent_a_quintacle_note, True), (_chat_claude_finds_the_saved_nyc_notes, False), (_chat_claude_never_offers_to_delete, False)]
+
+
+def test_chat_expectations_report(session):
+    """Report only: which of the owner's chat expectations each answer met."""
+    lines = []
+    for check, per_answer in _CHAT_CHECKS:
+        for which in (ANSWERS if per_answer else ["claude_answer"]):
+            try:
+                check(session, which) if per_answer else check(session)
+                ok = "met"
+            except AssertionError:
+                ok = "NOT met"
+            lines.append(f"  {which:14} {check.__name__[6:]:45} {ok}")
+    print("\nT2 chat expectations (report only):\n" + "\n".join(lines))
+
+
+def test_local_vs_claude_comparison(session):
+    """Report only (owner, 2026-11-17): similarity + Claude-judged local fact accuracy,
+    written to tests/user/reports/. Never fails on the scores."""
+    from tests.user.chat_compare import compare
+
+    out = compare("T2", PROMPT, session["local_answer"], session["claude_answer"])
+    assert out["report"].exists()
 
 
 # ------------------------------------------------------------------ drop cards

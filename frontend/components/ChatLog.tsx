@@ -263,6 +263,7 @@ function Attachment({ block, onAddToDrop }: { block: ChatContentBlock; onAddToDr
 export default function ChatLog({
   messages,
   busy,
+  streaming,
   onAddToScratchpad,
   onAddAttachmentToDrop,
   onEscalate,
@@ -270,6 +271,10 @@ export default function ChatLog({
 }: {
   messages: ChatMessage[];
   busy?: boolean;
+  // The reply being streamed right now (raw text so far) — rendered as a
+  // live assistant bubble that the final message replaces on `done`. Kept
+  // OUT of `messages` so transcript autosave never sees a partial reply.
+  streaming?: string | null;
   onAddToScratchpad?: (text: string) => void;
   // Next-wave §9: a photo/PDF attached to a chat MESSAGE (the discussion
   // lane) can hop into the scratchpad's pending drop attachments.
@@ -381,7 +386,18 @@ export default function ChatLog({
           </div>
         );
       })}
-      {busy && <p className="animate-pulse font-mono text-xs uppercase tracking-wider text-accent">thinking…</p>}
+      {busy && !!streaming && (
+        <div>
+          <div className="inline-block max-w-[92%] rounded-xl border border-line bg-surface-2 px-3 py-2 text-left text-sm md:max-w-[85%]">
+            <div className="prose prose-sm dark:prose-invert max-w-none prose-img:rounded-lg prose-a:text-accent">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: MarkdownLink, p: MarkdownParagraph }}>
+                {streaming}
+              </ReactMarkdown>
+            </div>
+          </div>
+        </div>
+      )}
+      {busy && !streaming && <p className="animate-pulse font-mono text-xs uppercase tracking-wider text-accent">thinking…</p>}
     </>
   );
 }

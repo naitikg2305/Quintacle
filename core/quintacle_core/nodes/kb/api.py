@@ -11,6 +11,7 @@ from typing import Literal
 import json
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Response, UploadFile
+from fastapi.responses import StreamingResponse
 from openai import OpenAIError
 from pydantic import BaseModel
 
@@ -28,6 +29,7 @@ from .auto_journal import process_photo_commit
 from ... import clock
 from .chat import CHAT_MODELS, BedrockError, OllamaError, UnknownModelError, resolve_mode, resolve_model, run_kb_chat
 from .chat_store import ChatStore, _as_text
+from .chat_stream import stream_chat_events
 from .drop import _IMAGE_MIME, describe_drop, describe_images, extract_photo_date, extract_photo_location, is_image
 from .image_gen import generate_image
 from .llm import (
@@ -531,12 +533,12 @@ def perceive_asset(body: AssetPerceiveRequest) -> dict:
 
 
 @router.post("/entry/asset")
-async def add_entry_asset(folder: str = Form(...), slug: str = Form(...), file: UploadFile = File(...)) -> dict:
+def add_entry_asset(folder: str = Form(...), slug: str = Form(...), file: UploadFile = File(...)) -> dict:
     """Attaches a new file (any type — photo, video, STL, PDF, docx,
     spreadsheet) to an entry that already exists, from the generic page
     builder — as opposed to /entries/with-asset, which only attaches at
     creation time."""
-    data = await file.read()
+    data = file.file.read()
     try:
         asset_path = get_store().add_asset_to_entry(folder, slug, file.filename or "asset", data)
     except FileNotFoundError:
@@ -570,11 +572,11 @@ def _bake_file_meta_and_index(folder: str, slug: str, names: dict[str, str]) -> 
 
 
 @router.post("/asset/replace")
-async def replace_asset(folder: str = Form(...), path: str = Form(...), file: UploadFile = File(...)) -> dict:
+def replace_asset(folder: str = Form(...), path: str = Form(...), file: UploadFile = File(...)) -> dict:
     """Overwrites an existing asset IN PLACE at the same path — "I edited
     this file elsewhere, here's the new version" — rather than creating a
     new entry. The markdown's [asset](...) link never changes."""
-    data = await file.read()
+    data = file.file.read()
     try:
         get_store().replace_asset(folder, path, data)
     except FileNotFoundError:
@@ -666,20 +668,20 @@ def backfill_file_meta_route(dry_run: bool = True) -> dict:
 
 
 @router.post("/drop")
-async def drop_file(file: UploadFile = File(...), description: str = Form("")) -> dict:
+def drop_file(file: UploadFile = File(...), description: str = Form("")) -> dict:
     """Proposes a folder/title/content for an uploaded photo/PDF/DOCX/STL —
     never writes anything, same Approval-before-write contract as /kb/sort.
     The frontend holds onto the file and re-sends it to /kb/entries/with-asset
     to actually commit, mirroring how /kb/sort + /kb/entries already split
     propose from write for plain text."""
-    data = await file.read()
+    data = file.file.read()
     description_text = describe_drop(file.filename or "upload", data, description)
     suggestion = suggest_kb_entry(description_text, get_store().list_folders(), public_notes_index(get_store()))
     return {**suggestion.model_dump(), "file_meta": proposal_file_meta([(file.filename or "upload", data)])}
 
 
 @router.post("/batch-drop")
-async def batch_drop(
+def batch_drop(
     files: list[UploadFile] = File(...),
     manual_date: date | None = Form(None),
     manual_trip_name: str = Form(""),
@@ -707,7 +709,7 @@ async def batch_drop(
     file_meta_by_id: dict[str, list[dict]] = {}
     for i, f in enumerate(files):
         file_id = f"file_{i}"
-        data = await f.read()
+        data = f.file.read()
         file_meta_by_id[file_id] = proposal_file_meta([(f.filename or "upload", data)])
         try:
             description = describe_drop(f.filename or "upload", data, "")
@@ -774,7 +776,7 @@ async def batch_drop(
 
 
 @router.post("/entries/with-asset")
-async def create_entry_with_asset(
+def create_entry_with_asset(
     folder: str = Form(...),
     title: str = Form(...),
     content: str = Form(...),
@@ -798,7 +800,7 @@ async def create_entry_with_asset(
         raise HTTPException(400, f"unknown on_conflict {on_conflict!r}")
     # Refuse (409/404) BEFORE any asset is written or image downloaded.
     _apply_on_conflict(folder, title, "", [], None, on_conflict or None, target_slug or None)
-    file_data = [(f.filename or "asset", await f.read()) for f in files]
+    file_data = [(f.filename or "asset", f.file.read()) for f in files]
     link_list = [l.strip() for l in links.split(",") if l.strip()]
     # Deterministic EXIF GPS off the first photo, if present — no AI, no user input
     location = extract_photo_location(file_data[0][1]) if file_data else None
@@ -1036,6 +1038,66 @@ def chat_endpoint(body: ChatRequest) -> dict:
         out["private_stripped"] = stripped
     return out
 
+
+
+def _chat_stream_error(e: Exception) -> tuple[int, str] | None:
+    """/kb/chat's exception -> HTTPException mapping, as (status, detail) for
+    the stream's `error` event (keep the two in step)."""
+    if isinstance(e, (UnknownModelError, BedrockError, OllamaError)):
+        return 400, str(e)
+    if isinstance(e, OpenAIError):
+        if "api_key" in str(e) or "credentials" in str(e):
+            return 400, "OPENAI_API_KEY not set — add it to core/.env to use GPT models"
+        return 502, f"OpenAI error: {e}"
+    return None
+
+
+@router.post("/chat/stream")
+async def chat_stream_endpoint(body: ChatRequest) -> StreamingResponse:
+    """2026-11-19: /kb/chat, streamed as SSE — event format documented in
+    chat_stream.py. Request prep (private-turn stripping, mode) mirrors
+    chat_endpoint line for line; the answer comes from the same run_kb_chat,
+    so context assembly is identical. Pre-model errors stay plain HTTP 400s."""
+    raw = [m.model_dump() for m in body.messages]
+    try:
+        cloud = resolve_model(body.model, body.research)["provider"] != "local"
+    except UnknownModelError as e:
+        raise HTTPException(400, str(e))
+    if cloud:
+        messages, stripped = strip_private_turns(raw)
+    else:
+        messages, stripped = [{k: v for k, v in m.items() if k != PRIVATE_MARKER} for m in raw], 0
+    if not messages:
+        raise HTTPException(400, "nothing left to send once private turns are stripped")
+    mode, mode_switched = resolve_mode(body.mode, messages)
+
+    def work(on_delta) -> dict:
+        used_private: set[str] = set()
+        reply = run_kb_chat(
+            get_store(),
+            messages,
+            body.use_kb,
+            body.research,
+            body.folder,
+            body.model,
+            body.slug,
+            mode=mode,
+            used_private=used_private,
+            web=body.web,
+            on_delta=on_delta,
+        )
+        out: dict = {"reply": reply, "mode": mode, "mode_switched": mode_switched}
+        if used_private:
+            out["private_notes"] = sorted(used_private)
+        if stripped:
+            out["private_stripped"] = stripped
+        return out
+
+    return StreamingResponse(
+        stream_chat_events(work, _chat_stream_error),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 # --- "record that" (next-wave-plan §4) — explicit consolidation, gated ------
 #

@@ -33,7 +33,8 @@ _IMAGE_SYSTEM_PROMPT = (
     "present, prefer its printed values over a visual estimate). Also propose a short "
     "suggested_name for this ingredient (e.g. the product name on a label, or a plain "
     "description of the food). Set from_label to true only if you read the numbers from a printed "
-    "nutrition facts label."
+    "nutrition facts label. ingredients: copy the label's INGREDIENTS line exactly as printed if one is "
+    "visible, else leave it empty."
 )
 
 
@@ -59,6 +60,8 @@ class NutritionEstimateFromImage(NutritionEstimate):
     # label (they win, source=label); False for a visual estimate of a plain
     # food — then USDA numbers replace them when the food matches.
     from_label: bool = False
+    # 2026-11-18 (owner): the printed INGREDIENTS line ("LAMB"); picks the USDA food for the backfill.
+    ingredients: str = ""
 
 
 def estimate_nutrition(description: str, provider: str | None = None) -> NutritionEstimate:

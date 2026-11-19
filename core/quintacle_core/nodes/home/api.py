@@ -80,7 +80,7 @@ def list_residences() -> list[dict]:
 
 
 @router.post("/items")
-async def create_item(
+def create_item(
     name: str = Form(...),
     residence_name: str = Form(""),
     category: str = Form(""),
@@ -96,7 +96,7 @@ async def create_item(
 
     asset_paths = []
     for f in files:
-        data = await f.read()
+        data = f.file.read()
         asset_paths.append(get_item_store().save_asset(residence["folder"], f.filename or "item", data))
 
     slug = get_item_store().write(

@@ -96,6 +96,7 @@ def normalize_ocr(text: str) -> str:
     t = re.sub(r"[µμ]\s*g\b|(?<=\d)\s*ug\b", "mcg", t)
     t = re.sub(r"(?<=\d)\s*rng\b", "mg", t)
     t = re.sub(r"(?<=\d)\s*mcq\b", "mcg", t)
+    t = re.sub(r"(?<=\d)(\s*)m[o0][gq]\b", r"\1mcg", t)  # 2026-11-18 (owner, lamb label): "0.4mog"
     t = re.sub(r"(?<=\d)\s*mq\b", "mg", t)
     # Comma decimals (EU "8,5 g") vs thousands ("2,000").
     t = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", t)
@@ -131,7 +132,7 @@ _SPECS: tuple[_Spec, ...] = (
     _Spec("Added Sugars", (r"added\s*sugars?",), "g", "Added Sugars", r"incl\w*\.?\s*$"),
     _Spec("Total Sugars", (r"total\s*sugars?", r"(?<![a-z])sugars?(?![a-z])"), "g", None, r"(?:added|alcohols?)\s*$"),
     _Spec("protein_g", (r"protein\w*",), "g", "Protein"),
-    _Spec("Vitamin D", (r"vit(?:amin|\.)?\s*d\s*3?(?![a-z0-9])",), "mcg", "Vitamin D"),
+    _Spec("Vitamin D", (r"vit(?:amin|\.)?\s*d(?:\s*3(?![\d.]))?(?![a-z])",), "mcg", "Vitamin D"),  # "VitaminD0.4" (2026-11-18)
     _Spec("Vitamin A", (r"vit(?:amin|\.)?\s*a(?![a-z])",), "mcg", "Vitamin A"),
     _Spec("Vitamin C", (r"vit(?:amin|\.)?\s*c(?![a-z])",), "mg", "Vitamin C"),
     _Spec("Vitamin E", (r"vit(?:amin|\.)?\s*e(?![a-z])",), "mg", "Vitamin E"),
@@ -445,7 +446,9 @@ _BOILERPLATE_RE = re.compile(
     r"(?i)(?:\b(?:ingredients?|distribut\w*|manufactured|packed|llc|inc|corp|www|https?|certified|usda|gluten|gmo|"
     r"kosher|halal|antibiotics?|hormones?|nitrites?|nitrates?|refrigerat\w*|consumers?|statement|please|allergens?|"
     r"product\s+of|made\s+in|net\s*wt|best\s+by|use\s+by|sell\s+by|recycl\w*|questions|comments|call|visit|"
-    r"raised|naturally|occurring|except|guarantee\w*|satisfaction|warning|keep|lot|exp)\b|\.com\b|^\s*no\s)"
+    r"raised|naturally|occurring|except|guarantee\w*|satisfaction|warning|keep|lot|exp|"
+    # 2026-11-18 (owner, lamb label named "Safe Handling Instructions"): panel headings
+    r"safe\s+handling|instructions?|directions?|cooking|storage|thaw\w*|handling)\b|\.com\b|^\s*no\s)"
 )
 # Words that never stand alone as a name.
 _GENERIC_WORDS = {

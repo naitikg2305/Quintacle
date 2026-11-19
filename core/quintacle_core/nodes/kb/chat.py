@@ -9,6 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
+from typing import Callable
 
 import anthropic
 from openai import OpenAI
@@ -133,6 +134,77 @@ def _last_user_text(messages: list[dict]) -> str:
         if text:
             return text
     return ""
+
+
+# 2026-11-19 (owner: "fix for all"): every per-turn lookup used ONLY the newest
+# user message, so a vague follow-up ("include all ingredients for this
+# recipe", "what about day 2?", "tell me more") looked up nothing and a local
+# model invented the rest. Lookups now build their query from the
+# conversation, newest first, so a follow-up inherits its topic. Mode
+# detection and date words (_day_blocks) stay on the newest message only.
+_LOOKUP_PRIOR_TURNS = 2  # earlier user turns folded into KB / past-chat / photo queries
+_WEB_VAGUE_TERMS = 4  # newest message with fewer content words than this borrows the previous topic
+
+
+def _user_texts(messages: list[dict]) -> list[str]:
+    """Every user turn's typed text, oldest → newest (text blocks only, like
+    _last_user_text; empty turns skipped)."""
+    out: list[str] = []
+    for m in messages:
+        if m.get("role") != "user":
+            continue
+        content = m.get("content") or ""
+        if isinstance(content, str):
+            text = content.strip()
+        else:
+            text = "\n".join(b.get("text", "") for b in content if b.get("type") == "text").strip()
+        if text:
+            out.append(text)
+    return out
+
+
+def _lookup_query(messages: list[dict]) -> str:
+    """KB retrieval / past-chat / photo query: the newest message verbatim,
+    then the NEW content terms of the previous 1–2 user turns (newest turn
+    first). Newest words lead, so _query_terms' 12-term cap and the FTS/vector
+    ranking favour what was just asked."""
+    texts = _user_texts(messages)
+    if not texts:
+        return ""
+    newest = texts[-1]
+    seen = set(_query_terms(newest, limit=1000).split())
+    extra: list[str] = []
+    for prior in reversed(texts[-1 - _LOOKUP_PRIOR_TURNS:-1]):
+        for t in _query_terms(prior, limit=1000).split():
+            if t not in seen:
+                seen.add(t)
+                extra.append(t)
+    return " ".join([newest, *extra[:12]]).strip()
+
+
+def _web_query(messages: list[dict]) -> str:
+    """The web lane's text: the newest message alone when it says enough
+    (a good query stays untouched); a short/vague one gets the previous user
+    turn's topic terms prepended ("what about day 2?" → "kyoto itinerary … what
+    about day 2?"). Only the owner's own words ever leave the machine."""
+    texts = _user_texts(messages)
+    if not texts:
+        return ""
+    newest = texts[-1]
+    if len(texts) < 2 or len(_query_terms(newest).split()) >= _WEB_VAGUE_TERMS:
+        return newest
+    topic = _query_terms(texts[-2], limit=6)
+    return f"{topic} {newest}".strip() if topic else newest
+
+
+def _photo_query(messages: list[dict]) -> str:
+    """render_my_photos' text: whether to add the fallback gallery is decided
+    by the NEWEST message (an old "show me photos" must not re-trigger it);
+    which photos fit uses the conversation's topic."""
+    from .my_photos import asks_for_photos
+
+    newest = _last_user_text(messages)
+    return _lookup_query(messages) if asks_for_photos(newest) else newest
 
 
 def _neighbor_line(neighbors: list[dict], gate: PrivacyGate | None = None) -> str:
@@ -542,8 +614,38 @@ _RECENT_RULES = (
     "from earlier conversations. Never treat it as authoritative the way notes are — "
     "when you use it, flag it plainly (\"from a past chat, not in your notes\"), and "
     "when something in it looks worth keeping, offer to Record that so it lands in "
-    "their notes. If a note and a past-chat item disagree, the note wins."
+    "their notes. If a note and a past-chat item disagree, the note wins. "
+    # 2026-11-17 (owner): past chats are "very mild suggesters or helpers".
+    "It is only a mild hint. What the user says in THIS chat always wins: answer exactly "
+    "what they ask now, with the scope and requirements they give now. Never carry a "
+    "target, number, plan or requirement from a past chat into this answer; if one "
+    "seems relevant, mention it in one line as from a past chat and ask whether it "
+    "still holds, instead of building on it."
 )
+
+# 2026-11-18 (owner, fix g "keep, tighten the rule"): a local model carried a past chat's
+# target ("200 g protein, 2,400 kcal") into a new breakfast question despite _RECENT_RULES.
+# For LOCAL turns code removes every number from the past-chat block before the model sees
+# it, so only the topics remain as hints. Cloud turns keep the block as is.
+_PAST_NUMBER_RE = re.compile(
+    r"~?\$?\d[\d,.]*(?:\s*(?:-|–|to)\s*\d[\d,.]*)?\s*(?:%|x\s*\d+|(?:k?cal(?:ories)?|kcals?|kg|g|grams?|mg|mcg|µg|lbs?|pounds?|oz|ml|l|reps?|sets?|days?|weeks?|hours?|h|min(?:utes)?|k)\b)?",
+    re.IGNORECASE)
+
+
+def strip_past_chat_numbers(kb_text: str) -> str:
+    start = kb_text.find(_RECENT_HEADING)
+    if start < 0:
+        return kb_text
+    end = kb_text.find("\n## ", start + len(_RECENT_HEADING))
+    end = len(kb_text) if end < 0 else end
+    out = []
+    for line in kb_text[start:end].split("\n"):
+        m = re.match(r"(- \[\d{4}-\d\d-\d\d\] ?)(.*)", line)
+        if m:
+            line = m.group(1) + _PAST_NUMBER_RE.sub("…", m.group(2))
+        out.append(line)
+    return kb_text[:start] + "\n".join(out) + kb_text[end:]
+
 
 _RECENT_FACT_DAYS = 30
 _RECENT_FACT_CHARS = 2000
@@ -779,7 +881,7 @@ def _build_context(
 
     topic = _topic_context(store, folder, slug, gate) if folder and slug else None
 
-    query = _last_user_text(messages)
+    query = _lookup_query(messages)  # 2026-11-19: newest turn + earlier topic terms
     retrieved: str | None = None
     if query:
         try:
@@ -868,21 +970,37 @@ def _me_touches(me: str | None, query: str | None) -> bool:
 _MAX_FALLBACK = {"max:haiku": "claude-haiku-5-5", "max:sonnet": "claude-sonnet-5-5", "max:opus": "claude-opus-5-5"}
 
 
-def _run_max(picker_id: str, messages: list[dict], kb_text: str | None) -> str:
+def _run_max(
+    picker_id: str, messages: list[dict], kb_text: str | None, on_delta: Callable[[str | None], None] | None = None
+) -> str:
     """Claude on the Max subscription (headless `claude -p`, max_backend.py).
     Same system text as _run_anthropic (KB context + photo instruction) and
     the same always-on web search, as Claude Code's WebSearch/WebFetch tools.
     Any Max failure — the phone has no CLI, usage limit, timeout — falls back
     to the same tier on the metered API, and the reply says so."""
-    from ...max_backend import MaxError, run as max_run
+    from ...max_backend import MaxError, run as max_run, run_stream as max_run_stream
 
     system = "\n\n".join(t for t in (kb_text, _PHOTO_INSTRUCTION) if t)
+    tier, tools = picker_id.split(":", 1)[1], ("WebSearch", "WebFetch")
+    streamed: list[str] = []
     try:
-        return max_run(system, messages, model=picker_id.split(":", 1)[1], tools=("WebSearch", "WebFetch"))["text"]
+        if on_delta is None:
+            return max_run(system, messages, model=tier, tools=tools)["text"]
+
+        def push(text: str) -> None:
+            streamed.append(text)
+            on_delta(text)
+
+        # 2026-11-19 streaming: the same CLI call with partial messages.
+        return max_run_stream(system, messages, push, model=tier, tools=tools)["text"]
     except MaxError as e:
         fallback = _MAX_FALLBACK.get(picker_id, "claude-sonnet-5-5")
         logger.warning("chat: Max unavailable (%s), falling back to %s on the API", e, fallback)
+        if streamed and on_delta is not None:
+            on_delta(None)  # Max died mid-answer: the client drops the partial text
         reply = _run_anthropic(fallback, messages, kb_text)
+        if on_delta is not None:
+            on_delta(reply)
         return f"{reply}\n\n_(Claude Max wasn't available — {e} — so this was answered on the metered API.)_"
 
 
@@ -1130,7 +1248,9 @@ def _to_ollama_messages(messages: list[dict], vision: bool) -> list[dict]:
     return out
 
 
-def _run_local(picker_id: str, messages: list[dict], kb_text: str | None) -> str:
+def _run_local(
+    picker_id: str, messages: list[dict], kb_text: str | None, on_delta: Callable[[str | None], None] | None = None
+) -> str:
     """Runs a `local:<model>` picker value against the Ollama daemon's HTTP
     API (non-streaming /api/chat) — stdlib urllib, no new dependency, no
     tokens billed. A down daemon or an un-pulled model comes back as a
@@ -1148,6 +1268,9 @@ def _run_local(picker_id: str, messages: list[dict], kb_text: str | None) -> str
         # llm_dispatch's local parse path.
         "options": {"num_ctx": 16384},
     }
+    if on_delta is not None:
+        # 2026-11-19: streamed variant of the SAME request (NDJSON chunks).
+        payload["stream"] = True
     req = urllib.request.Request(
         f"{host}/api/chat",
         data=json.dumps(payload).encode(),
@@ -1157,7 +1280,7 @@ def _run_local(picker_id: str, messages: list[dict], kb_text: str | None) -> str
     try:
         # Generous timeout: a cold model load plus a long answer on CPU is slow.
         with urllib.request.urlopen(req, timeout=300) as resp:
-            data = json.load(resp)
+            data = _read_ollama_stream(resp, raw_model, on_delta) if on_delta is not None else json.load(resp)
     except urllib.error.HTTPError as e:
         try:
             msg = json.load(e).get("error", "")
@@ -1176,6 +1299,52 @@ def _run_local(picker_id: str, messages: list[dict], kb_text: str | None) -> str
     # it inline as a <think> block, so strip that form too.
     reply = re.sub(r"^\s*<think>.*?</think>\s*", "", reply, flags=re.DOTALL)
     return reply.strip() or "(the model returned an empty reply)"
+
+
+_THINK_OPEN = "<think>"
+
+
+def _visible_local_text(full: str) -> str:
+    """What the user should see of a partial local reply: the same <think>
+    stripping _run_local applies to the final text, made safe for a prefix —
+    an unclosed leading <think> block (or a partial "<thi") shows nothing."""
+    head = full.lstrip()
+    if head.startswith(_THINK_OPEN):
+        if "</think>" not in head:
+            return ""
+        return re.sub(r"^\s*<think>.*?</think>\s*", "", full, flags=re.DOTALL)
+    if _THINK_OPEN.startswith(head):
+        return ""  # empty or a possible "<think>" still arriving
+    return head
+
+
+def _read_ollama_stream(resp, raw_model: str, on_delta: Callable[[str | None], None]) -> dict:
+    """Reads Ollama's streamed /api/chat (one JSON object per line) and pushes
+    visible content deltas to `on_delta`. The separate `thinking` field is
+    ignored, exactly as the non-streaming path ignores it. Returns the same
+    {"message": {"content": ...}} shape json.load would have."""
+    full = ""
+    sent = 0
+    for raw in resp:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            chunk = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if chunk.get("error"):
+            raise OllamaError(f"Ollama error for \"{raw_model}\": {chunk['error']}")
+        piece = (chunk.get("message") or {}).get("content") or ""
+        if piece:
+            full += piece
+            visible = _visible_local_text(full)
+            if len(visible) > sent:
+                on_delta(visible[sent:])
+                sent = len(visible)
+        if chunk.get("done"):
+            break
+    return {"message": {"content": full}}
 
 
 # --- §12 correction 2026-10-27: deterministic link post-validation ------------
@@ -1269,7 +1438,12 @@ def run_kb_chat(
     mode: str = "unserious",
     used_private: set[str] | None = None,
     web: bool | None = None,
+    on_delta: Callable[[str | None], None] | None = None,
 ) -> str:
+    # `on_delta` (2026-11-19, chat streaming — see chat_stream.py): when set,
+    # raw reply text is pushed to it as it is generated (None = "discard what
+    # was streamed so far"); the RETURN value stays the authoritative,
+    # post-processed reply. Context assembly below is untouched by it.
     entry = resolve_model(model, research)
     # Context is assembled once, identically for every provider — escalating
     # the same conversation to a cloud model transfers the SAME context,
@@ -1279,16 +1453,19 @@ def run_kb_chat(
     gate = PrivacyGate(store, allow_private=entry["provider"] == "local")
     photos = PhotoRegistry()  # 2026-11-05: per-request {{myphoto:Pn}} handle map
     kb_text, nothing_to_ground = _build_context(store, use_kb, folder, slug, messages, mode, gate, photos)
+    if entry["provider"] == "local" and kb_text:
+        kb_text = strip_past_chat_numbers(kb_text)
     if used_private is not None:
         used_private.update(gate.used)
     # Web lane (2026-11-05, see web_search.py): providers WITHOUT native
     # search get code-fetched results; only the query leaves the machine.
-    web_text = chat_web_block(entry["provider"], web, _last_user_text(messages), mode)
+    web_text = chat_web_block(entry["provider"], web, _web_query(messages), mode)
     if web_text:
         kb_text, nothing_to_ground = (f"{kb_text}\n\n{web_text}" if kb_text else web_text), False
     # Nutrition lane (2026-11-05, see nutrition_db/chat_lane.py): code-computed
     # USDA facts for foods named in the newest message; offline db only.
-    food_text = chat_nutrition_block(_last_user_text(messages), entry["provider"])
+    # 2026-11-19: all of the owner's turns (later amounts override earlier).
+    food_text = chat_nutrition_block(_user_texts(messages), entry["provider"])
     if food_text:
         kb_text, nothing_to_ground = (f"{kb_text}\n\n{food_text}" if kb_text else food_text), False
     if mode == "serious" and nothing_to_ground:
@@ -1302,13 +1479,18 @@ def run_kb_chat(
     elif entry["provider"] == "bedrock":
         reply = _run_bedrock(entry["id"], messages, kb_text)
     elif entry["provider"] == "local":
-        reply = _run_local(entry["id"], messages, kb_text)
+        reply = _run_local(entry["id"], messages, kb_text, **({"on_delta": on_delta} if on_delta else {}))
     elif entry["provider"] == "max":
-        reply = _run_max(entry["id"], messages, kb_text)
+        reply = _run_max(entry["id"], messages, kb_text, **({"on_delta": on_delta} if on_delta else {}))
     else:
         reply = _run_anthropic(entry["id"], messages, kb_text)
+    if on_delta and entry["provider"] not in ("local", "max"):
+        # Metered API / OpenAI / Bedrock aren't token-streamed (2026-11-19):
+        # the same non-streaming runner (so test guards that patch
+        # _run_anthropic still hold), then the whole reply as one delta.
+        on_delta(reply)
     # Owner photos ({{myphoto:Pn}} → /kb/asset images, + the photo-request
     # fallback gallery) first; post-validation runs last, after photo tags
     # resolved (Wikipedia images are external https and pass untouched).
-    reply = render_my_photos(reply, photos, _last_user_text(messages))
+    reply = render_my_photos(reply, photos, _photo_query(messages))
     return validate_reply_links(_resolve_photo_tags(reply), store)

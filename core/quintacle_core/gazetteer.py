@@ -156,8 +156,10 @@ _NEIGHBORHOOD_BEFORE_RE = re.compile(r"\bLittle\s+$")
 # "layover in" / "stopover in", or one in the middle of a flight chain
 # ("… to Frankfurt (FRA) to …"), doesn't count. The city still counts when
 # it is named any other way elsewhere in the text.
+# 2026-11-18 (owner, code review): "flying (home) through Frankfurt Airport" is a stop too; only
+# after a flying/routing verb, so "a road trip through Salzburg" still counts.
 _TRANSIT_BEFORE_RE = re.compile(
-    r"(?:\bvia|\bchanges?\b[^.\n]{0,15}|\bconnect(?:ing|ion)?(?:\s+(?:in|at))?|\blayover(?:\s+(?:in|at))?|\bstopover(?:\s+(?:in|at))?)\s+$",
+    r"(?:\bvia|\b(?:fly(?:ing)?|flies|flight|routed|routing)\s+(?:home\s+|back\s+)?through|\bchanges?\b[^.\n]{0,15}|\bconnect(?:ing|ion)?(?:\s+(?:in|at))?|\blayover(?:\s+(?:in|at))?|\bstopover(?:\s+(?:in|at))?)\s+$",
     re.IGNORECASE,
 )
 # 2026-11-13 (owner, Brazil drop): "connect once in the US (Miami, Atlanta,
@@ -175,6 +177,18 @@ _ONWARD_RE = re.compile(r"\b(?:to|into|then)\b", re.IGNORECASE)
 # not a place on this trip. Owner accepted that "beach towns like Paraty"
 # drops Paraty too.
 _COMPARE_BEFORE_RE = re.compile(r"\b(?:like|such\s+as|similar\s+to|compared\s+to)\s+(?:your\s+)?$", re.IGNORECASE)
+# 2026-11-18 (owner, T3 fix f): "Frankfurt (FRA) layover" / "Frankfurt - 1h 35m connection",
+# and a coded stop in the middle of a route ("IAD → Frankfurt (FRA) → VIE").
+# 2026-11-18 (owner, code review): "airport" alone is NOT a transit signal -- tickets name the
+# destination by its airport ("… to Vienna International Airport (VIE)", "Arrive Vienna Airport"),
+# so an airport city is a layover only when another rule says so. "transit" counts only as a
+# stop, not "transit pass / card / ticket / system / map".
+_TRANSIT_AFTER_RE = re.compile(
+    r"^\s*(?:\([A-Z]{3}\)\s*)?(?:[-–—:]\s*)?(?:\d+\s*h(?:rs?)?(?:\s*\d+\s*m(?:in)?)?\s*)?"
+    r"(?:layover|connection|stopover|transit(?!\s+(?:pass|card|ticket|system|map)(?:es|s)?\b))\b",
+    re.IGNORECASE)
+_ARROW_BEFORE_RE = re.compile(r"(?:→|->|–>|=>)\s*$")
+_CODED_ARROW_AFTER_RE = re.compile(r"^\s*\([A-Z]{3}\)\s*(?:→|->|–>|=>)")
 _CHAIN_BEFORE_RE = re.compile(r"\)\s*(?:to|->|→|-)\s+$")
 _CHAIN_AFTER_RE = re.compile(r"^\s*\([A-Z]{3}\)\s*(?:to|->|→|-)\s")
 
@@ -265,6 +279,12 @@ def find_places(text: str) -> list[PlaceMention]:
         if kind == "city":
             before, after = text[max(0, m.start() - 30): m.start()], text[m.end(): m.end() + 12]
             if _TRANSIT_BEFORE_RE.search(before) or (_CHAIN_BEFORE_RE.search(before) and _CHAIN_AFTER_RE.match(after)):
+                continue
+            # 2026-11-18 (owner, T3 fix f): "Frankfurt (FRA) layover", "Frankfurt - 1h connection", and a coded
+            # stop mid-route ("IAD → Frankfurt (FRA) → VIE"). Each mention is judged on its own, so
+            # "two nights in Frankfurt" elsewhere still counts.
+            after30 = text[m.end(): m.end() + 30]
+            if _TRANSIT_AFTER_RE.match(after30) or (_ARROW_BEFORE_RE.search(before) and _CODED_ARROW_AFTER_RE.match(after30)):
                 continue
             transit = _TRANSIT_LIST_RE.search(text[max(0, m.start() - 120): m.start()])
             if transit and not _ONWARD_RE.search(transit.group("rest")):

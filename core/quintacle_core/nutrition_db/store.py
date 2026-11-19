@@ -238,7 +238,8 @@ _HINT_STOP = {
 }
 
 
-def nearest_by_profile(per100: dict[str, float], hint_words: list[str] | None = None, limit: int = 8) -> list[dict]:
+def nearest_by_profile(per100: dict[str, float], hint_words: list[str] | None = None, limit: int = 8,
+                       require_word: str | None = None) -> list[dict]:
     """USDA foods closest to a per-100 g nutrition profile. Needs at least
     kcal + two macros. `hint_words` (e.g. OCR'd 'milk', 'cultures', a typed
     'yogurt') boost foods whose description contains them."""
@@ -260,6 +261,12 @@ def nearest_by_profile(per100: dict[str, float], hint_words: list[str] | None = 
         f = foods.setdefault(r["fdc_id"], {"fdc_id": r["fdc_id"], "description": r["description"],
                                             "category": r["category"], "source": r["source"], "vals": {}})
         f["vals"][r["name"]] = float(r["amount"] or 0)
+    # 2026-11-18 (owner, label photos): the label's one ingredient ("INGREDIENTS: LAMB") — only
+    # foods whose description has that word (whole word, plural ok) are candidates.
+    if require_word:
+        rw = require_word.lower().rstrip("s")
+        foods = {k: f for k, f in foods.items()
+                 if any(d.rstrip("s") == rw for d in re.findall(r"[a-z]+", f["description"].lower()))}
     hints = [w.lower() for w in (hint_words or []) if len(w) > 2]
     hint_set = {w for w in hints if len(w) >= 4 and w not in _HINT_STOP}
     # Ingredient-line words → the USDA food group they imply (an OCR'd
@@ -273,6 +280,14 @@ def nearest_by_profile(per100: dict[str, float], hint_words: list[str] | None = 
             implied.add("egg")
         elif w.startswith(("chicken", "beef", "pork", "lamb", "turkey")):
             implied.add(w[:4])
+    # 2026-11-17 (owner, T5: "why beef"): a label that NAMES its meat ("INGREDIENTS: LAMB") only
+    # matches that meat. Before, the species was a soft bonus and beef tip round, closer by the
+    # numbers, beat every lamb entry. No food of that species at all -> the old ranking stands.
+    species = {g for g in implied if g in ("chic", "beef", "pork", "lamb", "turk")}
+    if species:
+        same = {k: f for k, f in foods.items() if any(sp in f["description"].lower() for sp in species)}
+        if same:
+            foods = same
     scored = []
     for f in foods.values():
         if not all(_PROFILE_KEYS[k][0] in f["vals"] for k in ("kcal", "protein_g", "fat_g") if k in usable):
@@ -302,6 +317,28 @@ def nearest_by_profile(per100: dict[str, float], hint_words: list[str] | None = 
                        "score": round(dist * odd / (1 + 0.6 * hits), 3)})
     scored.sort(key=lambda c: (c["score"], len(c["description"])))
     return scored[:limit]
+
+
+_FOOD_WORDS: set[str] | None = None
+# Descriptor words that sit in USDA heads but never name a food on their own.
+_NOT_FOOD_WORDS = {w.rstrip("s") for w in (
+    "serving plain nonfat lowfat fat free raw cooked fresh frozen whole lean regular reduced low high light "
+    "spring all style type with without and the brand prepared canned dried added total").split()}
+
+
+def is_food_word(word: str) -> bool:
+    """2026-11-18: a word that names food somewhere in the USDA descriptions ("lamb", "yogurt");
+    brand / boilerplate words ("Kirkland", "Handling") are not. Whole words, plural ok."""
+    global _FOOD_WORDS
+    if _FOOD_WORDS is None:
+        conn = _connect()
+        if conn is None:
+            return False
+        with _lock:
+            rows = conn.execute("SELECT description FROM foods").fetchall()
+        _FOOD_WORDS = {w.rstrip("s") for (d,) in rows for part in (d or "").lower().split(",")[:2]
+                       for w in re.findall(r"[a-z]{3,}", part)} - _NOT_FOOD_WORDS
+    return word.lower().rstrip("s") in _FOOD_WORDS
 
 
 def food(fdc_id: int) -> dict | None:

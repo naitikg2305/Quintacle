@@ -10,6 +10,10 @@ incl. fatty acids/flavonoids/carotenoids, % of the owner's targets, and the
 USDA description that was assumed. The model is told to use these numbers
 and not estimate others. No db installed → no block (never the network).
 No note content is involved — only the user's own message.
+
+2026-11-19: the lane now reads ALL of the owner's messages in the chat
+(conversation_items), not just the newest, so a follow-up such as "include
+all ingredients for this recipe" keeps the foods + amounts he stated earlier.
 """
 from __future__ import annotations
 
@@ -101,10 +105,11 @@ def _clean(food: str) -> str:
     return food.strip(" -'")
 
 
-def parse_items(text: str) -> list[dict]:
+def parse_items(text: str, fallback: bool = True) -> list[dict]:
     """[{food, grams, assumed}] — deterministic. Quantity-first phrases
     ("200g roast lamb", "2 eggs"); otherwise the "in/of <food>" target of a
-    nutrient question at 100 g (stated as assumed)."""
+    nutrient question at 100 g (stated as assumed) — only when `fallback`
+    (earlier turns of a conversation pass False: just what he quantified)."""
     items: list[dict] = []
     for part in _SPLIT.split(text or ""):
         m = _QTY_FOOD.search(part)
@@ -117,9 +122,11 @@ def parse_items(text: str) -> list[dict]:
         if c:
             noun = c.group(2).lower()
             food = _clean(f"{noun} {c.group(3)}") if noun in ("slice", "slices") else _clean(f"{c.group(3)} {noun}")
+            if noun.rstrip("s") not in food.lower():
+                food = noun  # "1 egg goes in each…" — the tail-stop ate the noun, keep just "egg"
             items.append({"food": food or noun, "grams": int(c.group(1)) * _EACH_G[noun], "assumed": True,
                           "note": f"{c.group(1)} × ~{_EACH_G[noun]} g each"})
-    if items:
+    if items or not fallback:
         return items
     m = re.search(r"\b(?:in|of)\s+(.{2,80}?)(?:\?|$|\.)", text or "", re.I)
     if m:
@@ -138,6 +145,12 @@ def _fmt(amount: float, unit: str) -> str:
     if abs(amount) >= 1:
         return f"{amount:.1f} {unit}"
     return f"{amount:.3g} {unit}"
+
+
+VITAL_NUTRIENTS = (
+    "protein", "carbs", "fat", "fiber", "omega-3 (EPA + DHA, and the omega-6 : omega-3 ratio)", "iron",
+    "calcium", "vitamin D", "vitamin B12", "potassium", "magnesium", "zinc", "sodium",
+)
 
 
 def _panel_lines(panel: dict, with_targets: bool) -> list[str]:
@@ -200,26 +213,111 @@ def _asked_lines(comp: dict, asked: list[str], grams: float) -> list[str]:
     return out
 
 
-def chat_nutrition_block(user_text: str, chat_provider: str | None = None) -> str | None:
+def _texts(user_texts: str | list[str]) -> list[str]:
+    """The owner's typed messages, oldest → newest (a bare str = one message)."""
+    texts = [user_texts] if isinstance(user_texts, str) else list(user_texts or [])
+    return [t for t in (x.strip() for x in texts if isinstance(x, str)) if t]
+
+
+def conversation_items(user_texts: str | list[str]) -> list[dict]:
+    """2026-11-19 (owner: "fix for all" — a follow-up like "include all
+    ingredients for this recipe" looked up nothing). The foods + amounts of the
+    WHOLE conversation, from the owner's own messages only (never the
+    assistant's restated numbers). Walked oldest → newest; a later statement
+    about the same food (name words one ⊆ the other: "lamb" / "costco lamb")
+    replaces the earlier amount ("but its 230 grams of lamb"). Earlier turns
+    contribute only what he quantified; the 100 g "in/of <food>" guess applies
+    to the newest message alone. Foods named only in earlier turns always
+    count — a meal/recipe conversation keeps building one list; there is no
+    topic-change detection (a stale food costs one extra listed item, a missed
+    one makes the model invent numbers). Order: newest turn's foods first, then
+    earlier ones newest-first (parsing caps at 8 items)."""
+    texts = _texts(user_texts)
+    found: list[tuple[int, dict]] = []  # (turn index, item)
+    for i, text in enumerate(texts):
+        for item in parse_items(text, fallback=i == len(texts) - 1):
+            want = _name_words(item["food"])
+            kept = []
+            for j, old in found:
+                have = _name_words(old["food"])
+                if want and (want <= have or have <= want):
+                    if want < have:  # "230 grams of lamb" after "costco lamb": new amount, fuller name
+                        item = {**item, "food": old["food"]}
+                    continue
+                kept.append((j, old))
+            found = kept + [(i, item)]
+    found.sort(key=lambda p: -p[0])  # stable: same-turn items keep their order
+    return [item for _, item in found]
+
+
+def chat_nutrition_block(user_texts: str | list[str], chat_provider: str | None = None) -> str | None:
+    """`user_texts`: the owner's messages oldest → newest (kb/chat.py passes
+    every user turn) or one message as a str. The lane runs when any of them
+    is about food — a vague follow-up inherits the conversation's foods."""
     if os.environ.get("QUINTACLE_CHAT_NUTRITION", "").strip().lower() in ("off", "0", "false", "no"):
         return None
-    if not user_text or not is_food_message(user_text) or not usda.is_installed():
+    texts = _texts(user_texts)
+    if not texts or not any(is_food_message(t) for t in texts) or not usda.is_installed():
         return None
     try:
-        return _block(user_text, chat_provider)
+        return _block(texts, chat_provider)
     except Exception as e:  # belt and braces — never break chat
         logger.info("chat nutrition lane failed: %s", e)
         return None
 
 
-def _block(user_text: str, chat_provider: str | None) -> str | None:
-    from ..nodes.logs.nutrition_api import component_from_fdc, current_targets
+_NAME_FILLER = frozenset("raw cooked uncooked fresh dry the a of my some".split())
+
+
+def _name_words(name: str) -> set[str]:
+    words = {w.rstrip("s") if len(w) > 3 else w for w in re.findall(r"[a-z0-9]+", (name or "").lower())}
+    return {w for w in words if w not in _NAME_FILLER}
+
+
+def saved_ingredient_for(food: str, ingredients: list) -> dict | None:
+    """2026-11-17 (owner: "chat should look up saved ingredients"): the owner's own saved
+    ingredient for a food named in chat, before USDA. Deterministic: every word of the food
+    is in the saved name ("costco lamb" -> "Costco Lean Lamb"), or every word of the saved
+    name is in the food. Ties go to the closest name (fewest extra words)."""
+    want = _name_words(food)
+    if not want:
+        return None
+    best, best_extra = None, None
+    for ing in ingredients:
+        have = _name_words(ing["name"])
+        if not have or not (want <= have or have <= want):
+            continue
+        extra = len(have ^ want)
+        if best is None or extra < best_extra:
+            best, best_extra = ing, extra
+    return dict(best) if best is not None else None
+
+
+def _saved_ingredients() -> tuple[object | None, list]:
+    try:
+        from ..nodes.logs.api import get_repo
+
+        repo = get_repo()
+        return repo, list(repo.list_ingredients())
+    except Exception:
+        return None, []
+
+
+def _block(texts: list[str], chat_provider: str | None) -> str | None:
+    from ..nodes.logs.nutrition_api import component_from_fdc, component_from_ingredient, current_targets
     from ..nodes.logs.nutrition_targets import REFERENCE_TARGETS
 
     # A local chat keeps the (index-only) candidate pick local too.
     pick_provider = "local" if chat_provider == "local" and os.environ.get(usda.PICK_PROVIDER_ENV, "") != "off" else None
     comps, unmatched = [], []
-    for item in parse_items(user_text)[:8]:
+    repo, saved = _saved_ingredients()
+    for item in conversation_items(texts)[:8]:
+        own = saved_ingredient_for(item["food"], saved) if repo is not None else None
+        if own is not None:
+            comp = component_from_ingredient(repo, own["id"], item["grams"], item["food"])
+            if comp:
+                comps.append({**comp, "_item": item, "_candidates": [], "_saved": own["name"]})
+                continue
         pick, candidates = usda.match_and_pick(item["food"], pick_provider)
         if pick is None:
             unmatched.append(item["food"])
@@ -229,20 +327,30 @@ def _block(user_text: str, chat_provider: str | None) -> str | None:
             comps.append({**comp, "_item": item, "_candidates": candidates})
     if not comps:
         return None
-    asked = asked_nutrients(user_text)
+    # The newest message's nutrient(s); a follow-up naming none ("and for 2
+    # eggs?") keeps the previous message's question.
+    asked = asked_nutrients(texts[-1]) or (asked_nutrients(texts[-2]) if len(texts) > 1 else [])
     targets = current_targets()
     lines = [
-        "## Nutrition facts (USDA FoodData Central, per stated amounts)",
-        "Computed by code from the offline USDA database. Use THESE numbers for any nutrient listed; do not estimate "
+        "## Nutrition facts (the owner's saved ingredients, else USDA FoodData Central, per stated amounts)",
+        "Computed by code from the owner's saved ingredients and the offline USDA database. Use THESE numbers for any nutrient listed; do not estimate "
         "nutrients that aren't listed (say USDA has no value for them). Say which USDA entry was assumed for each food "
         "(the owner can correct it) and, for a number taken from another USDA entry of the same food, name that entry; "
         "then suggest logging the meal or composing it as a meal preset to track it.",
+        # 2026-11-18 (owner, fix h): a planned meal/day always shows the vital nutrients.
+        "Whenever the user is planning or putting together a meal, a day of eating or a food list, the answer MUST "
+        "include a nutrition summary from these numbers showing, in this order: " + ", ".join(VITAL_NUTRIENTS) + " — "
+        "each with its amount and its % of the owner's daily target where one is listed below. A nutrient with no "
+        "value here is shown as \"no USDA value\", never left out and never guessed.",
     ]
     for c in comps:
         item = c["_item"]
         how = f" — {item['note']}" if item.get("note") else ""
         lines.append(f"\n### {item['food']}: {item['grams']:g} g{how}")
-        lines.append(f"USDA match: \"{c['usda_description']}\" (FDC {c['fdc_id']}{_release(c['fdc_id'])})")
+        if c.get("_saved"):
+            lines.append(f"From the owner's saved ingredient \"{c['_saved']}\" (his own numbers; source: {c.get('source') or 'saved'}).")
+        else:
+            lines.append(f"USDA match: \"{c['usda_description']}\" (FDC {c['fdc_id']}{_release(c['fdc_id'])})")
         for f in c.get("usda_fill") or []:
             named = [n for n in f["nutrients"] if n in asked] or f["nutrients"][:6]
             more = len(f["nutrients"]) - len(named)

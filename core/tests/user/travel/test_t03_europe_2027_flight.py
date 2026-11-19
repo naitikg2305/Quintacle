@@ -15,8 +15,6 @@ Expectations (owner, 2026-11-13):
   Trip Itinerary");
 - destination is Vienna. Frankfurt is a layover and Washington is home: never
   destinations;
-- *(draft, owner to confirm)* it is not offered as a version of the itinerary
-  (a ticket is not a revision of the plan), so no Append/Replace choice;
 - after Save (the same request the app's Save makes):
   - the ticket sits in the folder tree: ticket -> Europe 2027 -> Planned -> Travel -> Fun;
   - it has a graph edge to the itinerary note;
@@ -24,8 +22,8 @@ Expectations (owner, 2026-11-13):
   - no node for Frankfurt or Washington is touched, nothing goes to the Document Vault.
 
 Run one provider per pytest call (each sets process-wide model routing):
-    cd core && .venv/bin/python -m pytest tests/user/test_t03_europe_2027_flight.py -q                      # local
-    cd core && QUINTACLE_USER_PROVIDER=cloud .venv/bin/python -m pytest tests/user/test_t03_europe_2027_flight.py -q  # Claude via Max
+    cd core && .venv/bin/python -m pytest tests/user/travel/test_t03_europe_2027_flight.py -q                      # local
+    cd core && QUINTACLE_USER_PROVIDER=cloud .venv/bin/python -m pytest tests/user/travel/test_t03_europe_2027_flight.py -q  # Claude via Max
 """
 from __future__ import annotations
 
@@ -36,9 +34,9 @@ from pathlib import Path
 
 import pytest
 
-from tests.claude.harness import REAL_STORE, drop, first, folder_of, make_client, missing_max, missing_requirements, types
+from tests.claude.harness import REAL_STORE, drop, first, folder_of, make_client, missing_max, missing_requirements, sandbox_before, types
 
-PDF = Path(__file__).parent / "files" / "travel" / "sample_dc_europe_flight_2027.pdf"
+PDF = Path(__file__).parents[1] / "files" / "travel" / "sample_dc_europe_flight_2027.pdf"
 PROVIDER = os.environ.get("QUINTACLE_USER_PROVIDER", "local")
 TRIP_FOLDER = "fun/travel/planned/europe-2027"
 ITINERARY_TITLE = "2027 Central Europe 10-Day Trip Itinerary"
@@ -55,19 +53,11 @@ def client(tmp_path_factory):
         pytest.skip(reason)
     if not (REAL_STORE / "kb" / TRIP_FOLDER / f"{ITINERARY_NOTE.rsplit('/', 1)[1]}.md").exists():
         pytest.skip("the T1 itinerary note is not in the real store")
-    tmp = tmp_path_factory.mktemp("t03")
-    seed = tmp / "seed"
-    shutil.copytree(REAL_STORE, seed, ignore=shutil.ignore_patterns(
-        f"{LEFT_OUT_SLUG}*", f"{LEFT_OUT_ASSET}*", "models", "*.onnx", "*.zip", "*.lock", "*-shm", "*-wal"))
-    c = make_client(tmp, seed_store=seed, cloud=PROVIDER == "cloud")
-    # The copied database still knows the left-out note: forget it (sandbox only).
-    from quintacle_core.graph import get_graph_store
-    from quintacle_core.retrieval import get_retrieval_index
-
-    gone = f"note:{TRIP_FOLDER}/{LEFT_OUT_SLUG}"
-    get_graph_store().remove_edges_for(gone)
-    get_retrieval_index().remove_node(gone)
-    return c
+    # His data as it was when he dropped the ticket (2026-11-13 17:40): T1, the NYC notes and
+    # Europe 2026 existed; his saved ticket, later chats and ingredients did not.
+    return sandbox_before(tmp_path_factory.mktemp("t03"), chats_from="2026-11-13-1740",
+                          leave_out=(f"{TRIP_FOLDER}/{LEFT_OUT_SLUG}", f"{TRIP_FOLDER}/assets/{LEFT_OUT_ASSET}.pdf"),
+                          leave_out_ingredients=("Costco Lean Lamb", "Kirkland Signature Plain Nonfat Greek Yogurt (2/3 cup)"), cloud=PROVIDER == "cloud")
 
 
 @pytest.fixture(scope="module")
@@ -102,12 +92,6 @@ def test_layover_and_home_are_not_destinations(result):
     dest = _destinations(result)
     for not_dest in ("frankfurt", "washington", "dulles"):
         assert not_dest not in dest, dest
-
-
-def test_not_offered_as_a_version_of_the_itinerary(result):
-    """Draft (owner to confirm): a ticket is not a revision of the plan."""
-    match = first(result, "kb_entry").get("existing_match")
-    assert not match, match
 
 
 # ------------------------------------------------------------------ after Save

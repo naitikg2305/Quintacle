@@ -449,7 +449,14 @@ export async function commitEntry(date: string, entry: ParsedEntry, assets: File
     }
     case "ingredient_preset":
       return createIngredient({
-        name: entry.suggested_name,
+        // 2026-11-18: "Update it" saves onto his saved ingredient (upsert by its name); "Save as new"
+        // keeps the card's name, never his saved one (that would overwrite it).
+        name:
+          entry.existing_match && (entry.on_conflict ?? "update") === "update"
+            ? entry.existing_match.name
+            : entry.existing_match && entry.suggested_name.trim().toLowerCase() === entry.existing_match.name.toLowerCase()
+              ? `${entry.suggested_name} (2)`
+              : entry.suggested_name,
         basis_amount_g: entry.basis_amount_g,
         protein_g: entry.protein_g,
         carbs_g: entry.carbs_g,

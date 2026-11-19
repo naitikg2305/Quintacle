@@ -10,7 +10,7 @@ import {
   buildChatMessage,
   ChatMessage,
   ChatModel,
-  chatWithKB,
+  streamChatWithKB,
   createGroomingItem,
   createGroomingRoutine,
   createMealFromIngredients,
@@ -29,6 +29,8 @@ import {
   ParsedOutfitComposition,
   ParsedWorkoutRoutine,
   proposeDrop,
+  logDropSave,
+  ParsedEntry,
   ProviderUsed,
   pushKBEntry,
   pushKBEntryWithAsset,
@@ -137,6 +139,9 @@ function KBPageInner() {
   // model the local daemon has pulled, not just the curated list).
   const [customLocalId, setCustomLocalId] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
+  // The reply streaming in right now (2026-11-19) — shown live by ChatLog,
+  // never put in chatLog until `done` (so autosave never archives a partial).
+  const [chatStreaming, setChatStreaming] = useState<string | null>(null);
   // Phone only: one pane at a time (chat | scratchpad). lg+ shows both.
   const [pane, setPane] = useState<"chat" | "scratch">(() => (searchParams.get("draft") ? "scratch" : "chat"));
   // The chat's subject — first message (or the note being continued), used
@@ -203,6 +208,12 @@ function KBPageInner() {
   const [lastSort, setLastSort] = useState<{ text: string; file: File | null; keepAsIs: boolean; extra: File | null; date: string } | null>(
     null
   );
+  // 2026-11-19 drop save-log: each proposed card carries its drop's id as a
+  // client-only `_drop_id` (stripped before any save call); these refs keep
+  // the cards he deleted (×) and the provider that served each drop, so
+  // Save can log "what he finally kept" against the backend's proposal log.
+  const deletedByDrop = useRef<Record<string, ParsedEntry[]>>({});
+  const providerByDrop = useRef<Record<string, ProviderUsed>>({});
 
   // The entity registries EntryCard grounds its pickers in — same loads as
   // the Drop page, so a scratchpad "had the usual burrito bowl" review card
@@ -407,8 +418,9 @@ function KBPageInner() {
       setBusy(true);
       setStatus("preparing a private note...");
       try {
-        const { entries: proposed } = await proposeDrop(scratchpad, att.file, false, null, dropDate, undefined, true);
-        setEntries((prev) => [...prev, ...proposed]);
+        const { entries: proposed, drop_id } = await proposeDrop(scratchpad, att.file, false, null, dropDate, undefined, true);
+        if (drop_id) providerByDrop.current[drop_id] = null;
+        setEntries((prev) => [...prev, ...stampDropId(proposed, drop_id)]);
         setProviderUsed(null);
         setLastSort(null);
         setSuggestion(null);
@@ -449,7 +461,7 @@ function KBPageInner() {
     setBusy(true);
     setStatus("sorting...");
     try {
-      const { entries: proposed, provider_used, local_unavailable } = await proposeDrop(
+      const { entries: proposed, provider_used, local_unavailable, warnings, drop_id } = await proposeDrop(
         scratchpad,
         att.file,
         keepAsIs,
@@ -473,7 +485,8 @@ function KBPageInner() {
           if (p.type === "statement_import") p.raw_text = raw;
         }
       }
-      setEntries((prev) => [...prev, ...proposed]);
+      if (drop_id) providerByDrop.current[drop_id] = provider_used;
+      setEntries((prev) => [...prev, ...stampDropId(proposed, drop_id)]);
       setProviderUsed(provider_used);
       setLastSort({ text: scratchpad, file: att.file, keepAsIs, extra: att.extraPhotos[0] ?? null, date: dropDate });
       setSuggestion(null);
@@ -481,7 +494,10 @@ function KBPageInner() {
       setOutfitSuggestion(null);
       setGroomingSuggestion(null);
       setWorkoutSuggestion(null);
-      setStatus(`${proposed.length} entr${proposed.length === 1 ? "y" : "ies"} proposed — review below`);
+      setStatus(
+        `${proposed.length} entr${proposed.length === 1 ? "y" : "ies"} proposed — review below` +
+          (warnings?.length ? ` · ⚠ ${warnings.join(" ")}` : "")
+      );
     } catch (e) {
       setStatus(`sort failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -496,7 +512,7 @@ function KBPageInner() {
     setBusy(true);
     setStatus("redoing with cloud...");
     try {
-      const { entries: proposed, provider_used } = await proposeDrop(
+      const { entries: proposed, provider_used, warnings, drop_id } = await proposeDrop(
         lastSort.text,
         lastSort.file,
         lastSort.keepAsIs,
@@ -504,10 +520,16 @@ function KBPageInner() {
         lastSort.date,
         "cloud"
       );
-      setEntries(proposed);
+      // REPLACES the proposals, so the earlier drop's deletions no longer apply.
+      deletedByDrop.current = {};
+      if (drop_id) providerByDrop.current[drop_id] = provider_used;
+      setEntries(stampDropId(proposed, drop_id));
       setProviderUsed(provider_used);
       setLocalUnavailable(null);
-      setStatus(`${proposed.length} entr${proposed.length === 1 ? "y" : "ies"} re-proposed via cloud — review below`);
+      setStatus(
+        `${proposed.length} entr${proposed.length === 1 ? "y" : "ies"} re-proposed via cloud — review below` +
+          (warnings?.length ? ` · ⚠ ${warnings.join(" ")}` : "")
+      );
     } catch (e) {
       setStatus(`failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -544,7 +566,14 @@ function KBPageInner() {
     try {
       if (saveToJournal && scratchpad.trim()) await saveJournal(dropDate, scratchpad.trim());
       const files = att.file ? [att.file, ...att.extraPhotos] : [];
-      const { warning, stmtSummary, session, faces } = await commitDropEntries(dropDate, entries, files);
+      // `_drop_id` is client-only bookkeeping — strip it so the save calls
+      // see exactly what they saw before the save-log existed.
+      const toSave = entries.map(stripDropId);
+      const { warning, stmtSummary, session, faces } = await commitDropEntries(dropDate, toSave, files);
+      // Fire-and-forget, AFTER a successful commit: one log call per drop.
+      fireDropSaveLog(entries, deletedByDrop.current, providerByDrop.current);
+      deletedByDrop.current = {};
+      providerByDrop.current = {};
       setStatus(warning ?? stmtSummary ?? `saved ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
       setScratchpad("");
       setJournalChoice(null);
@@ -785,15 +814,10 @@ function KBPageInner() {
     try {
       // A chat continued on a note sends its folder+slug — the backend
       // hydrates that topic's content + graph neighborhood (next-wave §4).
-      const { reply, mode, mode_switched, private_notes, private_stripped } = await chatWithKB(
-        next,
-        useKB,
-        false,
-        target?.folder,
-        effectiveModel,
-        target?.slug,
-        chatMode,
-        webFlag
+      // Streamed (falls back to the plain /kb/chat inside streamChatWithKB).
+      const { reply, mode, mode_switched, private_notes, private_stripped } = await streamChatWithKB(
+        [next, useKB, false, target?.folder, effectiveModel, target?.slug, chatMode, webFlag],
+        setChatStreaming
       );
       // Older backends omit `mode` — keep the current one.
       if (mode) setChatMode(mode);
@@ -809,6 +833,7 @@ function KBPageInner() {
     } catch (e) {
       finalLog = [...next, { role: "assistant" as const, content: `(error: ${e instanceof Error ? e.message : String(e)})` }];
     }
+    setChatStreaming(null);
     setChatLog(finalLog);
     setChatBusy(false);
   }
@@ -827,15 +852,9 @@ function KBPageInner() {
       // Same scope as the original ask — the escalation transfers the SAME context.
       // Turns that used private notes are stripped server-side before the
       // cloud call (2026-11-05) — the backend reports how many notes that was.
-      const { reply, mode, mode_switched, private_stripped } = await chatWithKB(
-        context,
-        useKB,
-        false,
-        target?.folder,
-        cloudModel,
-        target?.slug,
-        chatMode,
-        webFlag
+      const { reply, mode, mode_switched, private_stripped } = await streamChatWithKB(
+        [context, useKB, false, target?.folder, cloudModel, target?.slug, chatMode, webFlag],
+        setChatStreaming
       );
       // Adopt the effective mode exactly like sendChat (older backends omit it).
       if (mode) setChatMode(mode);
@@ -845,6 +864,7 @@ function KBPageInner() {
     } catch (e) {
       setChatError(e instanceof Error ? e.message : String(e));
     }
+    setChatStreaming(null);
     setChatBusy(false);
   }
 
@@ -1031,6 +1051,7 @@ function KBPageInner() {
             <ChatLog
               messages={chatLog}
               busy={chatBusy}
+              streaming={chatStreaming}
               onAddToScratchpad={addToScratchpad}
               onAddAttachmentToDrop={addFileToDrop}
               onEscalate={escalate}
@@ -1268,7 +1289,14 @@ function KBPageInner() {
                 meals={meals}
                 exerciseNames={exerciseNames}
                 onUpdate={updateEntry}
-                onRemove={removeEntry}
+                onRemove={(i) => {
+                  // Remember a deleted PROPOSED card (manual adds have no
+                  // drop id) for the save-log.
+                  const e = entries[i];
+                  const did = e ? dropIdOf(e) : undefined;
+                  if (e && did) (deletedByDrop.current[did] ??= []).push(e);
+                  removeEntry(i);
+                }}
                 onUpdateSet={updateSet}
                 onAddSet={addSet}
                 onRemoveSet={removeSet}
@@ -1464,4 +1492,76 @@ function KBPageInner() {
       </div>
     </div>
   );
+}
+
+// --- drop save-log helpers (2026-11-19) -------------------------------------
+
+type WithDropId = ParsedEntry & { _drop_id?: string };
+
+function dropIdOf(e: ParsedEntry): string | undefined {
+  return (e as WithDropId)._drop_id;
+}
+
+function stampDropId(entries: ParsedEntry[], dropId: string | undefined): ParsedEntry[] {
+  return dropId ? entries.map((e): WithDropId => ({ ...e, _drop_id: dropId })) : entries;
+}
+
+function stripDropId(e: ParsedEntry): ParsedEntry {
+  if (!("_drop_id" in e)) return e;
+  const rest: Record<string, unknown> = { ...e };
+  delete rest._drop_id;
+  return rest as ParsedEntry;
+}
+
+// No file bytes in the log: File → its name, other Blobs dropped, data: URLs
+// and statement raw_text replaced with a marker.
+function scrubForLog(v: unknown, key = ""): unknown {
+  if (typeof File !== "undefined" && v instanceof File) return v.name;
+  if (typeof Blob !== "undefined" && v instanceof Blob) return undefined;
+  if (typeof v === "string") {
+    if (v.startsWith("data:")) return "[data-url omitted]";
+    if (key === "raw_text") return `[raw_text omitted, ${v.length} chars]`;
+    return v;
+  }
+  if (Array.isArray(v)) return v.map((x) => scrubForLog(x)).filter((x) => x !== undefined);
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v)) {
+      const y = scrubForLog(x, k);
+      if (y !== undefined) out[k] = y;
+    }
+    return out;
+  }
+  return v;
+}
+
+function entryForLog(e: ParsedEntry): object {
+  const clean = stripDropId(e);
+  if ((clean as { private?: boolean }).private === true) return { type: clean.type, private: true };
+  return scrubForLog(clean) as object;
+}
+
+// One logDropSave per drop id among the saved entries (manual adds with no
+// drop id go under null). Errors are swallowed — the log never blocks a save.
+function fireDropSaveLog(
+  saved: ParsedEntry[],
+  deleted: Record<string, ParsedEntry[]>,
+  providers: Record<string, ProviderUsed>
+) {
+  const groups = new Map<string | null, ParsedEntry[]>();
+  for (const e of saved) {
+    const k = dropIdOf(e) ?? null;
+    groups.set(k, [...(groups.get(k) ?? []), e]);
+  }
+  // A drop whose every card was deleted still gets its row.
+  for (const k of Object.keys(deleted)) if (!groups.has(k)) groups.set(k, []);
+  for (const [dropId, es] of groups) {
+    const del = dropId ? deleted[dropId] : undefined;
+    logDropSave({
+      drop_id: dropId,
+      saved: es.map(entryForLog),
+      deleted: del?.length ? del.map(entryForLog) : null,
+      provider_used: dropId ? (providers[dropId] ?? null) : null,
+    }).catch(() => {});
+  }
 }

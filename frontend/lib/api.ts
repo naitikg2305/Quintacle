@@ -520,6 +520,9 @@ export type ParsedIngredientPreset = {
   fdc_id?: number | null;
   usda_description?: string;
   usda_candidates?: UsdaCandidate[];
+  // 2026-11-18 (owner: "similar to travel"): a saved ingredient this looks like, and his choice.
+  existing_match?: { id: number; name: string; by: "same_name" | "same_usda" | "same_numbers" };
+  on_conflict?: "update" | "new";
 };
 export type ParsedMealComposition = {
   type: "meal_composition";
@@ -1323,6 +1326,11 @@ export async function proposeDrop(
   // local stack couldn't read it, the reason — the UI offers Redo with cloud.
   pipeline?: ImagePipeline | null;
   local_unavailable?: string;
+  // 2026-11-18 (owner, T4): an extra suggestion (meal/routine/ingredient) that failed, said out loud.
+  warnings?: string[];
+  // 2026-11-19: id of this drop's proposal log row — logDropSave() pairs the
+  // final saved/deleted cards with it.
+  drop_id?: string;
 }> {
   const form = new FormData();
   form.append("text", text);
@@ -1335,6 +1343,19 @@ export async function proposeDrop(
   const res = await fetch(`${API_BASE}/drop`, { method: "POST", body: form });
   if (!res.ok) throw new Error(`drop failed: ${res.status} ${await res.text()}`);
   return res.json();
+}
+
+// 2026-11-19 (owner): log what he finally SAVED from a drop (after his edits)
+// and which proposed cards he deleted, next to the backend's log of what the
+// drop proposed — so tests read the log instead of screenshots. Callers send
+// sanitized entries (no file bytes; private entries reduced to {type, private}).
+export async function logDropSave(body: {
+  drop_id: string | null;
+  saved: object[];
+  deleted: object[] | null;
+  provider_used: string | null;
+}): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>("/drop-log/save", { method: "POST", body: JSON.stringify(body) });
 }
 
 // --- day detail (Calendar B) ---
@@ -1779,6 +1800,115 @@ export const chatWithKB = (
       ...(web !== undefined ? { web } : {}),
     }),
   });
+
+// Streamed chat (2026-11-19, "we wait too long"): same args/body as
+// chatWithKB, but POSTs /kb/chat/stream and reports the reply as it's
+// written. The stream is one JSON event per line (SSE `data: {...}` or
+// NDJSON both parse): {"type":"delta","text"} repeatedly, then
+// {"type":"done", ...the exact /kb/chat response} or {"type":"error","detail"}.
+// `onText` gets the ACCUMULATED raw text, at most once per animation frame.
+// The resolved ChatReply is the done event's — its `reply` is the full
+// post-processed text and replaces whatever was streamed.
+//
+// Fallback: if the stream endpoint is missing/unreachable, errors, or ends
+// with no `done`, this transparently runs the plain chatWithKB call (unless
+// aborted) — a backend without streaming still answers, just not live.
+export async function streamChatWithKB(
+  args: Parameters<typeof chatWithKB>,
+  onText: (text: string) => void,
+  signal?: AbortSignal
+): Promise<ChatReply> {
+  const [messages, use_kb, research, folder, model, slug, mode, web] = args;
+  const body = JSON.stringify({
+    messages,
+    use_kb,
+    research,
+    folder: folder ?? null,
+    model: model ?? null,
+    slug: slug ?? null,
+    ...(mode ? { mode } : {}),
+    ...(web !== undefined ? { web } : {}),
+  });
+  let text = "";
+  let frame: number | null = null;
+  const flush = () => {
+    frame = null;
+    onText(text);
+  };
+  const cancelFrame = () => {
+    if (frame !== null) cancelAnimationFrame(frame);
+    frame = null;
+  };
+  try {
+    const res = await fetch(`${API_BASE}/kb/chat/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "text/event-stream, application/x-ndjson" },
+      body,
+      signal,
+    });
+    if (!res.ok || !res.body) throw new Error(`stream unavailable: ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    // Returns the final reply on `done`; throws on `error`.
+    const handleLine = (raw: string): ChatReply | null => {
+      let line = raw.trim();
+      if (line.startsWith("data:")) line = line.slice(5).trim();
+      if (!line || line === "[DONE]" || line.startsWith(":") || line.startsWith("event:")) return null;
+      let ev: { type?: string; text?: string; detail?: string } & Partial<ChatReply>;
+      try {
+        ev = JSON.parse(line);
+      } catch {
+        return null; // keep-alive / non-JSON noise
+      }
+      if (ev.type === "delta" && typeof ev.text === "string") {
+        text += ev.text;
+        if (frame === null) frame = requestAnimationFrame(flush);
+      } else if (ev.type === "reset") {
+        // backend restarted the answer (Max failed mid-stream -> fallback reply follows)
+        text = "";
+        if (frame === null) frame = requestAnimationFrame(flush);
+      } else if (ev.type === "done") {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { type, ...reply } = ev;
+        return reply as ChatReply;
+      } else if (ev.type === "error") {
+        throw new Error(ev.detail || "stream error");
+      }
+      return null;
+    };
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (value) buf += decoder.decode(value, { stream: true });
+      if (done) buf += decoder.decode();
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        const final = handleLine(line);
+        if (final) {
+          cancelFrame();
+          reader.cancel().catch(() => {});
+          return final;
+        }
+      }
+      if (done) {
+        const final = handleLine(buf);
+        if (final) {
+          cancelFrame();
+          return final;
+        }
+        break;
+      }
+    }
+    throw new Error("stream ended without a done event");
+  } catch (e) {
+    cancelFrame();
+    if (signal?.aborted) throw e;
+    // Not deployed / failed mid-way: answer through the plain endpoint.
+    return chatWithKB(...args);
+  }
+}
 
 // --- transcripts deep search + "record that" (next-wave-plan §4) -----------
 

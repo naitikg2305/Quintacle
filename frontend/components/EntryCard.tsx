@@ -481,6 +481,42 @@ export default function EntryCard({ entry, index: i, meals, exerciseNames, onUpd
 
       {entry.type === "ingredient_preset" && (
         <div className="flex-1 space-y-1">
+          {entry.existing_match && (
+            // 2026-11-18 (owner: "similar to travel"): never a silent overwrite or a silent duplicate.
+            <div className="border rounded px-2 py-1.5 text-xs space-y-1">
+              <p>
+                {entry.existing_match.by === "same_name"
+                  ? "You already saved an ingredient with this name: "
+                  : entry.existing_match.by === "same_usda"
+                    ? "Same USDA food as your saved: "
+                    : "Same numbers as your saved: "}
+                <span className="font-semibold">{entry.existing_match.name}</span>
+              </p>
+              <div className="flex flex-wrap gap-3">
+                {(
+                  [
+                    ["update", `Update "${entry.existing_match.name}"`],
+                    ["new", "Save as new"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <label key={value} className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      name={`ing-conflict-${i}`}
+                      checked={(entry.on_conflict ?? "update") === value}
+                      onChange={() => onUpdate(i, { on_conflict: value })}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              <p className="opacity-60">
+                {(entry.on_conflict ?? "update") === "update"
+                  ? `Saves these numbers onto "${entry.existing_match.name}" (its name stays; meals using it update).`
+                  : "Saves a second ingredient under the name below."}
+              </p>
+            </div>
+          )}
           <div className="flex gap-2">
             <input
               className="border rounded px-2 py-1 text-sm flex-1"

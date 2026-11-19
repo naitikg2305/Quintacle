@@ -22,6 +22,62 @@ IMAGE_MIME_TYPES = {
 }
 
 
+_CONVERTIBLE_EXTS = {"avif", "heic", "heif"}
+
+
+def _sniff_image(data: bytes) -> str | None:
+    """The image format from its first bytes (not its name)."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    if data[4:8] == b"ftyp":
+        return "avif" if data[8:12] in (b"avif", b"avis") else "heic"
+    return None
+
+
+def normalize_image(data: bytes | None, filename: str) -> tuple[bytes | None, str]:
+    """2026-11-17 (owner, T5): a photo whose real format isn't JPEG/PNG/GIF/WebP (an AVIF
+    saved as .jpg, an iPhone HEIC) is converted to JPEG once, at the drop, so every path —
+    local OCR and Claude alike — gets an image it can read. Returns (bytes, filename);
+    anything that isn't an image, or that can't be converted, comes back unchanged."""
+    if not data:
+        return data, filename
+    ext = extension(filename) if filename else ""
+    if ext not in IMAGE_MIME_TYPES and ext not in _CONVERTIBLE_EXTS:
+        return data, filename
+    real = _sniff_image(data)
+    if real in ("jpeg", "png", "gif", "webp"):
+        if ext in _CONVERTIBLE_EXTS or IMAGE_MIME_TYPES.get(ext) != f"image/{real}":
+            stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+            return data, f"{stem}.{'jpg' if real == 'jpeg' else real}"
+        return data, filename
+    try:
+        import io
+
+        from PIL import Image
+
+        if real == "heic":
+            try:
+                import pillow_heif  # optional
+
+                pillow_heif.register_heif_opener()
+            except ImportError:
+                pass
+        im = Image.open(io.BytesIO(data))
+        exif = im.info.get("exif")
+        buf = io.BytesIO()
+        im.convert("RGB").save(buf, "JPEG", quality=92, **({"exif": exif} if exif else {}))
+    except Exception:
+        return data, filename
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    return buf.getvalue(), f"{stem}.jpg"
+
+
 def extension(filename: str) -> str:
     return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
@@ -257,7 +313,9 @@ _NON_FOOD = {
     "today", "reps", "rep", "sets", "set", "the", "a", "of",
 }
 _FOOD_AFTER_QTY_RE = re.compile(rf"(?<![\w.]){_QTY}\.?\s*(?:of\s+)?([a-z][a-z'-]{{2,}})", re.IGNORECASE)
-_FOOD_BEFORE_QTY_RE = re.compile(rf"([a-z][a-z'-]{{2,}})\s*[:=-]?\s*{_QTY}", re.IGNORECASE)
+# 2026-11-17 (owner, T4/T7): chat answers also write the amount AFTER the food in brackets,
+# bold or a table row: "Lamb (230g)", "**Salmon (70g)**", "| Rice, 50 g dry |".
+_FOOD_BEFORE_QTY_RE = re.compile(rf"([a-z][a-z'-]{{2,}})\**\s*[(:=,–—-]?\s*~?\s*{_QTY}", re.IGNORECASE)
 _NUTRIENT_NUM_RE = re.compile(
     r"\b(calories|kcal|protein|carb(?:ohydrate)?s?|total fat|fat|fib(?:er|re)|sugars?|sodium)\b\s*[:=-]?\s*\d",
     re.IGNORECASE,

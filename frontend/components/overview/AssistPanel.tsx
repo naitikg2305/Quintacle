@@ -9,7 +9,7 @@ import ModeChip from "@/components/ModeChip";
 import { Panel } from "@/components/ui/Panel";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
-import { archiveTranscript, newChatSessionId, ChatMessage, ChatMode, chatWithKB, DEFAULT_LOCAL_MODEL, listChatModels, privateHandoffNotice } from "@/lib/api";
+import { archiveTranscript, newChatSessionId, ChatMessage, ChatMode, streamChatWithKB, DEFAULT_LOCAL_MODEL, listChatModels, privateHandoffNotice } from "@/lib/api";
 
 // The overview's right column: a compact chat (same /kb/chat, same sticky
 // §12 mode, same model the Chat page last picked) over a capture box that
@@ -21,6 +21,9 @@ export default function AssistPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // Reply streaming in (raw text so far); kept out of `messages` so the
+  // autosave effect never archives a partial answer.
+  const [streaming, setStreaming] = useState<string | null>(null);
   const [mode, setMode] = useState<ChatMode>("unserious");
   const [model, setModel] = useState<string>(DEFAULT_LOCAL_MODEL);
   const [capture, setCapture] = useState("");
@@ -59,7 +62,7 @@ export default function AssistPanel() {
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
-  }, [messages, busy]);
+  }, [messages, busy, streaming]);
 
   async function send() {
     const text = input.trim();
@@ -70,7 +73,7 @@ export default function AssistPanel() {
     setBusy(true);
     setPrivacyNotice(null);
     try {
-      const res = await chatWithKB(next, true, false, undefined, model, undefined, mode, undefined /* web: auto */);
+      const res = await streamChatWithKB([next, true, false, undefined, model, undefined, mode, undefined /* web: auto */], setStreaming);
       if (res.mode) setMode(res.mode);
       if (res.private_stripped) setPrivacyNotice(privateHandoffNotice(res.private_stripped));
       // Keep private_notes on the reply so a later cloud request strips it.
@@ -81,6 +84,7 @@ export default function AssistPanel() {
     } catch (e) {
       setMessages([...next, { role: "assistant", content: `Couldn't reach the chat backend — ${(e as Error).message}` }]);
     } finally {
+      setStreaming(null);
       setBusy(false);
     }
   }
@@ -107,9 +111,9 @@ export default function AssistPanel() {
           {messages.length === 0 ? (
             <p className="pt-8 text-center text-sm text-muted">Ask about anything in your notes — or your week.</p>
           ) : (
-            <ChatLog messages={messages} busy={busy} />
+            <ChatLog messages={messages} busy={busy} streaming={streaming} />
           )}
-          {busy && <p className="text-xs text-muted">Thinking…</p>}
+          {busy && !streaming && <p className="text-xs text-muted">Thinking…</p>}
         </div>
         {privacyNotice && (
           <p role="status" className="flex items-center gap-1.5 text-xs text-accent">

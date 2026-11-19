@@ -35,7 +35,7 @@ def get_outfit_store() -> OutfitStore:
 
 
 @router.post("/items")
-async def create_item(
+def create_item(
     name: str = Form(...),
     category: str = Form(...),
     description: str = Form(""),
@@ -45,7 +45,7 @@ async def create_item(
     resolved_name = canonicalize_item_name(name, known_names)
     asset_paths = []
     for f in files:
-        data = await f.read()
+        data = f.file.read()
         asset_paths.append(get_item_store().save_asset(f.filename or "item", data))
     slug = get_item_store().write(resolved_name, category, description, asset_paths)
     # Write rule (graph_capture): an item's description is real prose ("the
@@ -81,7 +81,7 @@ def get_item_asset(path: str) -> Response:
 
 
 @router.post("/outfits")
-async def create_outfit(
+def create_outfit(
     name: str = Form(...),
     items: str = Form("[]"),  # JSON-encoded list[str] — items may be empty for a full-outfit photo saved as is
     file: UploadFile | None = File(None),
@@ -92,7 +92,7 @@ async def create_outfit(
     resolved_items = [canonicalize_item_name(i, known_item_names) for i in json.loads(items)]
     asset_path = None
     if file is not None:
-        data = await file.read()
+        data = file.file.read()
         asset_path = get_outfit_store().save_asset(file.filename or "outfit", data)
     get_outfit_store().write(resolved_name, resolved_items, asset_path)
     return {"name": resolved_name, "items": resolved_items, "asset": asset_path}

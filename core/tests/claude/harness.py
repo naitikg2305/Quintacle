@@ -132,6 +132,140 @@ def _max_only() -> None:
     kb_chat._run_anthropic = no_chat_api
 
 
+def snapshot_real_db(seed: Path) -> None:
+    """2026-11-17: the copied store skips *-wal, so writes still in the real database's WAL
+    (e.g. today's saved ingredients) were missing from the sandbox. Overwrite the seed's
+    quintacle.db with a consistent snapshot read from the real one (read-only open + the
+    sqlite backup API; ~/.quintacle is never written)."""
+    import sqlite3
+
+    real = REAL_STORE / "quintacle.db"
+    if not real.exists():
+        return
+    src = sqlite3.connect(f"file:{real}?mode=ro", uri=True)
+    dst = sqlite3.connect(seed / "quintacle.db")
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+
+
+# 2026-11-18: what the owner saved by hand, and when (the ingredients / meals tables carry no
+# time). sandbox_before leaves out every one saved at or after `chats_from` on its own, so a
+# test written earlier never sees a later save. Add a line whenever he saves one in a test.
+OWNER_SAVES: tuple[tuple[str, str, str], ...] = (
+    ("2026-11-17-1616", "ingredient", "Costco Lean Lamb"),
+    ("2026-11-17-1621", "ingredient", "Kirkland Signature Plain Nonfat Greek Yogurt (2/3 cup)"),
+    ("2026-11-18-0820", "ingredient", "Salmon"),  # deleted 2026-11-18, replaced by "Atlantic salmon"
+    ("2026-11-18-0845", "ingredient", "Atlantic salmon"),
+    ("2026-11-18-0820", "ingredient", "Egg, whole, raw, fresh"),
+    ("2026-11-18-0820", "ingredient", "Rice, white, short-grain, raw, unenriched"),
+    ("2026-11-18-0820", "meal", "High-Protein Breakfast with Lamb, Salmon, and Eggs(local+local)"),
+    ("2026-11-18-0822", "meal", "Lamb, Salmon, and Egg Breakfast with Rice(local+claude)"),
+    ("2026-11-18-0823", "meal", "High-Protein Breakfast with Lamb, Salmon, and Eggs(claude +claude) "),
+    ("2026-11-18-0825", "meal", "Lamb, Salmon and Egg Breakfast with Rice(claude +claude) "),
+    ("2026-11-18-0830", "meal", "High-Protein Breakfast with Lamb, Salmon, and Eggs"),  # the one he kept (others deleted)
+)
+
+
+def sandbox_before(tmp: Path, *, chats_from: str, leave_out: tuple[str, ...] = (),
+                   leave_out_ingredients: tuple[str, ...] = (), cloud: bool = False):
+    """2026-11-17 (owner: "I thought sandboxing was doing that"): a client over the owner's
+    data AS IT WAS just before he did a test by hand. The real store is only read.
+
+    - chats_from "YYYY-MM-DD-HHMM": every saved chat from that minute on is left out: its
+      transcript file, its search rows, and the soft facts ("things you told me") it created;
+    - leave_out: kb paths (a note without .md, an asset, or a whole folder) saved later;
+    - leave_out_ingredients: ingredient names saved later (row, micros, note).
+    Their graph edges and search-index entries are removed too."""
+    import sqlite3
+
+    seed = tmp / "seed"
+    shutil.copytree(REAL_STORE, seed, ignore=shutil.ignore_patterns(
+        "models", "*.onnx", "*.zip", "*.lock", "*-shm", "*-wal"))
+    snapshot_real_db(seed)
+    gone_nodes: list[str] = []
+    # -- chats from `chats_from` on
+    conv = seed / "conversations"
+    late = sorted(str(f.relative_to(conv)) for f in conv.glob("*/*.md") if f.stem >= chats_from)
+    for rel in late:
+        (conv / rel).unlink()
+        if not any((conv / rel).parent.iterdir()):
+            (conv / rel).parent.rmdir()
+    if late and (conv / "transcripts.db").exists():
+        con = sqlite3.connect(conv / "transcripts.db")
+        for rel in late:
+            con.execute("DELETE FROM transcript_fts WHERE path = ?", (rel,))
+            con.execute("DELETE FROM transcript_sessions WHERE path = ?", (rel,))
+        con.commit()
+        con.close()
+    if late and (conv / "soft_record.db").exists():
+        con = sqlite3.connect(conv / "soft_record.db")
+        con.executemany("DELETE FROM soft_facts WHERE transcript = ?", [(r,) for r in late])
+        con.commit()
+        con.close()
+    gone_nodes += [f"transcript:{r[:-3]}" for r in late]
+    # -- kb notes / folders saved later
+    kb = seed / "kb"
+    for rel in leave_out:
+        target = kb / rel
+        files = [target.with_suffix(".md")] if not target.exists() and target.with_suffix(".md").exists() else (
+            [f for f in target.rglob("*") if f.is_file()] if target.is_dir() else [target])
+        for f in files:
+            if f.exists():
+                gone_nodes.append(f"note:{f.relative_to(kb).with_suffix('').as_posix()}")
+                f.unlink()
+        if target.is_dir():
+            for d in sorted((x for x in target.rglob("*") if x.is_dir()), reverse=True):
+                gone_nodes.append(f"folder:{d.relative_to(kb).as_posix()}")
+                d.rmdir()
+            gone_nodes.append(f"folder:{target.relative_to(kb).as_posix()}")
+            target.rmdir()
+    # -- ingredients / meals saved later (explicit, plus OWNER_SAVES from chats_from on)
+    leave_out_ingredients = tuple(dict.fromkeys(
+        (*leave_out_ingredients, *(n for t, k, n in OWNER_SAVES if k == "ingredient" and t >= chats_from))))
+    late_meals = [n for t, k, n in OWNER_SAVES if k == "meal" and t >= chats_from]
+    if late_meals:
+        from quintacle_core.markdown_paths import slugify
+
+        con = sqlite3.connect(seed / "quintacle.db")
+        for name in late_meals:
+            for (i,) in con.execute("SELECT id FROM meals WHERE name = ?", (name,)).fetchall():
+                con.execute("DELETE FROM meal_ingredients WHERE meal_id = ?", (i,))
+                con.execute("DELETE FROM meals WHERE id = ?", (i,))
+                gone_nodes.append(f"meal:{i}")
+            note = kb / "personal-development/physical/nutrition/presets" / f"{slugify(name)}.md"
+            if note.exists():
+                gone_nodes.append(f"note:{note.relative_to(kb).with_suffix('').as_posix()}")
+                note.unlink()
+        con.commit()
+        con.close()
+    if leave_out_ingredients:
+        from quintacle_core.markdown_paths import slugify
+
+        con = sqlite3.connect(seed / "quintacle.db")
+        for name in leave_out_ingredients:
+            for (i,) in con.execute("SELECT id FROM ingredients WHERE name = ?", (name,)).fetchall():
+                con.execute("DELETE FROM ingredient_micros WHERE ingredient_id = ?", (i,))
+                con.execute("DELETE FROM ingredients WHERE id = ?", (i,))
+                gone_nodes.append(f"ingredient:{i}")
+            note = kb / "personal-development/physical/nutrition/ingredients" / f"{slugify(name)}.md"
+            if note.exists():
+                gone_nodes.append(f"note:{note.relative_to(kb).with_suffix('').as_posix()}")
+                note.unlink()
+        con.commit()
+        con.close()
+    client = make_client(tmp, seed_store=seed, cloud=cloud)
+    from quintacle_core.graph import get_graph_store
+    from quintacle_core.retrieval import get_retrieval_index
+
+    for node in gone_nodes:
+        get_graph_store().remove_edges_for(node)
+        get_retrieval_index().remove_node(node)
+    return client
+
+
 def make_client(tmp: Path, seed_store: Path | None = None, cloud: bool = False):
     """A TestClient over a fresh app on tmp/data. seed_store (e.g. the real
     ~/.quintacle) is copied in first, minus model weights."""

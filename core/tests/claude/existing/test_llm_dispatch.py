@@ -1,6 +1,6 @@
 """Provider-aware structured-parse dispatch (llm_dispatch.parse_structured):
-local via stubbed Ollama HTTP, cloud via a stubbed Anthropic parse, the auto
-fallback, env/arg precedence, the readable hard failures, and the endpoint
+local via stubbed Ollama HTTP, cloud via a stubbed Anthropic parse, auto (local only since
+2026-11-19 — it used to fall back to cloud), env/arg precedence, the readable hard failures, and the endpoint
 plumbing (?provider=... in, provider_used out). No live API calls and no
 running daemon needed — every network edge is stubbed, same style as
 test_local_vlm / test_chat_models."""
@@ -100,7 +100,7 @@ def test_local_parse_model_env_overrides_default(monkeypatch):
     assert calls[0]["model"] == "qwen3:14b"
 
 
-# --- auto: local first, cloud fallback ---
+# --- auto: local only (2026-11-19: no cloud fallback) ---
 
 
 def test_auto_prefers_local_when_it_works(monkeypatch):
@@ -114,26 +114,25 @@ def test_auto_prefers_local_when_it_works(monkeypatch):
     assert result.parsed.name == "pear"
 
 
-def test_auto_falls_back_to_cloud_on_schema_invalid_local_output(monkeypatch, caplog):
+# 2026-11-19 (owner: "cant auto switch to cloud"): auto no longer falls back
+# to cloud — a local failure raises; cloud is only the user's Redo with cloud.
+
+
+def test_auto_raises_on_schema_invalid_local_output_never_cloud(monkeypatch):
     monkeypatch.delenv("QUINTACLE_INGEST_PROVIDER", raising=False)
     _stub_ollama(monkeypatch, '{"name": "pear"}')  # missing required `count`
-    monkeypatch.setattr(llm_dispatch, "_parse_cloud", lambda *a, **k: Fruit(name="cloud pear", count=2))
+    monkeypatch.setattr(llm_dispatch, "_parse_cloud", _cloud_must_not_run)
 
-    with caplog.at_level("WARNING"):
-        result = parse_structured("count fruit", "a pear", Fruit)
-
-    assert result.provider_used == "cloud"
-    assert result.parsed == Fruit(name="cloud pear", count=2)
-    assert any("falling back to cloud" in r.message for r in caplog.records)
+    with pytest.raises(LocalParseError):
+        parse_structured("count fruit", "a pear", Fruit)
 
 
-def test_auto_falls_back_to_cloud_when_daemon_is_down(monkeypatch):
+def test_auto_raises_when_daemon_is_down_never_cloud(monkeypatch):
     _stub_ollama_down(monkeypatch)
-    monkeypatch.setattr(llm_dispatch, "_parse_cloud", lambda *a, **k: Fruit(name="cloud", count=0))
+    monkeypatch.setattr(llm_dispatch, "_parse_cloud", _cloud_must_not_run)
 
-    result = parse_structured("count fruit", "anything", Fruit, provider="auto")
-
-    assert result.provider_used == "cloud"
+    with pytest.raises(OllamaError, match="isn't reachable"):
+        parse_structured("count fruit", "anything", Fruit, provider="auto")
 
 
 # --- hard failures stay readable ---
@@ -303,6 +302,21 @@ def test_drop_endpoint_plumbs_provider_and_reports_top_level(client, monkeypatch
     assert body["provider_used"] == "local"
     assert body["entries"][0]["type"] == "kb_entry"
     assert body["entries"][0]["title"] == "Monitor arm"
+
+
+def test_drop_endpoint_local_failure_is_redo_with_cloud_state(client, monkeypatch):
+    # 2026-11-19: the primary sort failing locally is a proposal STATE (no
+    # entries + local_unavailable), not a 400 — the UI offers Redo with cloud.
+    _stub_ollama_down(monkeypatch)
+    monkeypatch.setattr(llm_dispatch, "_parse_cloud", _cloud_must_not_run)
+
+    resp = client.post("/drop", data={"text": "note: monitor arm height is 47cm"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["entries"] == []
+    assert body["provider_used"] == "local"
+    assert "Redo with cloud" in body["local_unavailable"]
 
 
 def test_drop_endpoint_rejects_bogus_provider(client):
